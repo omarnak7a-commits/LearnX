@@ -4,19 +4,32 @@ interface LogoMarkProps {
   size?: number
   animated?: boolean
   color?: string
+  diamondColor?: string
   className?: string
 }
 
-export default function LogoMark({ size = 40, animated = false, color = '#2DD4BF', className = '' }: LogoMarkProps) {
+/**
+ * The LearnX chevron + diamond symbol. Renders at any size, retina-safe
+ * (pure SVG), and theme-aware by default via `currentColor` unless an
+ * explicit `color` is supplied.
+ */
+export default function LogoMark({
+  size = 40,
+  animated = false,
+  color = 'currentColor',
+  diamondColor,
+  className = '',
+}: LogoMarkProps) {
   const w = size * 0.7
   const h = size
+  const diamond = diamondColor ?? 'var(--primary)'
 
   const pathVariants = {
     hidden: { pathLength: 0, opacity: 0 },
     visible: (i: number) => ({
       pathLength: 1,
       opacity: 1,
-      transition: { duration: 0.6, delay: i * 0.18, ease: 'easeOut' },
+      transition: { duration: 0.6, delay: i * 0.18, ease: 'easeOut' as const },
     }),
   }
 
@@ -25,7 +38,11 @@ export default function LogoMark({ size = 40, animated = false, color = '#2DD4BF
     visible: {
       scale: 1,
       opacity: 1,
-      transition: { duration: 0.4, delay: 0.85, ease: [0.34, 1.56, 0.64, 1] },
+      transition: {
+        duration: 0.4,
+        delay: 0.85,
+        ease: [0.34, 1.56, 0.64, 1] as const,
+      },
     },
   }
 
@@ -41,6 +58,7 @@ export default function LogoMark({ size = 40, animated = false, color = '#2DD4BF
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
+      style={{ flexShrink: 0, display: 'block' }}
       initial={animated ? 'hidden' : undefined}
       animate={animated ? 'visible' : undefined}
     >
@@ -80,13 +98,13 @@ export default function LogoMark({ size = 40, animated = false, color = '#2DD4BF
         custom={3}
         variants={animated ? pathVariants : undefined}
       />
-      {/* Central diamond */}
+      {/* Central diamond — always brand teal, the fixed "spark" of the mark */}
       <RectTag
         x="20"
         y="30"
         width="11"
         height="11"
-        fill="#2DD4BF"
+        fill={diamond}
         transform="rotate(45 25.5 35.5)"
         variants={animated ? diamondVariants : undefined}
         style={{ transformOrigin: '25.5px 35.5px' }}

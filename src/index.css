@@ -52,32 +52,114 @@
   /* Glows */
   --glow-teal: 0 0 24px rgba(45, 212, 191, 0.35), 0 0 80px rgba(45, 212, 191, 0.12);
   --glow-orange: 0 0 24px rgba(255, 126, 54, 0.35), 0 0 80px rgba(255, 126, 54, 0.12);
+
+  /* ── Elevation / surfaces (theme-aware, replaces hardcoded hex in components) ── */
+  --surface-0: #060810;          /* app chrome background (sidebar / header) */
+  --surface-1: #0e1320;          /* raised card / row */
+  --surface-2: #131a2b;          /* dropdown / popover / modal */
+  --surface-3: #1a2235;          /* tooltip / highest elevation */
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --header-bg: rgba(10, 13, 20, 0.78);
+  --overlay-bg: rgba(6, 8, 14, 0.72);
+  --skeleton-base: rgba(255, 255, 255, 0.06);
+  --skeleton-shine: rgba(255, 255, 255, 0.12);
+
+  /* Logo ink — the chevron colour (diamond always brand teal) */
+  --logo-ink: #A9C0D6;
+
+  /* Semantic status colours (consistent across themes) */
+  --success: #22c55e;
+  --success-soft: rgba(34, 197, 94, 0.14);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.14);
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.14);
+
+  /* Charts */
+  --chart-grid: rgba(255, 255, 255, 0.05);
+  --chart-tick: #7A90A8;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.45);
+  --shadow-xl: 0 32px 96px rgba(0, 0, 0, 0.55);
 }
 
 .light {
-  --background: #FAFAFC;
-  --foreground: #0F172A;
-  --card: rgba(255, 255, 255, 0.88);
-  --card-foreground: #0F172A;
+  --background: #F7F9FC;
+  --foreground: #131B2C;
+  --card: rgba(255, 255, 255, 0.9);
+  --card-foreground: #131B2C;
   --primary: #0d9488;
   --primary-foreground: #ffffff;
-  --secondary: #2DD4BF;
-  --secondary-foreground: #0F172A;
-  --muted: #F1F5F9;
-  --muted-foreground: #64748B;
-  --accent: #FF7E36;
+  --secondary: #0891b2;
+  --secondary-foreground: #ffffff;
+  --muted: #EEF2F8;
+  --muted-foreground: #5B6B85;
+  --accent: #EA6626;
   --accent-foreground: #ffffff;
-  --border: rgba(13, 148, 136, 0.2);
-  --border-subtle: rgba(0, 0, 0, 0.07);
+  --border: rgba(19, 27, 44, 0.09);
+  --border-subtle: rgba(19, 27, 44, 0.06);
   --ring: #0d9488;
 
-  --section-deep: #EFF3F9;
-  --section-dark: #FAFAFC;
-  --section-mid: #F3F7FC;
-  --section-blue: #EAF0F8;
+  --section-deep: #FFFFFF;
+  --section-dark: #F7F9FC;
+  --section-mid: #F1F5FA;
+  --section-blue: #EEF3F9;
+
+  --glow-teal: 0 0 24px rgba(13, 148, 136, 0.16), 0 0 60px rgba(13, 148, 136, 0.08);
+  --glow-orange: 0 0 24px rgba(234, 102, 38, 0.18), 0 0 60px rgba(234, 102, 38, 0.08);
+
+  /* ── Elevation / surfaces ── */
+  --surface-0: #FFFFFF;
+  --surface-1: #FFFFFF;
+  --surface-2: #FFFFFF;
+  --surface-3: #131B2C;          /* tooltips stay dark-on-light for legibility, like premium SaaS */
+  --surface-hover: rgba(19, 27, 44, 0.035);
+  --input-bg: #FFFFFF;
+  --header-bg: rgba(255, 255, 255, 0.82);
+  --overlay-bg: rgba(19, 27, 44, 0.35);
+  --skeleton-base: rgba(19, 27, 44, 0.06);
+  --skeleton-shine: rgba(19, 27, 44, 0.1);
+
+  --logo-ink: #131B2C;
+
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, 0.1);
+  --warning: #d97706;
+  --warning-soft: rgba(217, 119, 6, 0.1);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.1);
+  --info: #0284c7;
+  --info-soft: rgba(2, 132, 199, 0.1);
+
+  --chart-grid: rgba(19, 27, 44, 0.07);
+  --chart-tick: #64748B;
+
+  --shadow-sm: 0 1px 2px rgba(19, 27, 44, 0.06);
+  --shadow-md: 0 8px 24px rgba(19, 27, 44, 0.07);
+  --shadow-lg: 0 20px 48px rgba(19, 27, 44, 0.1);
+  --shadow-xl: 0 32px 72px rgba(19, 27, 44, 0.14);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  /* Adaptive "ink tint" overlays — derived from --foreground so they read as
+     soft white overlays in dark mode and soft charcoal overlays in light
+     mode, without ever needing two hardcoded copies of every surface. */
+  --tint-1: color-mix(in srgb, var(--foreground) 3%, transparent);
+  --tint-2: color-mix(in srgb, var(--foreground) 5%, transparent);
+  --tint-3: color-mix(in srgb, var(--foreground) 6%, transparent);
+  --tint-4: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --tint-5: color-mix(in srgb, var(--foreground) 12%, transparent);
+  --tint-6: color-mix(in srgb, var(--foreground) 18%, transparent);
+  --tint-7: color-mix(in srgb, var(--foreground) 28%, transparent);
+}
 
 html {
   scrollbar-width: none;
@@ -175,20 +257,76 @@ body {
 }
 
 .light .glass {
-  background: rgba(248, 250, 252, 0.82);
-  border: 1px solid rgba(13, 148, 136, 0.18);
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(19, 27, 44, 0.08);
 }
 
 .light .glass-card {
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(13, 148, 136, 0.16);
-  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.06);
+  background: #FFFFFF;
+  border: 1px solid rgba(19, 27, 44, 0.07);
+  box-shadow: 0 1px 2px rgba(19,27,44,0.04), 0 12px 32px rgba(19, 27, 44, 0.05);
 }
 
 .light .glass-card:hover {
-  border-color: rgba(13, 148, 136, 0.35);
-  box-shadow: 0 8px 32px rgba(13, 148, 136, 0.1);
+  border-color: rgba(13, 148, 136, 0.28);
+  box-shadow: 0 1px 2px rgba(19,27,44,0.04), 0 16px 40px rgba(13, 148, 136, 0.09);
 }
+
+/* ─── Surface primitives (theme-aware, use instead of hardcoded hex) ─── */
+
+.surface-panel {
+  background: var(--surface-0);
+  border: 1px solid var(--border-subtle);
+}
+
+.surface-popover {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+.surface-tooltip {
+  background: var(--surface-3);
+  color: #F0F4F8;
+}
+
+.light .surface-tooltip {
+  color: #F7F9FC;
+}
+
+.input-field {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.input-field::placeholder { color: var(--muted-foreground); }
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 16%, transparent);
+}
+
+.light .input-field {
+  box-shadow: var(--shadow-sm);
+}
+
+/* ─── Skeleton / loading shimmer ─── */
+
+@keyframes skeleton-shine {
+  0% { background-position: -150% 0; }
+  100% { background-position: 150% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-shine) 37%, var(--skeleton-base) 63%);
+  background-size: 300% 100%;
+  animation: skeleton-shine 1.8s ease-in-out infinite;
+  border-radius: 8px;
+}
+
 
 /* ─── Typography ─── */
 

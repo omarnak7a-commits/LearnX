@@ -1,9 +1,29 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import Sidebar from './Sidebar'
+import Sidebar, { type Role } from './Sidebar'
 import TopBar from './TopBar'
-import { GreetingWidget, FocusChart, StudyPlanCards, StreaksXP, ActivityFeed } from './DashboardWidgets'
 import AIAssistant from './AIAssistant'
+
+import StudentDashboardHome from './student/StudentDashboardHome'
+import AITutorPage from './student/AITutorPage'
+import QuizzesPage from './student/QuizzesPage'
+import MyFilesPage from './student/MyFilesPage'
+import GoalsPanel from './student/GoalsPanel'
+import CertificatesAchievements from './student/CertificatesAchievements'
+
+import DoctorDashboardHome from './doctor/DoctorDashboardHome'
+import CourseManagement from './doctor/CourseManagement'
+import MaterialsPage from './doctor/MaterialsPage'
+import StudentsPage from './doctor/StudentsPage'
+import WorkItemsPage from './doctor/WorkItemsPage'
+import StudentAnalyticsPanel from './doctor/StudentAnalyticsPanel'
+import AITeachingAssistant from './doctor/AITeachingAssistant'
+
+import CalendarPage from './shared/CalendarPage'
+import MessagesPage from './shared/MessagesPage'
+import AnnouncementsPage from './shared/AnnouncementsPage'
+import SettingsPage from './shared/SettingsPage'
+import EmptyState from './shared/EmptyState'
 
 interface DashboardPageProps {
   onBack: () => void
@@ -11,101 +31,203 @@ interface DashboardPageProps {
   onToggleTheme: () => void
 }
 
+const pageTitles: Record<string, { title: string; subtitle: string }> = {
+  dashboard: {
+    title: 'Dashboard',
+    subtitle: 'Monday, 27 July 2026 · Exam in 12 days',
+  },
+  files: {
+    title: 'My Files',
+    subtitle: 'Every document, lecture, and note in one place',
+  },
+  tutor: { title: 'AI Tutor', subtitle: 'Your adaptive study companion' },
+  planner: {
+    title: 'Smart Planner',
+    subtitle: 'Goals, streaks, and your study rhythm',
+  },
+  quizzes: {
+    title: 'Quizzes',
+    subtitle: 'AI-generated practice from your materials',
+  },
+  gamification: {
+    title: 'Gamification',
+    subtitle: 'Certificates, achievements, and progress',
+  },
+  analytics: {
+    title: 'Analytics',
+    subtitle: 'Your learning trends at a glance',
+  },
+  settings: {
+    title: 'Settings',
+    subtitle: 'Manage your account and preferences',
+  },
+  courses: {
+    title: 'My Courses',
+    subtitle: 'Manage course content and materials',
+  },
+  materials: {
+    title: 'Materials',
+    subtitle: 'Upload and organize lecture content',
+  },
+  students: {
+    title: 'Students',
+    subtitle: 'Roster, performance, and engagement',
+  },
+  assignments: {
+    title: 'Assignments',
+    subtitle: 'Create and track student assignments',
+  },
+  exams: {
+    title: 'Exams',
+    subtitle: 'Build and schedule exams with AI assistance',
+  },
+  messages: { title: 'Messages', subtitle: 'Conversations with your students' },
+  calendar: { title: 'Calendar', subtitle: 'Your schedule at a glance' },
+  announcements: {
+    title: 'Announcements',
+    subtitle: 'Broadcast updates to your classes',
+  },
+  ai: {
+    title: 'AI Teaching Assistant',
+    subtitle: 'Generate, summarize, and analyze — instantly',
+  },
+}
+
 export default function DashboardPage({ onBack, theme, onToggleTheme }: DashboardPageProps) {
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [role, setRole] = useState<Role>('student')
   const [activeItem, setActiveItem] = useState('dashboard')
+
+  function handleRoleChange(next: Role) {
+    setRole(next)
+    setActiveItem('dashboard')
+  }
+
+  const meta = pageTitles[activeItem] ?? { title: activeItem, subtitle: '' }
+
+  function renderContent() {
+    if (role === 'student') {
+      switch (activeItem) {
+        case 'dashboard':
+          return <StudentDashboardHome />
+        case 'files':
+          return <MyFilesPage />
+        case 'tutor':
+          return <AITutorPage />
+        case 'planner':
+          return <GoalsPanel />
+        case 'quizzes':
+          return <QuizzesPage />
+        case 'gamification':
+          return <CertificatesAchievements />
+        case 'analytics':
+          return <StudentDashboardHome />
+        case 'settings':
+          return <SettingsPage role={role} theme={theme} onToggleTheme={onToggleTheme} />
+        default:
+          return (
+            <EmptyState icon="🚧" title="Coming soon" body="This section is still being built." />
+          )
+      }
+    }
+    switch (activeItem) {
+      case 'dashboard':
+        return <DoctorDashboardHome />
+      case 'courses':
+        return <CourseManagement />
+      case 'materials':
+        return <MaterialsPage />
+      case 'students':
+        return <StudentsPage />
+      case 'assignments':
+        return <WorkItemsPage kind="assignments" />
+      case 'exams':
+        return <WorkItemsPage kind="exams" />
+      case 'analytics':
+        return <StudentAnalyticsPanel />
+      case 'messages':
+        return <MessagesPage />
+      case 'calendar':
+        return <CalendarPage role={role} />
+      case 'announcements':
+        return <AnnouncementsPage />
+      case 'ai':
+        return <AITeachingAssistant />
+      case 'settings':
+        return <SettingsPage role={role} theme={theme} onToggleTheme={onToggleTheme} />
+      default:
+        return (
+          <EmptyState icon="🚧" title="Coming soon" body="This section is still being built." />
+        )
+    }
+  }
 
   return (
     <div className="flex" style={{ minHeight: '100vh', background: 'var(--background)' }}>
       <Sidebar
         collapsed={collapsed}
-        onToggle={() => setCollapsed(v => !v)}
+        onToggle={() => setCollapsed((v) => !v)}
         activeItem={activeItem}
         onNavigate={setActiveItem}
         onBack={onBack}
+        role={role}
+        onRoleChange={handleRoleChange}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
       />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <TopBar theme={theme} onToggleTheme={onToggleTheme} />
+        <TopBar
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+          role={role}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+        />
 
-        <main className="flex-1 overflow-y-auto scrollbar-thin" style={{ background: 'var(--section-dark)' }}>
+        <main
+          className="flex-1 overflow-y-auto scrollbar-thin"
+          style={{ background: 'var(--section-dark)' }}
+        >
           <AnimatePresence mode="wait">
-            {activeItem === 'dashboard' ? (
-              <motion.div
-                key="dash"
-                className="p-6"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                {/* Page title */}
-                <div className="mb-6">
-                  <h1
-                    className="text-xl font-bold"
-                    style={{ fontFamily: 'Orbitron, sans-serif', color: 'var(--foreground)', letterSpacing: '-0.01em' }}
-                  >
-                    Dashboard
-                  </h1>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--muted-foreground)', fontFamily: 'JetBrains Mono, monospace' }}>
-                    Monday, 21 July 2026 · Exam in 12 days
-                  </p>
-                </div>
+            <motion.div
+              key={`${role}-${activeItem}`}
+              className="p-4 sm:p-6"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            >
+              {/* Page title */}
+              <div className="mb-6">
+                <h1
+                  className="text-xl font-bold"
+                  style={{
+                    fontFamily: 'Orbitron, sans-serif',
+                    color: 'var(--foreground)',
+                    letterSpacing: '-0.01em',
+                  }}
+                >
+                  {meta.title}
+                </h1>
+                <p
+                  className="text-xs mt-0.5"
+                  style={{
+                    color: 'var(--muted-foreground)',
+                    fontFamily: 'JetBrains Mono, monospace',
+                  }}
+                >
+                  {meta.subtitle}
+                </p>
+              </div>
 
-                {/* Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                  {/* Row 1 */}
-                  <div className="lg:col-span-3">
-                    <GreetingWidget />
-                  </div>
-                  <div className="lg:col-span-9">
-                    <FocusChart />
-                  </div>
-
-                  {/* Row 2 */}
-                  <div className="lg:col-span-8">
-                    <StudyPlanCards />
-                  </div>
-                  <div className="lg:col-span-4">
-                    <StreaksXP />
-                  </div>
-
-                  {/* Row 3 */}
-                  <div className="lg:col-span-12">
-                    <ActivityFeed />
-                  </div>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key={activeItem}
-                className="flex flex-col items-center justify-center min-h-[60vh] p-6"
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.35 }}
-              >
-                <div className="glass-card p-12 text-center max-w-sm">
-                  <span className="text-5xl mb-5 block">
-                    {activeItem === 'files' ? '📂' : activeItem === 'tutor' ? '🤖' : activeItem === 'planner' ? '📅' : activeItem === 'quizzes' ? '❓' : activeItem === 'gamification' ? '🏆' : activeItem === 'analytics' ? '📊' : '⚙️'}
-                  </span>
-                  <h2
-                    className="text-lg font-bold mb-2"
-                    style={{ fontFamily: 'Orbitron, sans-serif', color: 'var(--foreground)' }}
-                  >
-                    {activeItem.charAt(0).toUpperCase() + activeItem.slice(1)}
-                  </h2>
-                  <p className="text-sm" style={{ color: 'var(--muted-foreground)' }}>
-                    Coming in the next release. The dashboard above gives you a preview of what's possible.
-                  </p>
-                </div>
-              </motion.div>
-            )}
+              {renderContent()}
+            </motion.div>
           </AnimatePresence>
         </main>
       </div>
 
-      <AIAssistant />
+      <AIAssistant role={role} />
     </div>
   )
 }
