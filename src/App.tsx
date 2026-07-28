@@ -22,10 +22,13 @@ export default function App() {
 
   return (
     <div style={{ background: 'var(--background)', minHeight: '100vh' }}>
-      {/* Cinematic intro overlay */}
-      {!introComplete && (
-        <IntroAnimation onComplete={() => setIntroComplete(true)} />
-      )}
+      {/* Cinematic intro overlay — AnimatePresence lets it fade out while
+          the landing page mounts underneath, avoiding a hard cut. */}
+      <AnimatePresence>
+        {!introComplete && (
+          <IntroAnimation onComplete={() => setIntroComplete(true)} />
+        )}
+      </AnimatePresence>
 
       {/* Main views */}
       {introComplete && (
