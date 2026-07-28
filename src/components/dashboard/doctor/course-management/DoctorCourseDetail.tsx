@@ -30,7 +30,8 @@ export default function DoctorCourseDetail({
 }: DoctorCourseDetailProps) {
   const [tab, setTab] = useState<(typeof tabs)[number]>(initialTab)
   const [editing, setEditing] = useState(false)
-  const { publishCourse, archiveCourse, updateCourseInfo } = useCourseCatalog()
+  const { publishCourse, archiveCourse, updateCourseInfo, submitForReview, revertToDraft } =
+    useCourseCatalog()
 
   return (
     <div className="space-y-5">
@@ -83,7 +84,16 @@ export default function DoctorCourseDetail({
               >
                 Edit
               </button>
-              {course.status !== 'published' && course.status !== 'archived' && (
+              {course.status === 'draft' && (
+                <button
+                  onClick={() => submitForReview(course.id)}
+                  className="text-xs font-semibold px-4 py-2 rounded-full"
+                  style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
+                >
+                  Submit for Review
+                </button>
+              )}
+              {course.status === 'pending-review' && (
                 <button
                   onClick={() => publishCourse(course.id)}
                   className="text-xs font-semibold px-4 py-2 rounded-full"
@@ -99,6 +109,15 @@ export default function DoctorCourseDetail({
                   style={{ background: 'var(--tint-2)', color: 'var(--foreground)' }}
                 >
                   Archive
+                </button>
+              )}
+              {course.status === 'archived' && (
+                <button
+                  onClick={() => revertToDraft(course.id)}
+                  className="text-xs font-semibold px-4 py-2 rounded-full"
+                  style={{ background: 'var(--tint-2)', color: 'var(--foreground)' }}
+                >
+                  Restore to Draft
                 </button>
               )}
             </div>

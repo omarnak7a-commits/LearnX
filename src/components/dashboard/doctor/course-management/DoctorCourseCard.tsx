@@ -11,8 +11,10 @@ interface DoctorCourseCardProps {
   onManageContent: () => void
   onViewStudents: () => void
   onAnalytics: () => void
+  onSubmitForReview: () => void
   onPublish: () => void
   onArchive: () => void
+  onRestore: () => void
 }
 
 /** Full course card for the Doctor "My Courses" workspace — thumbnail,
@@ -24,8 +26,10 @@ export default function DoctorCourseCard({
   onManageContent,
   onViewStudents,
   onAnalytics,
+  onSubmitForReview,
   onPublish,
   onArchive,
+  onRestore,
 }: DoctorCourseCardProps) {
   return (
     <motion.div
@@ -65,12 +69,20 @@ export default function DoctorCourseCard({
           <ActionButton onClick={onManageContent}>Manage Content</ActionButton>
           <ActionButton onClick={onViewStudents}>View Students</ActionButton>
           <ActionButton onClick={onAnalytics}>Analytics</ActionButton>
-          {course.status !== 'published' && course.status !== 'archived' && (
+          {course.status === 'draft' && (
+            <ActionButton onClick={onSubmitForReview} primary>
+              Submit for Review
+            </ActionButton>
+          )}
+          {course.status === 'pending-review' && (
             <ActionButton onClick={onPublish} primary>
               Publish
             </ActionButton>
           )}
           {course.status !== 'archived' && <ActionButton onClick={onArchive}>Archive</ActionButton>}
+          {course.status === 'archived' && (
+            <ActionButton onClick={onRestore}>Restore to Draft</ActionButton>
+          )}
         </div>
       </div>
     </motion.div>

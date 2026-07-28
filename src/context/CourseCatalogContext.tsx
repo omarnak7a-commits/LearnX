@@ -20,6 +20,8 @@ interface CourseCatalogValue {
   setStatus: (id: string, status: CourseStatus) => void
   publishCourse: (id: string) => void
   archiveCourse: (id: string) => void
+  submitForReview: (id: string) => void
+  revertToDraft: (id: string) => void
   addModule: (courseId: string, title: string) => void
   addLesson: (courseId: string, moduleId: string, title: string, type: LessonType) => void
   updateModuleTitle: (courseId: string, moduleId: string, title: string) => void
@@ -113,6 +115,8 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
 
   const publishCourse = useCallback((id: string) => setStatus(id, 'published'), [setStatus])
   const archiveCourse = useCallback((id: string) => setStatus(id, 'archived'), [setStatus])
+  const submitForReview = useCallback((id: string) => setStatus(id, 'pending-review'), [setStatus])
+  const revertToDraft = useCallback((id: string) => setStatus(id, 'draft'), [setStatus])
 
   const addModule = useCallback((courseId: string, title: string) => {
     setCourses((prev) =>
@@ -287,6 +291,8 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       setStatus,
       publishCourse,
       archiveCourse,
+      submitForReview,
+      revertToDraft,
       addModule,
       addLesson,
       updateModuleTitle,
@@ -307,6 +313,8 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       setStatus,
       publishCourse,
       archiveCourse,
+      submitForReview,
+      revertToDraft,
       addModule,
       addLesson,
       updateModuleTitle,

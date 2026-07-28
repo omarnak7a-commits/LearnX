@@ -29,8 +29,15 @@ interface DoctorCoursesPageProps {
  * course widget) can deep-link straight into a specific course.
  */
 export default function DoctorCoursesPage({ initialCourseId = null }: DoctorCoursesPageProps) {
-  const { courses, createCourse, updateCourseInfo, publishCourse, archiveCourse } =
-    useCourseCatalog()
+  const {
+    courses,
+    createCourse,
+    updateCourseInfo,
+    publishCourse,
+    archiveCourse,
+    submitForReview,
+    revertToDraft,
+  } = useCourseCatalog()
   const [createOpen, setCreateOpen] = useState(false)
   const [editCourseId, setEditCourseId] = useState<string | null>(null)
   const [openCourseId, setOpenCourseId] = useState<string | null>(initialCourseId)
@@ -108,8 +115,10 @@ export default function DoctorCoursesPage({ initialCourseId = null }: DoctorCour
                   onManageContent={() => openDetail(course, 'Content')}
                   onViewStudents={() => openDetail(course, 'Students')}
                   onAnalytics={() => openDetail(course, 'Analytics')}
+                  onSubmitForReview={() => submitForReview(course.id)}
                   onPublish={() => publishCourse(course.id)}
                   onArchive={() => archiveCourse(course.id)}
+                  onRestore={() => revertToDraft(course.id)}
                 />
               ))}
             </div>

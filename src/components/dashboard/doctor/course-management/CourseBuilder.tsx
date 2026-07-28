@@ -120,7 +120,7 @@ export default function CourseBuilder({ course }: CourseBuilderProps) {
             >
               ✓ Updates published
             </motion.span>
-          ) : (
+          ) : course.status === 'published' ? (
             <motion.button
               key="publish"
               onClick={handlePublishUpdates}
@@ -129,7 +129,7 @@ export default function CourseBuilder({ course }: CourseBuilderProps) {
             >
               Publish Updates
             </motion.button>
-          )}
+          ) : null}
         </AnimatePresence>
       </div>
 
