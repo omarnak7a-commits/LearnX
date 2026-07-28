@@ -1,21 +1,38 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import LogoMark from './ui/LogoMark'
+import logoLockupLightInk from '../assets/brand/logo-lockup-light-ink.png'
 
 interface IntroAnimationProps {
   onComplete: () => void
 }
 
+/**
+ * Native pixel dimensions of the official lockup crop (icon + "LearnX"
+ * wordmark, cropped directly from src/imports/logo2.png — the official
+ * dark-background brand asset — with the tagline row removed so it can be
+ * animated in separately). Used to reserve layout space up front so the
+ * logo never shifts or pops in late.
+ */
+const LOGO_WIDTH = 943
+const LOGO_HEIGHT = 169
+
 export default function IntroAnimation({ onComplete }: IntroAnimationProps) {
-  const [phase, setPhase] = useState<'draw' | 'glow' | 'exit'>('draw')
+  const [phase, setPhase] = useState<'converge' | 'reveal' | 'glow' | 'exit'>('converge')
   const [showShockwave, setShowShockwave] = useState(false)
 
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase('glow'), 1200)
-    const t2 = setTimeout(() => setShowShockwave(true), 1600)
-    const t3 = setTimeout(() => setPhase('exit'), 2200)
-    const t4 = setTimeout(() => onComplete(), 3000)
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
+    const t1 = setTimeout(() => setPhase('reveal'), 900)
+    const t2 = setTimeout(() => setShowShockwave(true), 1100)
+    const t3 = setTimeout(() => setPhase('glow'), 1500)
+    const t4 = setTimeout(() => setPhase('exit'), 2200)
+    const t5 = setTimeout(() => onComplete(), 3000)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+      clearTimeout(t3)
+      clearTimeout(t4)
+      clearTimeout(t5)
+    }
   }, [onComplete])
 
   return (
@@ -30,19 +47,41 @@ export default function IntroAnimation({ onComplete }: IntroAnimationProps) {
           {/* Subtle grid */}
           <div className="absolute inset-0 bg-grid opacity-30" />
 
-          {/* Floating particles */}
+          {/* Soft ambient particles */}
           {[...Array(12)].map((_, i) => (
             <motion.div
               key={i}
               className="absolute w-1 h-1 rounded-full bg-teal-400/30"
               style={{
-                left: `${10 + (i * 7.5)}%`,
+                left: `${10 + i * 7.5}%`,
                 top: `${15 + (i % 5) * 18}%`,
               }}
               animate={{ y: [-6, 6, -6], opacity: [0.2, 0.6, 0.2] }}
               transition={{ duration: 3 + i * 0.4, repeat: Infinity, ease: 'easeInOut', delay: i * 0.3 }}
             />
           ))}
+
+          {/* Small glowing fragments converging toward the center */}
+          {phase === 'converge' &&
+            [...Array(8)].map((_, i) => {
+              const angle = (i / 8) * Math.PI * 2
+              const distance = 140
+              return (
+                <motion.div
+                  key={`fragment-${i}`}
+                  className="absolute w-1.5 h-1.5 rounded-full"
+                  style={{ background: '#10E5C9' }}
+                  initial={{
+                    x: Math.cos(angle) * distance,
+                    y: Math.sin(angle) * distance,
+                    opacity: 0,
+                    scale: 1.4,
+                  }}
+                  animate={{ x: 0, y: 0, opacity: [0, 0.9, 0], scale: 0.4 }}
+                  transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1], delay: i * 0.03 }}
+                />
+              )
+            })}
 
           {/* Shockwave ring */}
           {showShockwave && (
@@ -62,39 +101,52 @@ export default function IntroAnimation({ onComplete }: IntroAnimationProps) {
             />
           )}
 
-          {/* Logo mark */}
-          <motion.div
-            className="relative flex flex-col items-center gap-6"
-            initial={{ scale: 0.7, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5, ease: 'easeOut' }}
-          >
-            <motion.div
-              animate={phase === 'glow' ? {
-                filter: ['drop-shadow(0 0 8px #10E5C9)', 'drop-shadow(0 0 32px #10E5C9)', 'drop-shadow(0 0 16px #10E5C9)'],
-              } : {}}
-              transition={{ duration: 0.8, ease: 'easeInOut' }}
+          {/* Official LearnX logo — exact brand asset, never redrawn */}
+          <div className="relative flex flex-col items-center gap-6 px-6">
+            <div
+              className="relative flex items-center justify-center"
+              style={{
+                width: 'clamp(200px, 45vw, 480px)',
+                aspectRatio: `${LOGO_WIDTH} / ${LOGO_HEIGHT}`,
+              }}
             >
-              <LogoMark size={120} animated color="#89C8CD" diamondColor="#10E5C9" />
-            </motion.div>
+              {/* Subtle glow behind the logo — soft, not neon */}
+              <motion.div
+                className="absolute inset-0 -z-10 rounded-full"
+                style={{
+                  background: 'radial-gradient(ellipse 65% 65% at center, rgba(16,229,201,0.35), transparent 70%)',
+                  filter: 'blur(28px)',
+                }}
+                initial={{ opacity: 0 }}
+                animate={{
+                  opacity: phase === 'reveal' ? 0.5 : phase === 'glow' ? [0.4, 0.65, 0.4] : 0,
+                }}
+                transition={{ duration: 2.4, ease: 'easeInOut', repeat: phase === 'glow' ? Infinity : 0 }}
+              />
 
-            <motion.div
-              className="flex flex-col items-center gap-1"
+              <motion.img
+                src={logoLockupLightInk}
+                alt="LearnX"
+                width={LOGO_WIDTH}
+                height={LOGO_HEIGHT}
+                className="relative h-full w-full object-contain"
+                draggable={false}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={phase === 'converge' ? { opacity: 0, scale: 0.95 } : { opacity: 1, scale: 1 }}
+                transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+              />
+            </div>
+
+            {/* Tagline */}
+            <motion.span
+              className="text-sm text-teal-300/70 tracking-[0.3em] uppercase text-center"
               initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 1.0, duration: 0.5 }}
+              animate={{ opacity: phase !== 'converge' ? 1 : 0, y: phase !== 'converge' ? 0 : 10 }}
+              transition={{ delay: 0.5, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
             >
-              <span
-                className="text-4xl font-bold text-white tracking-wider"
-                style={{ fontFamily: 'Orbitron, sans-serif' }}
-              >
-                LearnX
-              </span>
-              <span className="text-sm text-teal-400/70 tracking-[0.3em] uppercase">
-                Less Stress · More Success
-              </span>
-            </motion.div>
-          </motion.div>
+              Less Stress · More Success
+            </motion.span>
+          </div>
         </motion.div>
       ) : (
         <motion.div
