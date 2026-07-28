@@ -394,3 +394,12 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+/* ─── Brand logo — theme-aware ink swap ───
+   Dark mode (default): light-ink artwork reads on navy surfaces.
+   Light mode (.light): dark-ink artwork reads on bright surfaces. */
+.logo-asset-dark-ink { display: none; }
+.logo-asset-light-ink { display: block; }
+.light .logo-asset-dark-ink { display: block; }
+.light .logo-asset-light-ink { display: none; }
+

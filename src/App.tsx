@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import IntroAnimation from './components/IntroAnimation'
 import LandingPage from './components/landing/LandingPage'
+import LoginPage from './components/auth/LoginPage'
 import DashboardPage from './components/dashboard/DashboardPage'
 
-type View = 'landing' | 'dashboard'
+type View = 'landing' | 'login' | 'dashboard'
 
 export default function App() {
   const [introComplete, setIntroComplete] = useState(false)
@@ -39,6 +40,22 @@ export default function App() {
             >
               <LandingPage
                 onEnter={() => setView('dashboard')}
+                onLogin={() => setView('login')}
+                theme={theme}
+                onToggleTheme={toggleTheme}
+              />
+            </motion.div>
+          ) : view === 'login' ? (
+            <motion.div
+              key="login"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              <LoginPage
+                onLogin={() => setView('dashboard')}
+                onBackToLanding={() => setView('landing')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
               />
@@ -63,3 +80,4 @@ export default function App() {
     </div>
   )
 }
+

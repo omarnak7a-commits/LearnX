@@ -8,8 +8,9 @@ import StudentDashboardHome from './student/StudentDashboardHome'
 import AITutorPage from './student/AITutorPage'
 import QuizzesPage from './student/QuizzesPage'
 import MyFilesPage from './student/MyFilesPage'
-import GoalsPanel from './student/GoalsPanel'
 import CertificatesAchievements from './student/CertificatesAchievements'
+import VideoIntelligencePage from './student/video/VideoIntelligencePage'
+import StudyPlannerPage from './student/planner/StudyPlannerPage'
 
 import DoctorDashboardHome from './doctor/DoctorDashboardHome'
 import CourseManagement from './doctor/CourseManagement'
@@ -40,10 +41,14 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
     title: 'My Files',
     subtitle: 'Every document, lecture, and note in one place',
   },
+  video: {
+    title: 'AI Video Intelligence',
+    subtitle: 'Watch Less. Learn More.',
+  },
   tutor: { title: 'AI Tutor', subtitle: 'Your adaptive study companion' },
   planner: {
     title: 'Smart Planner',
-    subtitle: 'Goals, streaks, and your study rhythm',
+    subtitle: 'A study plan that rebuilds itself around you',
   },
   quizzes: {
     title: 'Quizzes',
@@ -113,10 +118,12 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
           return <StudentDashboardHome />
         case 'files':
           return <MyFilesPage />
+        case 'video':
+          return <VideoIntelligencePage />
         case 'tutor':
           return <AITutorPage />
         case 'planner':
-          return <GoalsPanel />
+          return <StudyPlannerPage />
         case 'quizzes':
           return <QuizzesPage />
         case 'gamification':

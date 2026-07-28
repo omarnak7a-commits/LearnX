@@ -1,9 +1,22 @@
 import { motion } from 'framer-motion'
-import LogoMark from './LogoMark'
+import logoFullDarkInk from '../../assets/brand/logo-full-dark-ink.png'
+import logoFullLightInk from '../../assets/brand/logo-full-light-ink.png'
+import logoSymbolDarkInk from '../../assets/brand/logo-symbol-dark-ink.png'
+import logoSymbolLightInk from '../../assets/brand/logo-symbol-light-ink.png'
 
 type LogoSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
-const SYMBOL_SIZE: Record<LogoSize, number> = {
+/** Symbol height in px per size step — width is derived from the source aspect ratio. */
+const SYMBOL_HEIGHT: Record<LogoSize, number> = {
+  xs: 22,
+  sm: 26,
+  md: 32,
+  lg: 44,
+  xl: 72,
+}
+
+/** Full wordmark height in px per size step. */
+const FULL_HEIGHT: Record<LogoSize, number> = {
   xs: 20,
   sm: 24,
   md: 30,
@@ -11,29 +24,10 @@ const SYMBOL_SIZE: Record<LogoSize, number> = {
   xl: 64,
 }
 
-const WORDMARK_SIZE: Record<LogoSize, string> = {
-  xs: '0.9rem',
-  sm: '1rem',
-  md: '1.125rem',
-  lg: '1.5rem',
-  xl: '2.25rem',
-}
-
-const GAP: Record<LogoSize, number> = {
-  xs: 6,
-  sm: 8,
-  md: 10,
-  lg: 12,
-  xl: 16,
-}
-
 interface LogoProps {
   /** 'full' = symbol + wordmark (marketing pages). 'symbol' = mark only (dashboards / compact nav). */
   variant?: 'full' | 'symbol'
   size?: LogoSize
-  animated?: boolean
-  /** Show the "Less Stress | More Success" tagline beneath the wordmark. */
-  withTagline?: boolean
   className?: string
   onClick?: () => void
   as?: 'div' | 'button'
@@ -41,61 +35,51 @@ interface LogoProps {
 }
 
 /**
- * Canonical LearnX logo lockup. Always theme-aware (ink follows
- * `--logo-ink`, spark diamond stays brand teal) so it never needs a manual
- * dark/light color prop at the call site.
+ * Canonical LearnX logo lockup, rendered from the official brand asset
+ * (src/imports/logo1.png light-mode artwork / logo2.png dark-mode artwork —
+ * cropped and trimmed once into `src/assets/brand/`, never re-drawn).
+ *
+ * Automatically swaps the correct light/dark-ink variant via CSS using the
+ * same `.light` class convention the rest of the design system already
+ * uses on `<html>` — no theme prop needs to be threaded through call sites.
  */
 export default function Logo({
   variant = 'full',
   size = 'md',
-  animated = false,
-  withTagline = false,
   className = '',
   onClick,
   as = 'div',
   'aria-label': ariaLabel,
 }: LogoProps) {
-  const symbolSize = SYMBOL_SIZE[size]
-  const gap = GAP[size]
+  const height = variant === 'full' ? FULL_HEIGHT[size] : SYMBOL_HEIGHT[size]
+  const darkSrc = variant === 'full' ? logoFullDarkInk : logoSymbolDarkInk
+  const lightSrc = variant === 'full' ? logoFullLightInk : logoSymbolLightInk
 
   const content = (
-    <div className="flex items-center" style={{ gap }}>
-      <LogoMark size={symbolSize} animated={animated} color="var(--logo-ink)" />
-      {variant === 'full' && (
-        <div className="flex flex-col justify-center leading-none">
-          <span
-            className="font-bold whitespace-nowrap"
-            style={{
-              fontFamily: 'Orbitron, sans-serif',
-              fontSize: WORDMARK_SIZE[size],
-              color: 'var(--foreground)',
-              letterSpacing: '0.06em',
-              lineHeight: 1,
-            }}
-          >
-            LearnX
-          </span>
-          {withTagline && (
-            <span
-              className="whitespace-nowrap mt-1.5"
-              style={{
-                fontSize: '0.625rem',
-                color: 'var(--muted-foreground)',
-                letterSpacing: '0.18em',
-                textTransform: 'uppercase',
-                fontFamily: 'Inter, sans-serif',
-              }}
-            >
-              Less Stress · More Success
-            </span>
-          )}
-        </div>
-      )}
-    </div>
+    <>
+      {/* Dark-ink artwork — shown on light backgrounds (default / light mode) */}
+      <img
+        src={darkSrc}
+        alt="LearnX"
+        className="logo-asset logo-asset-dark-ink"
+        style={{ height, width: 'auto' }}
+        draggable={false}
+      />
+      {/* Light-ink artwork — shown on dark backgrounds (dark mode) */}
+      <img
+        src={lightSrc}
+        alt=""
+        aria-hidden="true"
+        className="logo-asset logo-asset-light-ink"
+        style={{ height, width: 'auto' }}
+        draggable={false}
+      />
+    </>
   )
 
+
   const commonProps = {
-    className: `inline-flex items-center flex-shrink-0 ${onClick ? 'group' : ''} ${className}`,
+    className: `relative inline-flex items-center flex-shrink-0 ${onClick ? 'group' : ''} ${className}`,
     onClick,
     'aria-label': ariaLabel ?? 'LearnX',
   }

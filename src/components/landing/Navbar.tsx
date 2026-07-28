@@ -4,13 +4,14 @@ import Logo from '../ui/Logo'
 
 interface NavbarProps {
   onEnter: () => void
+  onLogin?: () => void
   theme: 'dark' | 'light'
   onToggleTheme: () => void
 }
 
 const links = ['Features', 'Roles', 'Pricing', 'Analytics']
 
-export default function Navbar({ onEnter, theme, onToggleTheme }: NavbarProps) {
+export default function Navbar({ onEnter, onLogin, theme, onToggleTheme }: NavbarProps) {
   const [scrolled, setScrolled] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -102,6 +103,18 @@ export default function Navbar({ onEnter, theme, onToggleTheme }: NavbarProps) {
                 </svg>
               )}
             </button>
+
+            {onLogin && (
+              <button
+                onClick={onLogin}
+                className="hidden md:flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all"
+                style={{ color: 'var(--muted-foreground)' }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--foreground)')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted-foreground)')}
+              >
+                Log in
+              </button>
+            )}
 
             <motion.button
               onClick={onEnter}
@@ -207,6 +220,21 @@ export default function Navbar({ onEnter, theme, onToggleTheme }: NavbarProps) {
               >
                 Try LearnX Free
               </motion.button>
+              {onLogin && (
+                <motion.button
+                  onClick={() => {
+                    setMobileOpen(false)
+                    onLogin()
+                  }}
+                  className="text-sm font-medium"
+                  style={{ color: 'var(--muted-foreground)' }}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.47 }}
+                >
+                  Log in
+                </motion.button>
+              )}
             </nav>
           </motion.div>
         )}

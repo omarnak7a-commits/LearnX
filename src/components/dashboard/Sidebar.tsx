@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import LogoMark from '../ui/LogoMark'
+import Logo from '../ui/Logo'
 
 export type Role = 'student' | 'doctor'
 
@@ -13,7 +13,8 @@ interface NavItem {
 const studentNav: NavItem[] = [
   { id: 'dashboard', icon: '⊞', label: 'Dashboard' },
   { id: 'files', icon: '📂', label: 'My Files' },
-  { id: 'tutor', icon: '🤖', label: 'AI Tutor', badge: 'NEW' },
+  { id: 'video', icon: '🎬', label: 'Video Intelligence', badge: 'NEW' },
+  { id: 'tutor', icon: '🤖', label: 'AI Tutor' },
   { id: 'planner', icon: '📅', label: 'Smart Planner' },
   { id: 'quizzes', icon: '❓', label: 'Quizzes', badge: '3' },
   { id: 'gamification', icon: '🏆', label: 'Gamification' },
@@ -103,24 +104,28 @@ export default function Sidebar({
             className="flex-shrink-0 transition-transform hover:scale-110"
             aria-label="Back to landing"
           >
-            <LogoMark size={30} color="var(--primary)" />
+            <Logo variant="symbol" size="sm" />
           </button>
           <AnimatePresence>
             {!collapsed && (
-              <motion.span
-                className="font-bold text-base whitespace-nowrap overflow-hidden"
-                style={{
-                  fontFamily: 'Orbitron, sans-serif',
-                  color: 'var(--foreground)',
-                  letterSpacing: '0.04em',
-                }}
+              <motion.div
+                className="overflow-hidden"
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: 'auto' }}
                 exit={{ opacity: 0, width: 0 }}
                 transition={{ duration: 0.2 }}
               >
-                LearnX
-              </motion.span>
+                <span
+                  className="font-bold text-base whitespace-nowrap"
+                  style={{
+                    fontFamily: 'Orbitron, sans-serif',
+                    color: 'var(--foreground)',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  LearnX
+                </span>
+              </motion.div>
             )}
           </AnimatePresence>
 

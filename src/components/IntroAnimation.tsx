@@ -71,11 +71,11 @@ export default function IntroAnimation({ onComplete }: IntroAnimationProps) {
           >
             <motion.div
               animate={phase === 'glow' ? {
-                filter: ['drop-shadow(0 0 8px #2DD4BF)', 'drop-shadow(0 0 32px #2DD4BF)', 'drop-shadow(0 0 16px #2DD4BF)'],
+                filter: ['drop-shadow(0 0 8px #10E5C9)', 'drop-shadow(0 0 32px #10E5C9)', 'drop-shadow(0 0 16px #10E5C9)'],
               } : {}}
               transition={{ duration: 0.8, ease: 'easeInOut' }}
             >
-              <LogoMark size={120} animated color="#2DD4BF" />
+              <LogoMark size={120} animated color="#89C8CD" diamondColor="#10E5C9" />
             </motion.div>
 
             <motion.div

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Role } from './Sidebar'
+import Logo from '../ui/Logo'
 
 interface TopBarProps {
   theme: 'dark' | 'light'
@@ -117,6 +118,9 @@ export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: 
             <path d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
+
+        {/* Compact logo — mobile header only, hidden once the sidebar is visible */}
+        <Logo variant="symbol" size="xs" className="lg:hidden flex-shrink-0" />
 
         {/* Search bar */}
         <button
