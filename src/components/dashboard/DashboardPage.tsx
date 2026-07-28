@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Sidebar, { type Role } from './Sidebar'
 import TopBar from './TopBar'
 import AIAssistant from './AIAssistant'
+import { CourseCatalogProvider } from '../../context/CourseCatalogContext'
 
 import StudentDashboardHome from './student/StudentDashboardHome'
 import AITutorPage from './student/AITutorPage'
@@ -11,9 +12,12 @@ import MyFilesPage from './student/MyFilesPage'
 import CertificatesAchievements from './student/CertificatesAchievements'
 import VideoIntelligencePage from './student/video/VideoIntelligencePage'
 import StudyPlannerPage from './student/planner/StudyPlannerPage'
+import StudentCoursesPage from './student/StudentCoursesPage'
 
 import DoctorDashboardHome from './doctor/DoctorDashboardHome'
-import CourseManagement from './doctor/CourseManagement'
+import DoctorCoursesPage from './doctor/DoctorCoursesPage'
+import CourseBuilderPage from './doctor/CourseBuilderPage'
+import RevenuePage from './doctor/RevenuePage'
 import MaterialsPage from './doctor/MaterialsPage'
 import StudentsPage from './doctor/StudentsPage'
 import WorkItemsPage from './doctor/WorkItemsPage'
@@ -32,10 +36,14 @@ interface DashboardPageProps {
   onToggleTheme: () => void
 }
 
-const pageTitles: Record<string, { title: string; subtitle: string }> = {
+const studentTitles: Record<string, { title: string; subtitle: string }> = {
   dashboard: {
     title: 'Dashboard',
     subtitle: 'Monday, 27 July 2026 · Exam in 12 days',
+  },
+  courses: {
+    title: 'My Courses',
+    subtitle: 'Every course your instructors have published — pick up where you left off',
   },
   files: {
     title: 'My Files',
@@ -45,7 +53,7 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
     title: 'AI Video Intelligence',
     subtitle: 'Watch Less. Learn More.',
   },
-  tutor: { title: 'AI Tutor', subtitle: 'Your adaptive study companion' },
+  tutor: { title: 'AI Workspace', subtitle: 'Your adaptive study companion' },
   planner: {
     title: 'Smart Planner',
     subtitle: 'A study plan that rebuilds itself around you',
@@ -55,7 +63,7 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'AI-generated practice from your materials',
   },
   gamification: {
-    title: 'Gamification',
+    title: 'Achievements',
     subtitle: 'Certificates, achievements, and progress',
   },
   analytics: {
@@ -66,9 +74,20 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
     title: 'Settings',
     subtitle: 'Manage your account and preferences',
   },
+}
+
+const doctorTitles: Record<string, { title: string; subtitle: string }> = {
+  dashboard: {
+    title: 'Dashboard',
+    subtitle: 'Monday, 27 July 2026 · Exam in 12 days',
+  },
   courses: {
-    title: 'My Courses',
-    subtitle: 'Manage course content and materials',
+    title: 'Courses',
+    subtitle: 'Create, publish, and manage every course you teach',
+  },
+  'course-builder': {
+    title: 'Course Builder',
+    subtitle: 'Structure modules, lessons, and resources with drag-and-drop',
   },
   materials: {
     title: 'Materials',
@@ -86,6 +105,14 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
     title: 'Exams',
     subtitle: 'Build and schedule exams with AI assistance',
   },
+  analytics: {
+    title: 'Analytics',
+    subtitle: 'Student performance across every course',
+  },
+  revenue: {
+    title: 'Revenue',
+    subtitle: 'Earnings from your premium courses',
+  },
   messages: { title: 'Messages', subtitle: 'Conversations with your students' },
   calendar: { title: 'Calendar', subtitle: 'Your schedule at a glance' },
   announcements: {
@@ -96,6 +123,10 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
     title: 'AI Teaching Assistant',
     subtitle: 'Generate, summarize, and analyze — instantly',
   },
+  settings: {
+    title: 'Settings',
+    subtitle: 'Manage your account and preferences',
+  },
 }
 
 export default function DashboardPage({ onBack, theme, onToggleTheme }: DashboardPageProps) {
@@ -103,19 +134,35 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [role, setRole] = useState<Role>('student')
   const [activeItem, setActiveItem] = useState('dashboard')
+  const [pendingCourseId, setPendingCourseId] = useState<string | null>(null)
 
   function handleRoleChange(next: Role) {
     setRole(next)
     setActiveItem('dashboard')
   }
 
-  const meta = pageTitles[activeItem] ?? { title: activeItem, subtitle: '' }
+  function navigateToCourse(courseId: string) {
+    setPendingCourseId(courseId)
+    setActiveItem('courses')
+  }
+
+  function handleSidebarNavigate(item: string) {
+    setPendingCourseId(null)
+    setActiveItem(item)
+  }
+
+  const meta = (role === 'student' ? studentTitles[activeItem] : doctorTitles[activeItem]) ?? {
+    title: activeItem,
+    subtitle: '',
+  }
 
   function renderContent() {
     if (role === 'student') {
       switch (activeItem) {
         case 'dashboard':
           return <StudentDashboardHome />
+        case 'courses':
+          return <StudentCoursesPage />
         case 'files':
           return <MyFilesPage />
         case 'video':
@@ -140,9 +187,11 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
     }
     switch (activeItem) {
       case 'dashboard':
-        return <DoctorDashboardHome />
+        return <DoctorDashboardHome onNavigate={setActiveItem} onOpenCourse={navigateToCourse} />
       case 'courses':
-        return <CourseManagement />
+        return <DoctorCoursesPage initialCourseId={pendingCourseId} />
+      case 'course-builder':
+        return <CourseBuilderPage />
       case 'materials':
         return <MaterialsPage />
       case 'students':
@@ -153,6 +202,8 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
         return <WorkItemsPage kind="exams" />
       case 'analytics':
         return <StudentAnalyticsPanel />
+      case 'revenue':
+        return <RevenuePage />
       case 'messages':
         return <MessagesPage />
       case 'calendar':
@@ -171,70 +222,72 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
   }
 
   return (
-    <div className="flex" style={{ minHeight: '100vh', background: 'var(--background)' }}>
-      <Sidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((v) => !v)}
-        activeItem={activeItem}
-        onNavigate={setActiveItem}
-        onBack={onBack}
-        role={role}
-        onRoleChange={handleRoleChange}
-        mobileOpen={mobileNavOpen}
-        onCloseMobile={() => setMobileNavOpen(false)}
-      />
-
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <TopBar
-          theme={theme}
-          onToggleTheme={onToggleTheme}
+    <CourseCatalogProvider>
+      <div className="flex" style={{ minHeight: '100vh', background: 'var(--background)' }}>
+        <Sidebar
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((v) => !v)}
+          activeItem={activeItem}
+          onNavigate={handleSidebarNavigate}
+          onBack={onBack}
           role={role}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
+          onRoleChange={handleRoleChange}
+          mobileOpen={mobileNavOpen}
+          onCloseMobile={() => setMobileNavOpen(false)}
         />
 
-        <main
-          className="flex-1 overflow-y-auto scrollbar-thin"
-          style={{ background: 'var(--section-dark)' }}
-        >
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={`${role}-${activeItem}`}
-              className="p-4 sm:p-6"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            >
-              {/* Page title */}
-              <div className="mb-6">
-                <h1
-                  className="text-xl font-bold"
-                  style={{
-                    fontFamily: 'Orbitron, sans-serif',
-                    color: 'var(--foreground)',
-                    letterSpacing: '-0.01em',
-                  }}
-                >
-                  {meta.title}
-                </h1>
-                <p
-                  className="text-xs mt-0.5"
-                  style={{
-                    color: 'var(--muted-foreground)',
-                    fontFamily: 'JetBrains Mono, monospace',
-                  }}
-                >
-                  {meta.subtitle}
-                </p>
-              </div>
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <TopBar
+            theme={theme}
+            onToggleTheme={onToggleTheme}
+            role={role}
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+          />
 
-              {renderContent()}
-            </motion.div>
-          </AnimatePresence>
-        </main>
+          <main
+            className="flex-1 overflow-y-auto scrollbar-thin"
+            style={{ background: 'var(--section-dark)' }}
+          >
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={`${role}-${activeItem}`}
+                className="p-4 sm:p-6"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              >
+                {/* Page title */}
+                <div className="mb-6">
+                  <h1
+                    className="text-xl font-bold"
+                    style={{
+                      fontFamily: 'Orbitron, sans-serif',
+                      color: 'var(--foreground)',
+                      letterSpacing: '-0.01em',
+                    }}
+                  >
+                    {meta.title}
+                  </h1>
+                  <p
+                    className="text-xs mt-0.5"
+                    style={{
+                      color: 'var(--muted-foreground)',
+                      fontFamily: 'JetBrains Mono, monospace',
+                    }}
+                  >
+                    {meta.subtitle}
+                  </p>
+                </div>
+
+                {renderContent()}
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
+
+        <AIAssistant role={role} />
       </div>
-
-      <AIAssistant role={role} />
-    </div>
+    </CourseCatalogProvider>
   )
 }

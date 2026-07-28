@@ -5,6 +5,7 @@ interface StatCardProps {
   icon: string
   label: string
   value: number
+  prefix?: string
   suffix?: string
   decimals?: number
   delta?: string
@@ -19,6 +20,7 @@ export default function StatCard({
   icon,
   label,
   value,
+  prefix = '',
   suffix = '',
   decimals = 0,
   delta,
@@ -109,6 +111,7 @@ export default function StatCard({
           color: 'var(--foreground)',
         }}
       >
+        {prefix}
         <span ref={ref}>0</span>
         {suffix}
       </p>

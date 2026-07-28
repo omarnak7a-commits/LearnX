@@ -1,11 +1,19 @@
 import { motion } from 'framer-motion'
 import DoctorOverview from './DoctorOverview'
 import StudentAnalyticsPanel from './StudentAnalyticsPanel'
-import CourseManagement from './CourseManagement'
+import CourseOverviewWidget from './CourseOverviewWidget'
 import AITeachingAssistant from './AITeachingAssistant'
 
+interface DoctorDashboardHomeProps {
+  onNavigate?: (item: string) => void
+  onOpenCourse?: (courseId: string) => void
+}
+
 /** Full Doctor Dashboard overview — mirrors the Student dashboard's design language. */
-export default function DoctorDashboardHome() {
+export default function DoctorDashboardHome({
+  onNavigate,
+  onOpenCourse,
+}: DoctorDashboardHomeProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -14,7 +22,10 @@ export default function DoctorDashboardHome() {
       className="space-y-5"
     >
       <DoctorOverview />
-      <CourseManagement />
+      <CourseOverviewWidget
+        onManageCourses={() => onNavigate?.('courses')}
+        onOpenCourse={onOpenCourse}
+      />
       <StudentAnalyticsPanel />
       <AITeachingAssistant />
     </motion.div>
