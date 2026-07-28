@@ -16,11 +16,14 @@ interface CourseCatalogValue {
   courses: Course[]
   getCourse: (id: string) => Course | undefined
   createCourse: (input: NewCourseInput) => Course
+  updateCourseInfo: (id: string, input: Partial<NewCourseInput>) => void
   setStatus: (id: string, status: CourseStatus) => void
   publishCourse: (id: string) => void
   archiveCourse: (id: string) => void
   addModule: (courseId: string, title: string) => void
   addLesson: (courseId: string, moduleId: string, title: string, type: LessonType) => void
+  updateModuleTitle: (courseId: string, moduleId: string, title: string) => void
+  updateLessonTitle: (courseId: string, moduleId: string, lessonId: string, title: string) => void
   deleteLesson: (courseId: string, moduleId: string, lessonId: string) => void
   deleteModule: (courseId: string, moduleId: string) => void
   reorderModules: (courseId: string, modules: Module[]) => void
@@ -96,6 +99,12 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
     return newCourse
   }, [])
 
+  const updateCourseInfo = useCallback((id: string, input: Partial<NewCourseInput>) => {
+    setCourses((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...input, lastUpdated: 'Just now' } : c))
+    )
+  }, [])
+
   const setStatus = useCallback((id: string, status: CourseStatus) => {
     setCourses((prev) =>
       prev.map((c) => (c.id === id ? { ...c, status, lastUpdated: 'Just now' } : c))
@@ -160,6 +169,42 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       })
     )
   }, [])
+
+  const updateModuleTitle = useCallback((courseId: string, moduleId: string, title: string) => {
+    setCourses((prev) =>
+      prev.map((c) => {
+        if (c.id !== courseId) return c
+        return {
+          ...c,
+          lastUpdated: 'Just now',
+          modules: c.modules.map((m) => (m.id === moduleId ? { ...m, title } : m)),
+        }
+      })
+    )
+  }, [])
+
+  const updateLessonTitle = useCallback(
+    (courseId: string, moduleId: string, lessonId: string, title: string) => {
+      setCourses((prev) =>
+        prev.map((c) => {
+          if (c.id !== courseId) return c
+          return {
+            ...c,
+            lastUpdated: 'Just now',
+            modules: c.modules.map((m) =>
+              m.id !== moduleId
+                ? m
+                : {
+                    ...m,
+                    lessons: m.lessons.map((l) => (l.id === lessonId ? { ...l, title } : l)),
+                  }
+            ),
+          }
+        })
+      )
+    },
+    []
+  )
 
   const deleteModule = useCallback((courseId: string, moduleId: string) => {
     setCourses((prev) =>
@@ -238,11 +283,14 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       courses,
       getCourse,
       createCourse,
+      updateCourseInfo,
       setStatus,
       publishCourse,
       archiveCourse,
       addModule,
       addLesson,
+      updateModuleTitle,
+      updateLessonTitle,
       deleteLesson,
       deleteModule,
       reorderModules,
@@ -255,11 +303,14 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       courses,
       getCourse,
       createCourse,
+      updateCourseInfo,
       setStatus,
       publishCourse,
       archiveCourse,
       addModule,
       addLesson,
+      updateModuleTitle,
+      updateLessonTitle,
       deleteLesson,
       deleteModule,
       reorderModules,

@@ -55,9 +55,10 @@ const studentTitles: Record<string, { title: string; subtitle: string }> = {
   },
   tutor: { title: 'AI Workspace', subtitle: 'Your adaptive study companion' },
   planner: {
-    title: 'Smart Planner',
+    title: 'Study Planner',
     subtitle: 'A study plan that rebuilds itself around you',
   },
+  calendar: { title: 'Calendar', subtitle: 'Your schedule at a glance' },
   quizzes: {
     title: 'Quizzes',
     subtitle: 'AI-generated practice from your materials',
@@ -171,6 +172,8 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
           return <AITutorPage />
         case 'planner':
           return <StudyPlannerPage />
+        case 'calendar':
+          return <CalendarPage role={role} />
         case 'quizzes':
           return <QuizzesPage />
         case 'gamification':

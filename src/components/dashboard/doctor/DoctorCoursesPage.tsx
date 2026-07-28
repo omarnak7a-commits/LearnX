@@ -4,6 +4,7 @@ import { useCourseCatalog } from '../../../context/CourseCatalogContext'
 import type { Course, CourseStatus } from '../../../types/course'
 import DoctorCourseCard from './course-management/DoctorCourseCard'
 import CreateCourseModal from './course-management/CreateCourseModal'
+import EditCourseModal from './course-management/EditCourseModal'
 import DoctorCourseDetail from './course-management/DoctorCourseDetail'
 import EmptyState from '../shared/EmptyState'
 
@@ -28,12 +29,15 @@ interface DoctorCoursesPageProps {
  * course widget) can deep-link straight into a specific course.
  */
 export default function DoctorCoursesPage({ initialCourseId = null }: DoctorCoursesPageProps) {
-  const { courses, createCourse, publishCourse, archiveCourse } = useCourseCatalog()
+  const { courses, createCourse, updateCourseInfo, publishCourse, archiveCourse } =
+    useCourseCatalog()
   const [createOpen, setCreateOpen] = useState(false)
+  const [editCourseId, setEditCourseId] = useState<string | null>(null)
   const [openCourseId, setOpenCourseId] = useState<string | null>(initialCourseId)
   const [initialTab, setInitialTab] = useState<'Content' | 'Students' | 'Analytics'>('Content')
 
   const openCourse = courses.find((c) => c.id === openCourseId)
+  const editCourse = courses.find((c) => c.id === editCourseId) ?? null
 
   function openDetail(course: Course, tab: 'Content' | 'Students' | 'Analytics' = 'Content') {
     setOpenCourseId(course.id)
@@ -100,7 +104,7 @@ export default function DoctorCoursesPage({ initialCourseId = null }: DoctorCour
                   key={course.id}
                   course={course}
                   delay={i * 0.05}
-                  onEdit={() => openDetail(course, 'Content')}
+                  onEdit={() => setEditCourseId(course.id)}
                   onManageContent={() => openDetail(course, 'Content')}
                   onViewStudents={() => openDetail(course, 'Students')}
                   onAnalytics={() => openDetail(course, 'Analytics')}
@@ -138,6 +142,14 @@ export default function DoctorCoursesPage({ initialCourseId = null }: DoctorCour
         onCreate={(input) => {
           const created = createCourse(input)
           openDetail(created, 'Content')
+        }}
+      />
+
+      <EditCourseModal
+        course={editCourse}
+        onClose={() => setEditCourseId(null)}
+        onSave={(input) => {
+          if (editCourse) updateCourseInfo(editCourse.id, input)
         }}
       />
     </div>

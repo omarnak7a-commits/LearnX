@@ -31,8 +31,17 @@ const lessonTypeLabel: Record<LessonType, string> = {
  * same animation library already used everywhere else in the app.
  */
 export default function CourseBuilder({ course }: CourseBuilderProps) {
-  const { addModule, addLesson, deleteLesson, deleteModule, reorderModules, reorderLessons } =
-    useCourseCatalog()
+  const {
+    addModule,
+    addLesson,
+    updateModuleTitle,
+    updateLessonTitle,
+    deleteLesson,
+    deleteModule,
+    reorderModules,
+    reorderLessons,
+    publishCourse,
+  } = useCourseCatalog()
   const [expanded, setExpanded] = useState<Record<string, boolean>>(
     Object.fromEntries(course.modules.map((m, i) => [m.id, i === 0]))
   )
@@ -41,6 +50,11 @@ export default function CourseBuilder({ course }: CourseBuilderProps) {
   const [newLessonType, setNewLessonType] = useState<LessonType>('video')
   const [newModuleTitle, setNewModuleTitle] = useState('')
   const [addingModule, setAddingModule] = useState(false)
+  const [editingModuleId, setEditingModuleId] = useState<string | null>(null)
+  const [editingModuleTitle, setEditingModuleTitle] = useState('')
+  const [editingLessonId, setEditingLessonId] = useState<string | null>(null)
+  const [editingLessonTitle, setEditingLessonTitle] = useState('')
+  const [publishedFlash, setPublishedFlash] = useState(false)
 
   function toggle(id: string) {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
@@ -61,8 +75,64 @@ export default function CourseBuilder({ course }: CourseBuilderProps) {
     setAddingLessonTo(null)
   }
 
+  function startEditModule(moduleId: string, title: string) {
+    setEditingModuleId(moduleId)
+    setEditingModuleTitle(title)
+  }
+
+  function saveModuleEdit(moduleId: string) {
+    if (editingModuleTitle.trim()) updateModuleTitle(course.id, moduleId, editingModuleTitle.trim())
+    setEditingModuleId(null)
+  }
+
+  function startEditLesson(lessonId: string, title: string) {
+    setEditingLessonId(lessonId)
+    setEditingLessonTitle(title)
+  }
+
+  function saveLessonEdit(moduleId: string, lessonId: string) {
+    if (editingLessonTitle.trim())
+      updateLessonTitle(course.id, moduleId, lessonId, editingLessonTitle.trim())
+    setEditingLessonId(null)
+  }
+
+  function handlePublishUpdates() {
+    publishCourse(course.id)
+    setPublishedFlash(true)
+    setTimeout(() => setPublishedFlash(false), 2400)
+  }
+
   return (
     <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+          Drag modules and lessons to reorder. All edits save instantly.
+        </p>
+        <AnimatePresence mode="wait">
+          {publishedFlash ? (
+            <motion.span
+              key="flash"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="text-xs font-semibold px-3.5 py-2 rounded-full flex items-center gap-1.5"
+              style={{ background: 'var(--success-soft)', color: 'var(--success)' }}
+            >
+              ✓ Updates published
+            </motion.span>
+          ) : (
+            <motion.button
+              key="publish"
+              onClick={handlePublishUpdates}
+              className="text-xs font-semibold px-3.5 py-2 rounded-full"
+              style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
+            >
+              Publish Updates
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
+
       <Reorder.Group
         axis="y"
         values={course.modules}
@@ -95,16 +165,38 @@ export default function CourseBuilder({ course }: CourseBuilderProps) {
                 {mi + 1}
               </span>
               <div className="flex-1 min-w-0">
-                <p
-                  className="text-sm font-semibold truncate"
-                  style={{ color: 'var(--foreground)' }}
-                >
-                  {mod.title}
-                </p>
+                {editingModuleId === mod.id ? (
+                  <input
+                    autoFocus
+                    value={editingModuleTitle}
+                    onChange={(e) => setEditingModuleTitle(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.key === 'Enter' && saveModuleEdit(mod.id)}
+                    onBlur={() => saveModuleEdit(mod.id)}
+                    className="input-field w-full px-2 py-1 rounded-md text-sm"
+                  />
+                ) : (
+                  <p
+                    className="text-sm font-semibold truncate"
+                    style={{ color: 'var(--foreground)' }}
+                  >
+                    {mod.title}
+                  </p>
+                )}
                 <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
                   {mod.lessons.length} lesson{mod.lessons.length === 1 ? '' : 's'}
                 </p>
               </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  startEditModule(mod.id, mod.title)
+                }}
+                className="text-xs px-2 py-1 rounded-lg flex-shrink-0"
+                style={{ color: 'var(--primary)' }}
+              >
+                Edit
+              </button>
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -156,15 +248,37 @@ export default function CourseBuilder({ course }: CourseBuilderProps) {
                           ⠿
                         </span>
                         <span className="text-sm flex-shrink-0">{lessonTypeIcon[lesson.type]}</span>
-                        <span
-                          className="text-sm flex-1 min-w-0 truncate"
-                          style={{ color: 'var(--foreground)' }}
-                        >
-                          {lesson.title}
-                        </span>
+                        {editingLessonId === lesson.id ? (
+                          <input
+                            autoFocus
+                            value={editingLessonTitle}
+                            onChange={(e) => setEditingLessonTitle(e.target.value)}
+                            onKeyDown={(e) =>
+                              e.key === 'Enter' && saveLessonEdit(mod.id, lesson.id)
+                            }
+                            onBlur={() => saveLessonEdit(mod.id, lesson.id)}
+                            className="input-field flex-1 min-w-0 px-2 py-1 rounded-md text-sm"
+                          />
+                        ) : (
+                          <span
+                            className="text-sm flex-1 min-w-0 truncate"
+                            style={{ color: 'var(--foreground)' }}
+                          >
+                            {lesson.title}
+                          </span>
+                        )}
                         <Badge tone="neutral" size="xs">
                           {lessonTypeLabel[lesson.type]}
                         </Badge>
+                        {lesson.resources.length > 0 && (
+                          <span
+                            className="text-xs flex-shrink-0"
+                            style={{ color: 'var(--muted-foreground)' }}
+                            title={lesson.resources.map((r) => r.name).join(', ')}
+                          >
+                            📎 {lesson.resources.length}
+                          </span>
+                        )}
                         {lesson.durationMinutes !== undefined && (
                           <span
                             className="text-xs flex-shrink-0 font-mono"
@@ -173,6 +287,14 @@ export default function CourseBuilder({ course }: CourseBuilderProps) {
                             {lesson.durationMinutes}m
                           </span>
                         )}
+                        <button
+                          onClick={() => startEditLesson(lesson.id, lesson.title)}
+                          className="text-xs flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center"
+                          style={{ color: 'var(--primary)' }}
+                          aria-label="Edit lesson"
+                        >
+                          ✎
+                        </button>
                         <button
                           onClick={() => deleteLesson(course.id, mod.id, lesson.id)}
                           className="text-xs flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center"

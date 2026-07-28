@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import type { Course } from '../../../../types/course'
+import type { Course, CourseType } from '../../../../types/course'
 import { totalLessons } from '../../../../types/course'
 import { useCourseCatalog } from '../../../../context/CourseCatalogContext'
 import Tabs from '../../shared/Tabs'
@@ -9,6 +9,7 @@ import CourseThumbnail from '../../shared/CourseThumbnail'
 import CourseBuilder from './CourseBuilder'
 import CourseAnalyticsPanel from './CourseAnalyticsPanel'
 import CourseStudentsPanel from './CourseStudentsPanel'
+import EditCourseModal from './EditCourseModal'
 import { statusTone, statusLabel, courseTypeLabel } from './courseMeta'
 
 interface DoctorCourseDetailProps {
@@ -28,7 +29,8 @@ export default function DoctorCourseDetail({
   onBack,
 }: DoctorCourseDetailProps) {
   const [tab, setTab] = useState<(typeof tabs)[number]>(initialTab)
-  const { publishCourse, archiveCourse } = useCourseCatalog()
+  const [editing, setEditing] = useState(false)
+  const { publishCourse, archiveCourse, updateCourseInfo } = useCourseCatalog()
 
   return (
     <div className="space-y-5">
@@ -74,6 +76,13 @@ export default function DoctorCourseDetail({
               </p>
             </div>
             <div className="flex gap-2 flex-shrink-0">
+              <button
+                onClick={() => setEditing(true)}
+                className="text-xs font-semibold px-4 py-2 rounded-full"
+                style={{ background: 'var(--tint-2)', color: 'var(--primary)' }}
+              >
+                Edit
+              </button>
               {course.status !== 'published' && course.status !== 'archived' && (
                 <button
                   onClick={() => publishCourse(course.id)}
@@ -111,6 +120,19 @@ export default function DoctorCourseDetail({
       {tab === 'Content' && <CourseBuilder course={course} />}
       {tab === 'Students' && <CourseStudentsPanel course={course} />}
       {tab === 'Analytics' && <CourseAnalyticsPanel course={course} />}
+
+      <EditCourseModal
+        course={editing ? course : null}
+        onClose={() => setEditing(false)}
+        onSave={(input: {
+          title: string
+          description: string
+          category: string
+          faculty: string
+          academicLevel: string
+          courseType: CourseType
+        }) => updateCourseInfo(course.id, input)}
+      />
     </div>
   )
 }

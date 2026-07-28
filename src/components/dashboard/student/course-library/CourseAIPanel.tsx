@@ -8,7 +8,7 @@ interface CourseAIPanelProps {
   onClose: () => void
 }
 
-export type AITool = 'chat' | 'summary' | 'flashcards' | 'quiz' | 'mindmap'
+export type AITool = 'chat' | 'summary' | 'flashcards' | 'quiz' | 'mindmap' | 'important' | 'plan'
 
 const TOOLS: Array<{ id: AITool; label: string; icon: string }> = [
   { id: 'chat', label: 'Ask AI', icon: '✨' },
@@ -16,6 +16,8 @@ const TOOLS: Array<{ id: AITool; label: string; icon: string }> = [
   { id: 'flashcards', label: 'Flashcards', icon: '🗂️' },
   { id: 'quiz', label: 'Quiz', icon: '❓' },
   { id: 'mindmap', label: 'Mind Map', icon: '🧠' },
+  { id: 'important', label: 'Important Questions', icon: '⭐' },
+  { id: 'plan', label: 'Study Plan', icon: '📅' },
 ]
 
 const suggestions = [
@@ -101,6 +103,66 @@ function buildQuiz(course: Course): QuizQ[] {
   }))
 }
 
+interface ImportantQuestion {
+  id: string
+  question: string
+  reason: string
+}
+
+function buildImportantQuestions(course: Course): ImportantQuestion[] {
+  const a = course.analytics
+  const titles = allLessonTitles(course)
+  const questions: ImportantQuestion[] = [
+    {
+      id: `${course.id}-iq-1`,
+      question: `Explain the key concept behind "${a.strugglingTopic}" in ${course.title}.`,
+      reason: `${a.strugglingPct}% of students found this topic the hardest — high exam likelihood.`,
+    },
+    {
+      id: `${course.id}-iq-2`,
+      question: `Walk through "${a.mostViewedLessonTitle}" step by step.`,
+      reason: 'Most-viewed lesson in this course — foundational material examiners often test.',
+    },
+  ]
+  if (titles[titles.length - 1]) {
+    questions.push({
+      id: `${course.id}-iq-3`,
+      question: `Compare and contrast the ideas covered in "${titles[titles.length - 1]}" with earlier lessons.`,
+      reason: 'Later lessons often synthesize earlier material — a common exam question pattern.',
+    })
+  }
+  return questions
+}
+
+interface StudyPlanDay {
+  day: string
+  focus: string
+  lessons: string[]
+}
+
+function buildStudyPlan(course: Course): StudyPlanDay[] {
+  const remaining = course.modules
+    .flatMap((m) => m.lessons.map((l) => ({ module: m.title, lesson: l })))
+    .filter((entry) => !entry.lesson.completed)
+
+  if (remaining.length === 0) {
+    return []
+  }
+
+  const dayNames = ['Today', 'Tomorrow', 'Day 3', 'Day 4', 'Day 5']
+  const chunkSize = Math.max(1, Math.ceil(remaining.length / dayNames.length))
+  const days: StudyPlanDay[] = []
+  for (let i = 0; i < dayNames.length && i * chunkSize < remaining.length; i++) {
+    const chunk = remaining.slice(i * chunkSize, (i + 1) * chunkSize)
+    days.push({
+      day: dayNames[i],
+      focus: chunk[0]?.module ?? course.modules[0]?.title ?? course.title,
+      lessons: chunk.map((c) => c.lesson.title),
+    })
+  }
+  return days
+}
+
 /**
  * Every Doctor-uploaded course becomes an AI learning source. This panel
  * hosts AI Chat, Summary, Flashcards, Quiz, and Mind Map generation —
@@ -120,6 +182,8 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
   const summary = useMemo(() => buildSummary(course), [course])
   const flashcards = useMemo(() => buildFlashcards(course), [course])
   const quiz = useMemo(() => buildQuiz(course), [course])
+  const importantQuestions = useMemo(() => buildImportantQuestions(course), [course])
+  const studyPlan = useMemo(() => buildStudyPlan(course), [course])
 
   const [cardIndex, setCardIndex] = useState(0)
   const [flipped, setFlipped] = useState(false)
@@ -478,6 +542,97 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
                     </div>
                   </div>
                 ))}
+              </motion.div>
+            )}
+
+            {tool === 'important' && (
+              <motion.div
+                key="important"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-3"
+              >
+                <p className="text-xs mb-1" style={{ color: 'var(--muted-foreground)' }}>
+                  AI-flagged questions most likely to appear on your exam, based on this course's
+                  analytics.
+                </p>
+                {importantQuestions.map((q, i) => (
+                  <div
+                    key={q.id}
+                    className="p-4 rounded-xl"
+                    style={{
+                      background: 'rgba(255,126,54,0.06)',
+                      border: '1px solid rgba(255,126,54,0.18)',
+                    }}
+                  >
+                    <p
+                      className="text-sm font-semibold mb-1.5"
+                      style={{ color: 'var(--foreground)' }}
+                    >
+                      ⭐ Q{i + 1}. {q.question}
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--accent)' }}>
+                      {q.reason}
+                    </p>
+                  </div>
+                ))}
+              </motion.div>
+            )}
+
+            {tool === 'plan' && (
+              <motion.div
+                key="plan"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-3"
+              >
+                {studyPlan.length === 0 ? (
+                  <p
+                    className="text-sm text-center py-8"
+                    style={{ color: 'var(--muted-foreground)' }}
+                  >
+                    You've completed every lesson in {course.title} — no study plan needed. 🎉
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs mb-1" style={{ color: 'var(--muted-foreground)' }}>
+                      A personalized plan to finish {course.title}, built from your remaining
+                      lessons.
+                    </p>
+                    {studyPlan.map((d) => (
+                      <div
+                        key={d.day}
+                        className="p-4 rounded-xl"
+                        style={{ background: 'var(--tint-1)' }}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
+                            {d.day}
+                          </p>
+                          <span
+                            className="text-xs px-2 py-0.5 rounded-full font-mono"
+                            style={{ background: 'rgba(45,212,191,0.1)', color: 'var(--primary)' }}
+                          >
+                            {d.focus}
+                          </span>
+                        </div>
+                        <ul className="space-y-1">
+                          {d.lessons.map((l, i) => (
+                            <li
+                              key={i}
+                              className="text-xs flex items-start gap-2"
+                              style={{ color: 'var(--muted-foreground)' }}
+                            >
+                              <span style={{ color: 'var(--primary)' }}>▸</span> {l}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

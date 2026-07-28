@@ -146,6 +146,8 @@ export default function StudentCourseDetail({ course, onBack }: StudentCourseDet
         <ActionChip icon="🗂️" label="Create Flashcards" onClick={() => setAiTool('flashcards')} />
         <ActionChip icon="💡" label="Create Summary" onClick={() => setAiTool('summary')} />
         <ActionChip icon="🧠" label="Mind Map" onClick={() => setAiTool('mindmap')} />
+        <ActionChip icon="⭐" label="Important Questions" onClick={() => setAiTool('important')} />
+        <ActionChip icon="📅" label="Study Plan" onClick={() => setAiTool('plan')} />
       </div>
 
       <AnimatePresence>
@@ -284,6 +286,15 @@ export default function StudentCourseDetail({ course, onBack }: StudentCourseDet
                           >
                             {l.title}
                           </span>
+                          {l.resources.length > 0 && (
+                            <span
+                              className="text-xs flex-shrink-0 flex items-center gap-1"
+                              style={{ color: 'var(--muted-foreground)' }}
+                              title={l.resources.map((r) => r.name).join(', ')}
+                            >
+                              📎 {l.resources.length}
+                            </span>
+                          )}
                           {l.durationMinutes !== undefined && (
                             <span
                               className="text-xs flex-shrink-0 font-mono"
