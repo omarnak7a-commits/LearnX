@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Sidebar, { type Role } from './Sidebar'
 import TopBar from './TopBar'
 import AIAssistant from './AIAssistant'
+import ErrorBoundary from './shared/ErrorBoundary'
 import { CourseCatalogProvider } from '../../context/CourseCatalogContext'
 import { FileVaultProvider } from '../../context/FileVaultContext'
 
@@ -271,7 +272,16 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
                     </p>
                   </div>
 
-                  {renderContent()}
+                  {/* Isolates any single page's rendering crash to this
+                      subtree instead of letting it unmount the entire
+                      dashboard — see shared/ErrorBoundary.tsx for why
+                      this exists (the "My Files black screen" root
+                      cause). Keyed so navigating away/back always gets
+                      a fresh boundary rather than staying stuck on a
+                      stale error. */}
+                  <ErrorBoundary key={`${role}-${activeItem}`} boundaryName={meta.title}>
+                    {renderContent()}
+                  </ErrorBoundary>
                 </motion.div>
               </AnimatePresence>
             </main>

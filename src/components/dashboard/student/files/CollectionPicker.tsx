@@ -24,8 +24,18 @@ export default function CollectionPicker({
   const [open, setOpen] = useState(false)
   const [newName, setNewName] = useState('')
 
+  // Defensive fallback: `currentCollections` should always be a real
+  // array (the storage layer normalizes every persisted VaultFile
+  // record — see src/lib/fileVault/migrations.ts), but this component
+  // must never crash the page even if it somehow receives `undefined`
+  // from a caller, since an uncaught error here previously took down
+  // the entire app (see MyFilesErrorBoundary.tsx for the last line of
+  // defense against exactly this class of bug).
+  const safeCurrentCollections = currentCollections ?? []
+  const safeExistingCollections = existingCollections ?? []
+
   function toggle(name: string) {
-    if (currentCollections.includes(name)) {
+    if (safeCurrentCollections.includes(name)) {
       removeFromCollection(fileId, name)
     } else {
       addToCollection(fileId, name)
@@ -49,7 +59,8 @@ export default function CollectionPicker({
         className="text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all"
         style={{ background: 'var(--tint-2)', color: 'var(--foreground)' }}
       >
-        🗂️ Collections{currentCollections.length > 0 ? ` (${currentCollections.length})` : ''}
+        🗂️ Collections
+        {safeCurrentCollections.length > 0 ? ` (${safeCurrentCollections.length})` : ''}
       </button>
 
       <AnimatePresence>
@@ -67,9 +78,9 @@ export default function CollectionPicker({
             transition={{ duration: 0.15 }}
             onClick={(e) => e.stopPropagation()}
           >
-            {existingCollections.length > 0 && (
+            {safeExistingCollections.length > 0 && (
               <div className="space-y-1 max-h-32 overflow-y-auto scrollbar-thin">
-                {existingCollections.map((name) => (
+                {safeExistingCollections.map((name) => (
                   <label
                     key={name}
                     className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs cursor-pointer"
@@ -77,7 +88,7 @@ export default function CollectionPicker({
                   >
                     <input
                       type="checkbox"
-                      checked={currentCollections.includes(name)}
+                      checked={safeCurrentCollections.includes(name)}
                       onChange={() => toggle(name)}
                       className="accent-current"
                     />

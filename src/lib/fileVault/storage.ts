@@ -1,5 +1,6 @@
 import { openDB, type IDBPDatabase } from 'idb'
 import type { VaultFile } from '../../types/fileVault'
+import { normalizeVaultFile, normalizeVaultFiles } from './migrations'
 
 /**
  * Persistence layer for the Smart AI File Vault, built behind a small
@@ -59,12 +60,14 @@ class IndexedDbFileVaultStorage implements FileVaultStorage {
 
   async listFiles(): Promise<VaultFile[]> {
     const db = await this.db()
-    return db.getAll(FILES_STORE)
+    const raw = await db.getAll(FILES_STORE)
+    return normalizeVaultFiles(raw)
   }
 
   async getFile(id: string): Promise<VaultFile | undefined> {
     const db = await this.db()
-    return db.get(FILES_STORE, id)
+    const raw = await db.get(FILES_STORE, id)
+    return raw ? normalizeVaultFile(raw) : undefined
   }
 
   async putFile(file: VaultFile): Promise<void> {
@@ -104,10 +107,11 @@ class InMemoryFileVaultStorage implements FileVaultStorage {
 
   async init(): Promise<void> {}
   async listFiles(): Promise<VaultFile[]> {
-    return [...this.files.values()]
+    return normalizeVaultFiles([...this.files.values()])
   }
   async getFile(id: string): Promise<VaultFile | undefined> {
-    return this.files.get(id)
+    const raw = this.files.get(id)
+    return raw ? normalizeVaultFile(raw) : undefined
   }
   async putFile(file: VaultFile): Promise<void> {
     this.files.set(file.id, file)
