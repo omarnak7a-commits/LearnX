@@ -1,5 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import Logo from '../ui/Logo'
+import { useProfile } from '../../context/ProfileContext'
+import { getDepartment, getAcademicYear } from '../../data/academicCatalog'
 
 export type Role = 'student' | 'doctor'
 
@@ -16,6 +18,7 @@ const studentNav: NavItem[] = [
   { id: 'files', icon: '📂', label: 'My Files' },
   { id: 'tutor', icon: '🤖', label: 'AI Workspace' },
   { id: 'video', icon: '🎬', label: 'Video Intelligence', badge: 'NEW' },
+  { id: 'rankings', icon: '🥇', label: 'Rankings', badge: 'NEW' },
   { id: 'calendar', icon: '📅', label: 'Calendar' },
   { id: 'analytics', icon: '📊', label: 'Analytics' },
   { id: 'gamification', icon: '🏆', label: 'Achievements' },
@@ -63,6 +66,21 @@ export default function Sidebar({
   onCloseMobile,
 }: SidebarProps) {
   const navItems = role === 'doctor' ? doctorNav : studentNav
+  const { profile } = useProfile()
+  const studentDisplayName = profile?.fullName || 'Student'
+  const studentInitials =
+    studentDisplayName
+      .split(' ')
+      .map((part) => part.charAt(0))
+      .slice(0, 2)
+      .join('')
+      .toUpperCase() || 'S'
+  const studentDepartment = getDepartment(profile?.departmentId)
+  const studentYear = getAcademicYear(profile?.academicYearId)
+  const studentSubtitle =
+    studentDepartment && studentYear
+      ? `${studentDepartment.name} · ${studentYear.label}`
+      : 'Comp Sci · Year 2'
 
   return (
     <>
@@ -263,23 +281,36 @@ export default function Sidebar({
               style={{ background: 'var(--surface-hover)' }}
             >
               <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 overflow-hidden"
                 style={{
-                  background: 'linear-gradient(135deg, var(--primary), var(--secondary))',
+                  background:
+                    role === 'student' && profile?.avatarDataUrl
+                      ? undefined
+                      : 'linear-gradient(135deg, var(--primary), var(--secondary))',
                   color: 'var(--primary-foreground)',
                 }}
               >
-                {role === 'doctor' ? 'DR' : 'AC'}
+                {role === 'student' && profile?.avatarDataUrl ? (
+                  <img
+                    src={profile.avatarDataUrl}
+                    alt={studentDisplayName}
+                    className="w-full h-full object-cover"
+                  />
+                ) : role === 'doctor' ? (
+                  'DR'
+                ) : (
+                  studentInitials
+                )}
               </div>
               <div className="min-w-0">
                 <p
                   className="text-xs font-semibold truncate"
                   style={{ color: 'var(--foreground)' }}
                 >
-                  {role === 'doctor' ? 'Dr. Sarah Novak' : 'Alex Chen'}
+                  {role === 'doctor' ? 'Dr. Sarah Novak' : studentDisplayName}
                 </p>
                 <p className="text-xs truncate" style={{ color: 'var(--muted-foreground)' }}>
-                  {role === 'doctor' ? 'Professor · CS Dept.' : 'Comp Sci · Year 2'}
+                  {role === 'doctor' ? 'Professor · CS Dept.' : studentSubtitle}
                 </p>
               </div>
             </div>

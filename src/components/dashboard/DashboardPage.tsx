@@ -13,6 +13,8 @@ import MyFilesPage from './student/MyFilesPage'
 import CertificatesAchievements from './student/CertificatesAchievements'
 import VideoIntelligencePage from './student/video/VideoIntelligencePage'
 import StudentCoursesPage from './student/StudentCoursesPage'
+import ProfilePage from './student/ProfilePage'
+import RankingsPage from './student/RankingsPage'
 
 import DoctorDashboardHome from './doctor/DoctorDashboardHome'
 import DoctorCoursesPage from './doctor/DoctorCoursesPage'
@@ -34,6 +36,7 @@ interface DashboardPageProps {
   onBack: () => void
   theme: 'dark' | 'light'
   onToggleTheme: () => void
+  onLogout: () => void
 }
 
 const studentTitles: Record<string, { title: string; subtitle: string }> = {
@@ -54,6 +57,14 @@ const studentTitles: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Watch Less. Learn More.',
   },
   tutor: { title: 'AI Workspace', subtitle: 'Your adaptive study companion' },
+  rankings: {
+    title: 'Rankings',
+    subtitle: 'See how you stack up against your university, faculty, and friends',
+  },
+  profile: {
+    title: 'My Profile',
+    subtitle: 'Your academic identity, stats, and achievements',
+  },
   calendar: { title: 'Calendar', subtitle: 'Your schedule at a glance' },
   gamification: {
     title: 'Achievements',
@@ -122,7 +133,12 @@ const doctorTitles: Record<string, { title: string; subtitle: string }> = {
   },
 }
 
-export default function DashboardPage({ onBack, theme, onToggleTheme }: DashboardPageProps) {
+export default function DashboardPage({
+  onBack,
+  theme,
+  onToggleTheme,
+  onLogout,
+}: DashboardPageProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [role, setRole] = useState<Role>('student')
@@ -162,6 +178,10 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
           return <VideoIntelligencePage />
         case 'tutor':
           return <AITutorPage />
+        case 'rankings':
+          return <RankingsPage />
+        case 'profile':
+          return <ProfilePage />
         case 'calendar':
           return <CalendarPage role={role} />
         case 'gamification':
@@ -234,6 +254,8 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
               onToggleTheme={onToggleTheme}
               role={role}
               onOpenMobileNav={() => setMobileNavOpen(true)}
+              onNavigate={handleSidebarNavigate}
+              onLogout={onLogout}
             />
 
             <main

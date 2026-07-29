@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { motion } from 'framer-motion'
 import type { Role } from '../Sidebar'
+import { useProfile } from '../../../context/ProfileContext'
+import { getDepartment, getAcademicYear } from '../../../data/academicCatalog'
 
 interface SettingsPageProps {
   role: Role
@@ -51,6 +53,22 @@ export default function SettingsPage({ role, theme, onToggleTheme }: SettingsPag
   const [notifs, setNotifs] = useState(true)
   const [emailDigest, setEmailDigest] = useState(true)
   const [soundFx, setSoundFx] = useState(false)
+  const { profile, updateProfile } = useProfile()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const studentDisplayName = profile?.fullName || 'Student'
+  const studentInitials =
+    studentDisplayName
+      .split(' ')
+      .map((part) => part.charAt(0))
+      .slice(0, 2)
+      .join('')
+      .toUpperCase() || 'S'
+  const studentDepartment = getDepartment(profile?.departmentId)
+  const studentYear = getAcademicYear(profile?.academicYearId)
+  const studentSubtitle =
+    studentDepartment && studentYear
+      ? `${studentDepartment.name} · ${studentYear.label}`
+      : 'Comp Sci · Year 2'
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5">
@@ -60,21 +78,35 @@ export default function SettingsPage({ role, theme, onToggleTheme }: SettingsPag
         animate={{ opacity: 1, y: 0 }}
       >
         <div
-          className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold mb-4"
+          className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold mb-4 overflow-hidden"
           style={{
-            background: 'linear-gradient(135deg, var(--primary), var(--secondary))',
+            background:
+              role === 'student' && profile?.avatarDataUrl
+                ? undefined
+                : 'linear-gradient(135deg, var(--primary), var(--secondary))',
             color: 'var(--primary-foreground)',
           }}
         >
-          {role === 'doctor' ? 'DR' : 'AC'}
+          {role === 'student' && profile?.avatarDataUrl ? (
+            <img
+              src={profile.avatarDataUrl}
+              alt={studentDisplayName}
+              className="w-full h-full object-cover"
+            />
+          ) : role === 'doctor' ? (
+            'DR'
+          ) : (
+            studentInitials
+          )}
         </div>
         <p className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
-          {role === 'doctor' ? 'Dr. Sarah Novak' : 'Alex Chen'}
+          {role === 'doctor' ? 'Dr. Sarah Novak' : studentDisplayName}
         </p>
         <p className="text-xs mt-1" style={{ color: 'var(--muted-foreground)' }}>
-          {role === 'doctor' ? 'Professor · Computer Science' : 'Comp Sci · Year 2'}
+          {role === 'doctor' ? 'Professor · Computer Science' : studentSubtitle}
         </p>
         <button
+          onClick={() => role === 'student' && fileInputRef.current?.click()}
           className="mt-4 text-xs font-semibold px-4 py-2 rounded-full"
           style={{
             background: 'rgba(45,212,191,0.1)',
@@ -83,6 +115,21 @@ export default function SettingsPage({ role, theme, onToggleTheme }: SettingsPag
         >
           Change photo
         </button>
+        {role === 'student' && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (!file || !file.type.startsWith('image/')) return
+              const reader = new FileReader()
+              reader.onload = () => updateProfile({ avatarDataUrl: reader.result as string })
+              reader.readAsDataURL(file)
+            }}
+          />
+        )}
       </motion.div>
 
       <div className="space-y-5">

@@ -2,19 +2,32 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Role } from './Sidebar'
 import Logo from '../ui/Logo'
+import { useProfile } from '../../context/ProfileContext'
+import { useProfileStats } from '../../hooks/useProfileStats'
 
 interface TopBarProps {
   theme: 'dark' | 'light'
   onToggleTheme: () => void
   role: Role
   onOpenMobileNav?: () => void
+  onNavigate?: (item: string) => void
+  onLogout?: () => void
 }
 
-export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: TopBarProps) {
+export default function TopBar({
+  theme,
+  onToggleTheme,
+  role,
+  onOpenMobileNav,
+  onNavigate,
+  onLogout,
+}: TopBarProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [notifOpen, setNotifOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const { profile } = useProfile()
+  const stats = useProfileStats()
 
   const studentNotifications = [
     {
@@ -114,7 +127,14 @@ export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: 
           style={{ color: 'var(--muted-foreground)' }}
           aria-label="Open menu"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
             <path d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
@@ -153,7 +173,6 @@ export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: 
             ⌘K
           </span>
         </button>
-
 
         <div className="flex items-center gap-3 ml-auto">
           {/* Theme toggle */}
@@ -300,7 +319,7 @@ export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: 
                   fontFamily: 'Orbitron, sans-serif',
                 }}
               >
-                LVL 12
+                LVL {stats.level.level}
               </span>
               <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
                 ·
@@ -312,7 +331,7 @@ export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: 
                   fontFamily: 'JetBrains Mono, monospace',
                 }}
               >
-                4,820 XP
+                {stats.xp.toLocaleString()} XP
               </span>
             </div>
           ) : (
@@ -337,13 +356,26 @@ export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: 
                 setProfileOpen((v) => !v)
                 setNotifOpen(false)
               }}
-              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-all hover:scale-110"
+              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-all hover:scale-110 overflow-hidden"
               style={{
-                background: 'linear-gradient(135deg, var(--primary), var(--secondary))',
+                background:
+                  role === 'student' && profile?.avatarDataUrl
+                    ? undefined
+                    : 'linear-gradient(135deg, var(--primary), var(--secondary))',
                 color: 'var(--primary-foreground)',
               }}
             >
-              {role === 'doctor' ? 'DR' : 'A'}
+              {role === 'student' && profile?.avatarDataUrl ? (
+                <img
+                  src={profile.avatarDataUrl}
+                  alt={profile.fullName}
+                  className="w-full h-full object-cover"
+                />
+              ) : role === 'doctor' ? (
+                'DR'
+              ) : (
+                (profile?.fullName || 'A').charAt(0).toUpperCase()
+              )}
             </button>
 
             <AnimatePresence>
@@ -361,25 +393,54 @@ export default function TopBar({ theme, onToggleTheme, role, onOpenMobileNav }: 
                     style={{ borderColor: 'var(--border-subtle)' }}
                   >
                     <p className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-                      {role === 'doctor' ? 'Dr. Sarah Novak' : 'Alex Chen'}
+                      {role === 'doctor' ? 'Dr. Sarah Novak' : profile?.fullName || 'Student'}
                     </p>
                     <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                      {role === 'doctor' ? 'sarah.novak@university.edu' : 'alex@university.edu'}
+                      {role === 'doctor'
+                        ? 'sarah.novak@university.edu'
+                        : profile?.email || 'student@university.edu'}
                     </p>
                   </div>
-                  {['Profile', 'Preferences', 'Billing', 'Sign out'].map((item) => (
+                  {(role === 'student'
+                    ? [
+                        { label: 'My Profile', item: 'profile' },
+                        { label: 'Achievements', item: 'gamification' },
+                        { label: 'Certificates', item: 'gamification' },
+                        { label: 'Settings', item: 'settings' },
+                        { label: `Theme: ${theme === 'dark' ? 'Dark' : 'Light'}`, item: 'theme' },
+                        { label: 'Log Out', item: 'logout' },
+                      ]
+                    : [
+                        { label: 'Profile', item: 'settings' },
+                        { label: 'Preferences', item: 'settings' },
+                        { label: `Theme: ${theme === 'dark' ? 'Dark' : 'Light'}`, item: 'theme' },
+                        { label: 'Log Out', item: 'logout' },
+                      ]
+                  ).map(({ label, item }) => (
                     <button
-                      key={item}
+                      key={label}
+                      onClick={() => {
+                        setProfileOpen(false)
+                        if (item === 'theme') {
+                          onToggleTheme()
+                          return
+                        }
+                        if (item === 'logout') {
+                          onLogout?.()
+                          return
+                        }
+                        onNavigate?.(item)
+                      }}
                       className="w-full text-left px-4 py-2.5 text-sm transition-colors"
                       style={{
-                        color: item === 'Sign out' ? 'var(--danger)' : 'var(--muted-foreground)',
+                        color: item === 'logout' ? 'var(--danger)' : 'var(--muted-foreground)',
                       }}
                       onMouseEnter={(e) =>
                         (e.currentTarget.style.background = 'var(--surface-hover)')
                       }
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
-                      {item}
+                      {label}
                     </button>
                   ))}
                 </motion.div>
