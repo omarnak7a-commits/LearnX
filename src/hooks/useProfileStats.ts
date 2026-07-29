@@ -2,8 +2,9 @@ import { useMemo } from 'react'
 import { useProfile } from '../context/ProfileContext'
 import { useCourseCatalog } from '../context/CourseCatalogContext'
 import { useFileVault } from '../context/FileVaultContext'
+import { useXp } from '../context/XpContext'
 import { isFullyRead } from '../types/fileVault'
-import { computeLevelProgress, type LevelProgress } from '../lib/profile/xp'
+import type { LevelProgress } from '../lib/profile/xp'
 import { computeEarnedBadges } from '../lib/profile/badgeEngine'
 import { applyRankingFilters, rankEntries } from '../lib/profile/ranking'
 import { getSeededCohort } from '../data/leaderboardSeed'
@@ -31,23 +32,26 @@ export interface ProfileStats {
 /**
  * Single source of truth turning real, already-tracked student activity
  * (course enrollment/progress from `useCourseCatalog()`, File Vault
- * reading + quiz/exam history from `useFileVault()`, and the persisted
- * streak from `useProfile()`) into every derived progression number the
- * spec asks for: XP, Level, Study Hours, Courses Completed, Badges, and
- * Current Rank.
+ * reading + quiz/exam history from `useFileVault()`, the persisted
+ * streak from `useProfile()`, and — since the Global XP System shipped —
+ * the real XP ledger from `useXp()`) into every derived progression
+ * number the spec asks for: XP, Level, Study Hours, Courses Completed,
+ * Badges, and Current Rank.
  *
- * XP is deliberately *computed* here rather than stored as a mutable
- * counter on the profile — see `types/profile.ts`'s header comment for
- * why: it can never drift out of sync with the real activity it
- * represents, there's no risk of double-crediting the same quiz attempt
- * twice, and every screen that shows XP (TopBar badge, Profile page,
- * Dashboard widget, Leaderboard) is guaranteed to agree with each other
- * because they all call this one hook.
+ * XP/Level themselves are read straight from `useXp()` (the spec's
+ * "Create ONE centralized XP system... XP should be stored globally")
+ * rather than computed independently here, so the Profile page, Sidebar,
+ * TopBar, Rankings leaderboard, Dashboard widget, Gamification page, and
+ * Reward Store all show the exact same number — there is exactly one XP
+ * total in this app. Everything else here (study hours, quiz average,
+ * badges, rank) is still derived live from real activity, never stored
+ * redundantly.
  */
 export function useProfileStats(): ProfileStats {
   const { profile } = useProfile()
   const { courses } = useCourseCatalog()
   const { files } = useFileVault()
+  const { totalXp, weeklyXp, monthlyXp, level } = useXp()
 
   return useMemo(() => {
     const enrolledCourses = courses.filter((c) => c.enrolled)
@@ -65,23 +69,6 @@ export function useProfileStats(): ProfileStats {
     const studyTimeSeconds = files.reduce((sum, f) => sum + f.studyTimeSeconds, 0)
     const studyHours = Math.round((studyTimeSeconds / 3600) * 10) / 10
 
-    // XP model: course progress + completion bonus + quiz/exam performance
-    // + real study time + streak — every term traces back to a concrete,
-    // already-persisted activity signal, never an arbitrary constant per
-    // page view.
-    const courseXp = enrolledCourses.reduce(
-      (sum, c) => sum + c.progressPct * 8 + (c.progressPct >= 100 ? 300 : 0),
-      0
-    )
-    const quizXp = quizAttempts.reduce((sum, a) => sum + Math.round(a.scorePct * 1.2), 0)
-    const examXp = examAttempts.reduce((sum, a) => sum + Math.round(a.scorePct * 2.5), 0)
-    const studyTimeXp = Math.round(studyTimeSeconds / 20) // ~3 XP/min studied
-    const readingXp = filesFullyRead * 150
-    const streakXp = (profile?.streakDays ?? 0) * 20
-
-    const xp = Math.max(0, courseXp + quizXp + examXp + studyTimeXp + readingXp + streakXp)
-    const level = computeLevelProgress(xp)
-
     const university = profile?.universityId ?? 'cairo-u'
     const faculty = profile?.facultyId ?? null
     const department = profile?.departmentId ?? null
@@ -97,9 +84,9 @@ export function useProfileStats(): ProfileStats {
       departmentId: department ?? '',
       academicYearId: academicYear ?? '',
       courseIds: enrolledCourses.map((c) => c.id),
-      xp,
-      weeklyXp: Math.round(xp * 0.12),
-      monthlyXp: Math.round(xp * 0.4),
+      xp: totalXp,
+      weeklyXp,
+      monthlyXp,
       studyHours,
       coursesCompleted,
       streakDays: profile?.streakDays ?? 0,
@@ -156,7 +143,7 @@ export function useProfileStats(): ProfileStats {
     })
 
     return {
-      xp,
+      xp: totalXp,
       level,
       studyHours,
       coursesEnrolled: enrolledCourses.length,
@@ -172,5 +159,5 @@ export function useProfileStats(): ProfileStats {
       weeklyRank,
       monthlyRank,
     }
-  }, [profile, courses, files])
+  }, [profile, courses, files, totalXp, weeklyXp, monthlyXp, level])
 }

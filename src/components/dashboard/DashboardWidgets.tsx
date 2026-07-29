@@ -10,6 +10,9 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import ProgressRing from '../ui/ProgressRing'
+import { useProfile } from '../../context/ProfileContext'
+import { useXp } from '../../context/XpContext'
+import { LEVEL_UNLOCKS } from '../../types/gamification'
 
 /* ─── Greeting + Goal Ring ─── */
 
@@ -431,14 +434,37 @@ export function StudyPlanCards() {
 
 /* ─── Streaks & XP ─── */
 
-const heatmapWeeks = [
-  [true, true, true, false, true, true, true],
-  [true, true, false, true, true, true, true],
-  [true, true, true, true, true, true, false],
-  [false, true, true, true, true, true, true],
-]
+/**
+ * Real 28-day study-activity heatmap derived from the XP ledger — a day
+ * is "lit" if any XP was earned on it, so this reflects genuine daily
+ * engagement instead of a fixed decorative pattern.
+ */
+function buildHeatmapWeeks(ledger: { timestamp: number; amount: number }[]): boolean[][] {
+  const activeDays = new Set(
+    ledger
+      .filter((tx) => tx.amount > 0)
+      .map((tx) => new Date(tx.timestamp).toISOString().slice(0, 10))
+  )
+  const days: boolean[] = []
+  const today = new Date()
+  for (let i = 27; i >= 0; i--) {
+    const d = new Date(today)
+    d.setDate(d.getDate() - i)
+    days.push(activeDays.has(d.toISOString().slice(0, 10)))
+  }
+  const weeks: boolean[][] = []
+  for (let i = 0; i < days.length; i += 7) {
+    weeks.push(days.slice(i, i + 7))
+  }
+  return weeks
+}
 
 export function StreaksXP() {
+  const { profile } = useProfile()
+  const { totalXp, todayXp, level, ledger } = useXp()
+  const heatmapWeeks = buildHeatmapWeeks(ledger)
+  const nextUnlock = LEVEL_UNLOCKS.find((u) => u.level > level.level)
+
   return (
     <motion.div
       className="glass-card p-6 h-full flex flex-col gap-6"
@@ -458,10 +484,11 @@ export function StreaksXP() {
           className="text-5xl font-black leading-none mb-1"
           style={{ color: 'var(--accent)', fontFamily: 'Orbitron, sans-serif' }}
         >
-          21
+          {profile?.streakDays ?? 0}
         </p>
         <p className="text-xs mb-4" style={{ color: 'var(--muted-foreground)' }}>
-          consecutive days · personal best
+          consecutive days
+          {profile && profile.longestStreakDays > 0 ? ` · best: ${profile.longestStreakDays}` : ''}
         </p>
 
         {/* Heat map */}
@@ -488,7 +515,7 @@ export function StreaksXP() {
         <div className="flex items-center justify-between mb-2">
           <div>
             <p className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
-              Level 12
+              Level {level.level}
             </p>
             <p
               className="text-xs mt-0.5"
@@ -497,7 +524,7 @@ export function StreaksXP() {
                 fontFamily: 'JetBrains Mono, monospace',
               }}
             >
-              4,820 / 7,000 XP
+              {level.xpIntoLevel.toLocaleString()} / {level.xpForNextLevel.toLocaleString()} XP
             </p>
           </div>
           <span
@@ -508,7 +535,7 @@ export function StreaksXP() {
               fontFamily: 'Orbitron, sans-serif',
             }}
           >
-            ⚡ LVL 12
+            ⚡ LVL {level.level}
           </span>
         </div>
 
@@ -519,7 +546,7 @@ export function StreaksXP() {
               background: 'linear-gradient(90deg, var(--accent), #ffad7a)',
             }}
             initial={{ width: 0 }}
-            animate={{ width: '68%' }}
+            animate={{ width: `${level.progressPct}%` }}
             transition={{ duration: 1.5, ease: [0.16, 1, 0.3, 1], delay: 0.6 }}
           >
             <div
@@ -542,29 +569,31 @@ export function StreaksXP() {
               fontFamily: 'JetBrains Mono, monospace',
             }}
           >
-            +1,240 XP today
+            +{todayXp.toLocaleString()} XP today
           </span>
           <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-            2,180 to LVL 13
+            {level.xpToNextLevel.toLocaleString()} to LVL {level.level + 1}
           </span>
         </div>
       </div>
 
-      {/* Next badge */}
-      <div
-        className="p-3 rounded-xl"
-        style={{
-          background: 'rgba(255,126,54,0.06)',
-          border: '1px solid rgba(255,126,54,0.14)',
-        }}
-      >
-        <p className="text-xs font-semibold mb-0.5" style={{ color: 'var(--accent)' }}>
-          🏅 Next: "Polymath" badge
-        </p>
-        <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-          Study 1 more subject this week
-        </p>
-      </div>
+      {/* Next reward unlock */}
+      {nextUnlock && (
+        <div
+          className="p-3 rounded-xl"
+          style={{
+            background: 'rgba(255,126,54,0.06)',
+            border: '1px solid rgba(255,126,54,0.14)',
+          }}
+        >
+          <p className="text-xs font-semibold mb-0.5" style={{ color: 'var(--accent)' }}>
+            {nextUnlock.icon} Next unlock: "{nextUnlock.label}"
+          </p>
+          <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+            Reach Level {nextUnlock.level} ({totalXp.toLocaleString()} XP so far)
+          </p>
+        </div>
+      )}
     </motion.div>
   )
 }

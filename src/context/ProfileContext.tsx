@@ -62,6 +62,7 @@ function buildProfile(input: OnboardingInput, email: string): StudentProfile {
     studyGoals: input.studyGoals,
     academicIdentityLocked: true,
     streakDays: 0,
+    longestStreakDays: 0,
     lastStudyDate: null,
     onboardingComplete: true,
     createdAt: now,
@@ -139,6 +140,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       const next: StudentProfile = {
         ...prev,
         streakDays,
+        longestStreakDays: Math.max(prev.longestStreakDays, streakDays),
         lastStudyDate: today,
         updatedAt: Date.now(),
       }

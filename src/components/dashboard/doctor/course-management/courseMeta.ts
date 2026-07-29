@@ -26,3 +26,8 @@ export const courseTypeLabel: Record<CourseType, string> = {
   public: 'Public Course',
   premium: 'Premium Course',
 }
+
+/** Exchange rate the Reward Store / Create/Edit Course flows use to
+ *  suggest an XP price from a doctor's USD price — matches the spec's
+ *  examples exactly ($30 → 12,000 XP, $50 → 20,000 XP = 400 XP/dollar). */
+export const XP_PER_USD = 400

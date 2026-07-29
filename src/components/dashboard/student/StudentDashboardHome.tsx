@@ -5,9 +5,14 @@ import MyCourses from './MyCourses'
 import UpcomingWork from './UpcomingWork'
 import CalendarNotifications from './CalendarNotifications'
 import AcademicIdentityWidget from './AcademicIdentityWidget'
+import TodaysChallengeWidget from './TodaysChallengeWidget'
+
+interface StudentDashboardHomeProps {
+  onNavigate?: (item: string) => void
+}
 
 /** Simplified Student Dashboard overview — focused, study-first sections only. */
-export default function StudentDashboardHome() {
+export default function StudentDashboardHome({ onNavigate }: StudentDashboardHomeProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -33,20 +38,23 @@ export default function StudentDashboardHome() {
       {/* Quick actions */}
       <QuickActions />
 
-      {/* Study plan + streaks/xp */}
+      {/* Study plan + streaks/xp + today's challenge/reward shortcut */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <div className="lg:col-span-8">
+        <div className="lg:col-span-5">
           <StudyPlanCards />
         </div>
         <div className="lg:col-span-4">
           <StreaksXP />
+        </div>
+        <div className="lg:col-span-3">
+          <TodaysChallengeWidget onOpenRewardStore={() => onNavigate?.('rewards')} />
         </div>
       </div>
 
       {/* My courses */}
       <MyCourses />
 
-      {/* Upcoming assignments + exams */}
+      {/* Upcoming events */}
       <UpcomingWork />
 
       {/* Calendar + notifications */}

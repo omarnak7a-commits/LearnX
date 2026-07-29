@@ -150,6 +150,9 @@ export default function DoctorCourseDetail({
           faculty: string
           academicLevel: string
           courseType: CourseType
+          priceUsd: number | null
+          allowXpRedemption: boolean
+          xpPrice: number | null
         }) => updateCourseInfo(course.id, input)}
       />
     </div>

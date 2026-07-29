@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import type { Course, Lesson, LessonType } from '../../../../types/course'
 import { totalLessons, completedLessons } from '../../../../types/course'
 import { useCourseCatalog } from '../../../../context/CourseCatalogContext'
+import { useXp } from '../../../../context/XpContext'
+import { useChallenges } from '../../../../context/ChallengesContext'
 import CourseThumbnail from '../../shared/CourseThumbnail'
 import ProgressRing from '../../../ui/ProgressRing'
 import CourseAIPanel, { type AITool } from './CourseAIPanel'
@@ -28,6 +30,8 @@ const lessonTypeIcon: Record<LessonType, string> = {
  */
 export default function StudentCourseDetail({ course, onBack }: StudentCourseDetailProps) {
   const { toggleEnroll, markLessonComplete } = useCourseCatalog()
+  const { award } = useXp()
+  const { recordProgress } = useChallenges()
   const [aiTool, setAiTool] = useState<AITool | null>(null)
   const [expandedModule, setExpandedModule] = useState<string | null>(course.modules[0]?.id ?? null)
   const [downloadState, setDownloadState] = useState<'idle' | 'preparing' | 'ready'>('idle')
@@ -45,6 +49,39 @@ export default function StudentCourseDetail({ course, onBack }: StudentCourseDet
   }
 
   const nextLesson = findNextLesson()
+
+  /**
+   * Real Global XP System award (spec Feature 2): completing a lesson
+   * grants "Complete Lesson" XP (or "Finish Assignment" XP for
+   * assignment-type lessons), and finishing the last lesson of a course
+   * grants the much larger "Finish Course" bonus — both deduplicated per
+   * lesson/course id so re-rendering or re-clicking can never
+   * double-credit the same completion.
+   */
+  function completeLessonWithRewards(lesson: Lesson) {
+    markLessonComplete(course.id, lesson.id)
+
+    if (lesson.type === 'assignment') {
+      award('assignment-complete', { detail: lesson.title, dedupeKey: lesson.id })
+      recordProgress('assignment-complete')
+    } else {
+      award('lesson-complete', { detail: lesson.title, dedupeKey: lesson.id })
+      recordProgress('lesson-complete')
+    }
+    if (lesson.type === 'video') recordProgress('lecture-watched')
+
+    const willBeLastLesson = done + 1 >= total
+    if (willBeLastLesson) {
+      award('course-complete', { detail: course.title, dedupeKey: course.id })
+      recordProgress('course-complete')
+      // A finished course automatically issues a certificate — matches
+      // real LMS behaviour and the spec's "Earn Certificate +300 XP"
+      // rule without requiring a separate manual "claim certificate"
+      // button. The XP ledger entry itself doubles as the certificate
+      // record (see GamificationPage's Certificates panel).
+      award('certificate-earned', { detail: course.title, dedupeKey: `cert-${course.id}` })
+    }
+  }
 
   function handleDownload() {
     if (downloadState !== 'idle') return
@@ -137,7 +174,7 @@ export default function StudentCourseDetail({ course, onBack }: StudentCourseDet
             icon="▶️"
             label="Continue Learning"
             primary
-            onClick={() => markLessonComplete(course.id, nextLesson.id)}
+            onClick={() => completeLessonWithRewards(nextLesson)}
           />
         )}
         <ActionChip icon="⬇️" label="Download Materials" onClick={handleDownload} />
@@ -250,7 +287,7 @@ export default function StudentCourseDetail({ course, onBack }: StudentCourseDet
                         <button
                           key={l.id}
                           onClick={() =>
-                            course.enrolled && !l.completed && markLessonComplete(course.id, l.id)
+                            course.enrolled && !l.completed && completeLessonWithRewards(l)
                           }
                           className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors"
                           style={{

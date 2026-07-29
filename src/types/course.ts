@@ -79,6 +79,20 @@ export interface Course {
   lastLessonTitle: string | null
   lastViewedAt: string | null
   completedAt: string | null
+  /**
+   * Monetization — only meaningful for `courseType === 'premium'`.
+   * `priceUsd` is the real-money price a doctor sets when publishing a
+   * premium course; `allowXpRedemption`/`xpPrice` let a doctor opt the
+   * course into the Reward Store's "pay with XP instead of money"
+   * exchange (spec: "Teachers can choose whether a paid course supports
+   * XP redemption"). Both null for non-premium courses.
+   */
+  priceUsd: number | null
+  allowXpRedemption: boolean
+  xpPrice: number | null
+  /** Real purchase record for a student who redeemed this course via the
+   * Reward Store (XP or XP+money) rather than the ordinary Enroll flow. */
+  purchasedViaReward: boolean
 }
 
 export function totalLessons(course: Course): number {

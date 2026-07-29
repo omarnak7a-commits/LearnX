@@ -10,6 +10,9 @@ interface NewCourseInput {
   department: string
   academicLevel: string
   courseType: CourseType
+  priceUsd: number | null
+  allowXpRedemption: boolean
+  xpPrice: number | null
 }
 
 interface CourseCatalogValue {
@@ -33,6 +36,11 @@ interface CourseCatalogValue {
   toggleEnroll: (id: string) => void
   toggleSaved: (id: string) => void
   markLessonComplete: (courseId: string, lessonId: string) => void
+  /** Marks a premium course as purchased via the Reward Store (XP or
+   *  XP+money redemption) — distinct from `toggleEnroll` so Revenue/
+   *  Analytics can tell ordinary enrollments apart from reward
+   *  redemptions if needed, while both still set `enrolled: true`. */
+  markPurchasedViaReward: (id: string) => void
 }
 
 const CourseCatalogContext = createContext<CourseCatalogValue | null>(null)
@@ -83,6 +91,10 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       lastLessonTitle: null,
       lastViewedAt: null,
       completedAt: null,
+      priceUsd: input.courseType === 'premium' ? input.priceUsd : null,
+      allowXpRedemption: input.courseType === 'premium' ? input.allowXpRedemption : false,
+      xpPrice: input.courseType === 'premium' ? input.xpPrice : null,
+      purchasedViaReward: false,
       modules: [],
       analytics: {
         totalStudents: 0,
@@ -255,6 +267,23 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
     setCourses((prev) => prev.map((c) => (c.id === id ? { ...c, saved: !c.saved } : c)))
   }, [])
 
+  const markPurchasedViaReward = useCallback((id: string) => {
+    setCourses((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              enrolled: true,
+              purchasedViaReward: true,
+              lastViewedAt: 'Just now',
+              lastLessonTitle: c.modules[0]?.lessons[0]?.title ?? null,
+              studentsCount: c.studentsCount + 1,
+            }
+          : c
+      )
+    )
+  }, [])
+
   const markLessonComplete = useCallback((courseId: string, lessonId: string) => {
     setCourses((prev) =>
       prev.map((c) => {
@@ -304,6 +333,7 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       toggleEnroll,
       toggleSaved,
       markLessonComplete,
+      markPurchasedViaReward,
     }),
     [
       courses,
@@ -326,6 +356,7 @@ export function CourseCatalogProvider({ children }: { children: ReactNode }) {
       toggleEnroll,
       toggleSaved,
       markLessonComplete,
+      markPurchasedViaReward,
     ]
   )
 

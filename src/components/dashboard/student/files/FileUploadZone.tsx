@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useFileVault } from '../../../../context/FileVaultContext'
+import { useXp } from '../../../../context/XpContext'
+import { useChallenges } from '../../../../context/ChallengesContext'
 
 const courseOptions = [
   'Cell Biology',
@@ -17,10 +19,15 @@ const courseOptions = [
  * selected file is genuinely parsed with pdf.js and run through the
  * extractive AI analysis engine the moment it lands — students never
  * press a "Generate" button, matching the spec's "generate automatically
- * after upload" requirement.
+ * after upload" requirement. Since flashcards are generated automatically
+ * as part of that same analysis (see `textAnalysis.ts`), both the "Upload
+ * Notes" and "Generate Flashcards" Global XP awards fire here, the one
+ * real moment those two things happen.
  */
 export default function FileUploadZone() {
   const { uploadFile, uploadProgress } = useFileVault()
+  const { award } = useXp()
+  const { recordProgress } = useChallenges()
   const [dragging, setDragging] = useState(false)
   const [course, setCourse] = useState(courseOptions[0])
   const inputRef = useRef<HTMLInputElement>(null)
@@ -32,6 +39,16 @@ export default function FileUploadZone() {
     )
     for (const file of pdfFiles) {
       await uploadFile(file, { course, doctorName: 'Self-uploaded' })
+      award('upload-notes', {
+        detail: file.name,
+        dedupeKey: `upload-${file.name}-${file.size}-${Date.now()}`,
+      })
+      award('generate-flashcards', {
+        detail: file.name,
+        dedupeKey: `flashcards-${file.name}-${file.size}-${Date.now()}`,
+      })
+      recordProgress('notes-uploaded')
+      recordProgress('flashcards-generated')
     }
   }
 

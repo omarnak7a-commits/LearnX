@@ -22,6 +22,7 @@ const studentNav: NavItem[] = [
   { id: 'calendar', icon: '📅', label: 'Calendar' },
   { id: 'analytics', icon: '📊', label: 'Analytics' },
   { id: 'gamification', icon: '🏆', label: 'Achievements' },
+  { id: 'rewards', icon: '🎁', label: 'Reward Store', badge: 'NEW' },
   { id: 'settings', icon: '⚙️', label: 'Settings' },
 ]
 

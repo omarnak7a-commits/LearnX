@@ -34,6 +34,10 @@ export const initialCourses: Course[] = [
     lastLessonTitle: 'Rotational Dynamics of Balanced Trees',
     lastViewedAt: 'Today, 9:12am',
     completedAt: null,
+    priceUsd: null,
+    allowXpRedemption: false,
+    xpPrice: null,
+    purchasedViaReward: false,
     modules: [
       {
         id: 'cs201-m1',
@@ -177,6 +181,10 @@ export const initialCourses: Course[] = [
     lastLessonTitle: null,
     lastViewedAt: null,
     completedAt: null,
+    priceUsd: null,
+    allowXpRedemption: false,
+    xpPrice: null,
+    purchasedViaReward: false,
     modules: [
       {
         id: 'math210-m1',
@@ -264,6 +272,10 @@ export const initialCourses: Course[] = [
     lastLessonTitle: 'Normalization (3NF)',
     lastViewedAt: 'Yesterday, 4:40pm',
     completedAt: null,
+    priceUsd: null,
+    allowXpRedemption: false,
+    xpPrice: null,
+    purchasedViaReward: false,
     modules: [
       {
         id: 'cs310-m1',
@@ -351,6 +363,10 @@ export const initialCourses: Course[] = [
     lastLessonTitle: null,
     lastViewedAt: null,
     completedAt: null,
+    priceUsd: 50,
+    allowXpRedemption: true,
+    xpPrice: 20000,
+    purchasedViaReward: false,
     modules: [
       {
         id: 'cs420-m1',
@@ -430,6 +446,10 @@ export const initialCourses: Course[] = [
     lastLessonTitle: null,
     lastViewedAt: null,
     completedAt: null,
+    priceUsd: null,
+    allowXpRedemption: false,
+    xpPrice: null,
+    purchasedViaReward: false,
     modules: [
       {
         id: 'phys150-m1',
@@ -485,6 +505,10 @@ export const initialCourses: Course[] = [
     lastLessonTitle: null,
     lastViewedAt: null,
     completedAt: null,
+    priceUsd: null,
+    allowXpRedemption: false,
+    xpPrice: null,
+    purchasedViaReward: false,
     modules: [
       {
         id: 'chem220-m1',
@@ -540,6 +564,10 @@ export const initialCourses: Course[] = [
     lastLessonTitle: null,
     lastViewedAt: null,
     completedAt: 'Dec 2024',
+    priceUsd: null,
+    allowXpRedemption: false,
+    xpPrice: null,
+    purchasedViaReward: false,
     modules: [
       {
         id: 'cs150-m1',

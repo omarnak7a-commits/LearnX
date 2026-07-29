@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Sidebar, { type Role } from './Sidebar'
 import TopBar from './TopBar'
@@ -6,11 +6,18 @@ import AIAssistant from './AIAssistant'
 import ErrorBoundary from './shared/ErrorBoundary'
 import { CourseCatalogProvider } from '../../context/CourseCatalogContext'
 import { FileVaultProvider } from '../../context/FileVaultContext'
+import { CalendarProvider } from '../../context/CalendarContext'
+import { XpProvider, useXp } from '../../context/XpContext'
+import { ChallengesProvider } from '../../context/ChallengesContext'
+import { RewardStoreProvider } from '../../context/RewardStoreContext'
+import { useProfile } from '../../context/ProfileContext'
+import { todayIso } from '../../lib/profile/xp'
 
 import StudentDashboardHome from './student/StudentDashboardHome'
 import AITutorPage from './student/AITutorPage'
 import MyFilesPage from './student/MyFilesPage'
-import CertificatesAchievements from './student/CertificatesAchievements'
+import GamificationPage from './student/GamificationPage'
+import RewardStorePage from './student/RewardStorePage'
 import VideoIntelligencePage from './student/video/VideoIntelligencePage'
 import StudentCoursesPage from './student/StudentCoursesPage'
 import ProfilePage from './student/ProfilePage'
@@ -37,6 +44,27 @@ interface DashboardPageProps {
   theme: 'dark' | 'light'
   onToggleTheme: () => void
   onLogout: () => void
+}
+
+/**
+ * Awards the spec's "Maintain Daily Streak" (+30 XP) exactly once per
+ * calendar day the student's streak actually advances — reuses the same
+ * `streakDays`/`lastStudyDate` bookkeeping `ProfileContext` already
+ * tracks (so there's a single source of truth for "did the streak tick
+ * today") and dedupes on the ISO date, never double-awarding if this
+ * component re-renders.
+ */
+function DailyStreakXpAwarder() {
+  const { profile } = useProfile()
+  const { award } = useXp()
+
+  useEffect(() => {
+    if (!profile?.lastStudyDate) return
+    if (profile.lastStudyDate !== todayIso()) return
+    award('daily-streak', { dedupeKey: `streak-${profile.lastStudyDate}` })
+  }, [profile?.lastStudyDate, award])
+
+  return null
 }
 
 const studentTitles: Record<string, { title: string; subtitle: string }> = {
@@ -69,6 +97,10 @@ const studentTitles: Record<string, { title: string; subtitle: string }> = {
   gamification: {
     title: 'Achievements',
     subtitle: 'Certificates, achievements, and progress',
+  },
+  rewards: {
+    title: 'Reward Store',
+    subtitle: 'Spend your earned XP on courses, discounts, and exclusive extras',
   },
   analytics: {
     title: 'Analytics',
@@ -169,7 +201,7 @@ export default function DashboardPage({
     if (role === 'student') {
       switch (activeItem) {
         case 'dashboard':
-          return <StudentDashboardHome />
+          return <StudentDashboardHome onNavigate={handleSidebarNavigate} />
         case 'courses':
           return <StudentCoursesPage />
         case 'files':
@@ -185,9 +217,11 @@ export default function DashboardPage({
         case 'calendar':
           return <CalendarPage role={role} />
         case 'gamification':
-          return <CertificatesAchievements />
+          return <GamificationPage />
+        case 'rewards':
+          return <RewardStorePage />
         case 'analytics':
-          return <StudentDashboardHome />
+          return <StudentDashboardHome onNavigate={handleSidebarNavigate} />
         case 'settings':
           return <SettingsPage role={role} theme={theme} onToggleTheme={onToggleTheme} />
         default:
@@ -235,82 +269,94 @@ export default function DashboardPage({
   return (
     <CourseCatalogProvider>
       <FileVaultProvider>
-        <div className="flex" style={{ minHeight: '100vh', background: 'var(--background)' }}>
-          <Sidebar
-            collapsed={collapsed}
-            onToggle={() => setCollapsed((v) => !v)}
-            activeItem={activeItem}
-            onNavigate={handleSidebarNavigate}
-            onBack={onBack}
-            role={role}
-            onRoleChange={handleRoleChange}
-            mobileOpen={mobileNavOpen}
-            onCloseMobile={() => setMobileNavOpen(false)}
-          />
-
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-            <TopBar
-              theme={theme}
-              onToggleTheme={onToggleTheme}
-              role={role}
-              onOpenMobileNav={() => setMobileNavOpen(true)}
-              onNavigate={handleSidebarNavigate}
-              onLogout={onLogout}
-            />
-
-            <main
-              className="flex-1 overflow-y-auto scrollbar-thin"
-              style={{ background: 'var(--section-dark)' }}
-            >
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={`${role}-${activeItem}`}
-                  className="p-4 sm:p-6"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+        <CalendarProvider>
+          <XpProvider>
+            <ChallengesProvider>
+              <RewardStoreProvider>
+                <DailyStreakXpAwarder />
+                <div
+                  className="flex"
+                  style={{ minHeight: '100vh', background: 'var(--background)' }}
                 >
-                  {/* Page title */}
-                  <div className="mb-6">
-                    <h1
-                      className="text-xl font-bold"
-                      style={{
-                        fontFamily: 'Orbitron, sans-serif',
-                        color: 'var(--foreground)',
-                        letterSpacing: '-0.01em',
-                      }}
+                  <Sidebar
+                    collapsed={collapsed}
+                    onToggle={() => setCollapsed((v) => !v)}
+                    activeItem={activeItem}
+                    onNavigate={handleSidebarNavigate}
+                    onBack={onBack}
+                    role={role}
+                    onRoleChange={handleRoleChange}
+                    mobileOpen={mobileNavOpen}
+                    onCloseMobile={() => setMobileNavOpen(false)}
+                  />
+
+                  <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+                    <TopBar
+                      theme={theme}
+                      onToggleTheme={onToggleTheme}
+                      role={role}
+                      onOpenMobileNav={() => setMobileNavOpen(true)}
+                      onNavigate={handleSidebarNavigate}
+                      onLogout={onLogout}
+                    />
+
+                    <main
+                      className="flex-1 overflow-y-auto scrollbar-thin"
+                      style={{ background: 'var(--section-dark)' }}
                     >
-                      {meta.title}
-                    </h1>
-                    <p
-                      className="text-xs mt-0.5"
-                      style={{
-                        color: 'var(--muted-foreground)',
-                        fontFamily: 'JetBrains Mono, monospace',
-                      }}
-                    >
-                      {meta.subtitle}
-                    </p>
+                      <AnimatePresence mode="wait">
+                        <motion.div
+                          key={`${role}-${activeItem}`}
+                          className="p-4 sm:p-6"
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                        >
+                          {/* Page title */}
+                          <div className="mb-6">
+                            <h1
+                              className="text-xl font-bold"
+                              style={{
+                                fontFamily: 'Orbitron, sans-serif',
+                                color: 'var(--foreground)',
+                                letterSpacing: '-0.01em',
+                              }}
+                            >
+                              {meta.title}
+                            </h1>
+                            <p
+                              className="text-xs mt-0.5"
+                              style={{
+                                color: 'var(--muted-foreground)',
+                                fontFamily: 'JetBrains Mono, monospace',
+                              }}
+                            >
+                              {meta.subtitle}
+                            </p>
+                          </div>
+
+                          {/* Isolates any single page's rendering crash to this
+                              subtree instead of letting it unmount the entire
+                              dashboard — see shared/ErrorBoundary.tsx for why
+                              this exists (the "My Files black screen" root
+                              cause). Keyed so navigating away/back always gets
+                              a fresh boundary rather than staying stuck on a
+                              stale error. */}
+                          <ErrorBoundary key={`${role}-${activeItem}`} boundaryName={meta.title}>
+                            {renderContent()}
+                          </ErrorBoundary>
+                        </motion.div>
+                      </AnimatePresence>
+                    </main>
                   </div>
 
-                  {/* Isolates any single page's rendering crash to this
-                      subtree instead of letting it unmount the entire
-                      dashboard — see shared/ErrorBoundary.tsx for why
-                      this exists (the "My Files black screen" root
-                      cause). Keyed so navigating away/back always gets
-                      a fresh boundary rather than staying stuck on a
-                      stale error. */}
-                  <ErrorBoundary key={`${role}-${activeItem}`} boundaryName={meta.title}>
-                    {renderContent()}
-                  </ErrorBoundary>
-                </motion.div>
-              </AnimatePresence>
-            </main>
-          </div>
-
-          <AIAssistant role={role} />
-        </div>
+                  <AIAssistant role={role} />
+                </div>
+              </RewardStoreProvider>
+            </ChallengesProvider>
+          </XpProvider>
+        </CalendarProvider>
       </FileVaultProvider>
     </CourseCatalogProvider>
   )

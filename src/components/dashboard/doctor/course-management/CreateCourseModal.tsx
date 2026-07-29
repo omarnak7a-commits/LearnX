@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { CourseType } from '../../../../types/course'
 import DropZone from '../../shared/DropZone'
-import { courseTypeLabel } from './courseMeta'
+import { courseTypeLabel, XP_PER_USD } from './courseMeta'
 
 interface CreateCourseModalProps {
   open: boolean
@@ -15,6 +15,9 @@ interface CreateCourseModalProps {
     department: string
     academicLevel: string
     courseType: CourseType
+    priceUsd: number | null
+    allowXpRedemption: boolean
+    xpPrice: number | null
   }) => void
 }
 
@@ -52,6 +55,9 @@ export default function CreateCourseModal({ open, onClose, onCreate }: CreateCou
   const [faculty, setFaculty] = useState('Faculty of Engineering')
   const [academicLevel, setAcademicLevel] = useState(academicLevels[0])
   const [courseType, setCourseType] = useState<CourseType>('university')
+  const [priceUsd, setPriceUsd] = useState(30)
+  const [allowXpRedemption, setAllowXpRedemption] = useState(true)
+  const [xpPrice, setXpPrice] = useState(30 * XP_PER_USD)
 
   function reset() {
     setStep(0)
@@ -61,6 +67,9 @@ export default function CreateCourseModal({ open, onClose, onCreate }: CreateCou
     setFaculty('Faculty of Engineering')
     setAcademicLevel(academicLevels[0])
     setCourseType('university')
+    setPriceUsd(30)
+    setAllowXpRedemption(true)
+    setXpPrice(30 * XP_PER_USD)
   }
 
   function handleClose() {
@@ -77,6 +86,9 @@ export default function CreateCourseModal({ open, onClose, onCreate }: CreateCou
       department: `${category.slice(0, 4).toUpperCase()} · ${category}`,
       academicLevel,
       courseType,
+      priceUsd: courseType === 'premium' ? priceUsd : null,
+      allowXpRedemption: courseType === 'premium' ? allowXpRedemption : false,
+      xpPrice: courseType === 'premium' && allowXpRedemption ? xpPrice : null,
     })
     handleClose()
   }
@@ -299,6 +311,101 @@ export default function CreateCourseModal({ open, onClose, onCreate }: CreateCou
                         </button>
                       ))}
                     </div>
+
+                    {courseType === 'premium' && (
+                      <div
+                        className="mt-4 p-4 rounded-xl space-y-4"
+                        style={{
+                          background: 'var(--tint-1)',
+                          border: '1px solid var(--border-subtle)',
+                        }}
+                      >
+                        <div>
+                          <label
+                            className="text-xs font-semibold mb-1.5 block"
+                            style={{ color: 'var(--muted-foreground)' }}
+                          >
+                            Course Price (USD)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm" style={{ color: 'var(--muted-foreground)' }}>
+                              $
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={priceUsd}
+                              onChange={(e) => {
+                                const next = Math.max(1, Number(e.target.value) || 0)
+                                setPriceUsd(next)
+                                setXpPrice(next * XP_PER_USD)
+                              }}
+                              className="input-field px-3 py-2 rounded-lg text-sm w-28"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p
+                              className="text-sm font-medium"
+                              style={{ color: 'var(--foreground)' }}
+                            >
+                              Allow XP redemption
+                            </p>
+                            <p
+                              className="text-xs mt-0.5"
+                              style={{ color: 'var(--muted-foreground)' }}
+                            >
+                              Students can unlock this course using earned XP instead of money.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAllowXpRedemption((v) => !v)}
+                            className="relative w-11 h-6 rounded-full flex-shrink-0 transition-colors"
+                            style={{
+                              background: allowXpRedemption ? 'var(--primary)' : 'var(--tint-5)',
+                            }}
+                          >
+                            <motion.span
+                              className="absolute top-0.5 w-5 h-5 rounded-full"
+                              style={{ background: '#fff' }}
+                              animate={{ left: allowXpRedemption ? 22 : 2 }}
+                              transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+                            />
+                          </button>
+                        </div>
+
+                        {allowXpRedemption && (
+                          <div>
+                            <label
+                              className="text-xs font-semibold mb-1.5 block"
+                              style={{ color: 'var(--muted-foreground)' }}
+                            >
+                              XP Price
+                            </label>
+                            <input
+                              type="number"
+                              min={100}
+                              step={100}
+                              value={xpPrice}
+                              onChange={(e) =>
+                                setXpPrice(Math.max(100, Number(e.target.value) || 0))
+                              }
+                              className="input-field px-3 py-2 rounded-lg text-sm w-32"
+                            />
+                            <p
+                              className="text-xs mt-1.5"
+                              style={{ color: 'var(--muted-foreground)' }}
+                            >
+                              Students see: <strong>${priceUsd}</strong> OR{' '}
+                              <strong>{xpPrice.toLocaleString()} XP</strong>
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </motion.div>
                 )}
 

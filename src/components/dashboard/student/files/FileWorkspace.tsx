@@ -4,6 +4,8 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { VaultFile, VaultQuestionType, VaultQuizQuestion } from '../../../../types/fileVault'
 import { readingPercent, isFullyRead } from '../../../../types/fileVault'
 import { useFileVault } from '../../../../context/FileVaultContext'
+import { useXp } from '../../../../context/XpContext'
+import { useChallenges } from '../../../../context/ChallengesContext'
 import type { WorkspaceTab } from './FileCard'
 import PdfViewer from './PdfViewer'
 import QuizRunner from './QuizRunner'
@@ -48,6 +50,8 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
     generateExam,
     recordAttempt,
   } = useFileVault()
+  const { award, recordStudyMinutes } = useXp()
+  const { recordProgress } = useChallenges()
   const [tab, setTab] = useState<WorkspaceTab>(initialTab)
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
   const sessionStartRef = useRef(Date.now())
@@ -62,12 +66,19 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
     }
   }, [file.id, getPdfDocument])
 
-  // Track real study time spent in this workspace and flush it on unmount.
+  // Track real study time spent in this workspace and flush it on unmount —
+  // both into the File Vault's per-file stats and the Global XP System's
+  // "Study 30 Minutes" award (spec Feature 2), plus daily/weekly
+  // "study-minutes" challenge progress.
   useEffect(() => {
     sessionStartRef.current = Date.now()
     return () => {
       const elapsed = Math.round((Date.now() - sessionStartRef.current) / 1000)
-      if (elapsed > 2) addStudyTime(file.id, elapsed)
+      if (elapsed > 2) {
+        addStudyTime(file.id, elapsed)
+        recordStudyMinutes(elapsed / 60)
+        recordProgress('study-minutes', elapsed / 60)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.id])
@@ -141,7 +152,10 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
                 doc={doc}
                 currentPage={file.currentPage}
                 onPageChange={(page) => setCurrentPage(file.id, page)}
-                onPageRead={(page) => markPageRead(file.id, page)}
+                onPageRead={(page) => {
+                  markPageRead(file.id, page)
+                  recordProgress('pdf-read')
+                }}
                 color={file.color}
               />
             </div>
@@ -153,7 +167,14 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
           {tab === 'notes' && (
             <FileNotesPanel
               file={file}
-              onAddNote={(text) => addNote(file.id, file.currentPage, text)}
+              onAddNote={(text) => {
+                addNote(file.id, file.currentPage, text)
+                award('upload-notes', {
+                  detail: file.title,
+                  dedupeKey: `note-${file.id}-${Date.now()}`,
+                })
+                recordProgress('notes-uploaded')
+              }}
               onAddBookmark={(label) => addBookmark(file.id, file.currentPage, label)}
               onRemoveBookmark={(id) => removeBookmark(file.id, id)}
             />
@@ -171,7 +192,7 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
                   questions={generatePracticeQuiz(file.id, 6)}
                   accentColor={file.color}
                   onExit={() => setTab('viewer')}
-                  onComplete={({ scorePct, totalQuestions, correctCount }) =>
+                  onComplete={({ scorePct, totalQuestions, correctCount }) => {
                     recordAttempt(
                       file.id,
                       'practice',
@@ -180,7 +201,19 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
                       correctCount,
                       file.pagesRead
                     )
-                  }
+                    award('quiz-complete', {
+                      detail: file.title,
+                      dedupeKey: `quiz-${file.id}-${Date.now()}`,
+                    })
+                    recordProgress('quiz-complete')
+                    if (scorePct > 90) {
+                      award('quiz-high-score', {
+                        detail: file.title,
+                        dedupeKey: `quiz-high-${file.id}-${Date.now()}`,
+                      })
+                      recordProgress('quiz-high-score')
+                    }
+                  }}
                 />
               )}
             </div>
@@ -195,7 +228,28 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
                   file={file}
                   onExit={() => setTab('viewer')}
                   onGenerate={generateExam}
-                  onRecordAttempt={recordAttempt}
+                  onRecordAttempt={(
+                    id,
+                    kind,
+                    scorePct,
+                    totalQuestions,
+                    correctCount,
+                    coveragePages
+                  ) => {
+                    recordAttempt(id, kind, scorePct, totalQuestions, correctCount, coveragePages)
+                    award('quiz-complete', {
+                      detail: file.title,
+                      dedupeKey: `exam-${file.id}-${Date.now()}`,
+                    })
+                    recordProgress('quiz-complete')
+                    if (scorePct > 90) {
+                      award('quiz-high-score', {
+                        detail: file.title,
+                        dedupeKey: `exam-high-${file.id}-${Date.now()}`,
+                      })
+                      recordProgress('quiz-high-score')
+                    }
+                  }}
                 />
               )}
             </div>

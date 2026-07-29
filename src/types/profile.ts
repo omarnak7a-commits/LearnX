@@ -72,6 +72,9 @@ export interface StudentProfile {
    * data (it's a record of *daily app engagement*), so it is persisted
    * and updated at most once per calendar day. */
   streakDays: number
+  /** Highest `streakDays` value ever reached — updated whenever the
+   *  current streak surpasses it, never decremented. */
+  longestStreakDays: number
   lastStudyDate: string | null // ISO date, drives streak continuation
 
   /* ── Lifecycle ── */
