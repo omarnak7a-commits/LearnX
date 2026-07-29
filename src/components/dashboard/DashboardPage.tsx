@@ -4,6 +4,7 @@ import Sidebar, { type Role } from './Sidebar'
 import TopBar from './TopBar'
 import AIAssistant from './AIAssistant'
 import { CourseCatalogProvider } from '../../context/CourseCatalogContext'
+import { FileVaultProvider } from '../../context/FileVaultContext'
 
 import StudentDashboardHome from './student/StudentDashboardHome'
 import AITutorPage from './student/AITutorPage'
@@ -226,71 +227,73 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
 
   return (
     <CourseCatalogProvider>
-      <div className="flex" style={{ minHeight: '100vh', background: 'var(--background)' }}>
-        <Sidebar
-          collapsed={collapsed}
-          onToggle={() => setCollapsed((v) => !v)}
-          activeItem={activeItem}
-          onNavigate={handleSidebarNavigate}
-          onBack={onBack}
-          role={role}
-          onRoleChange={handleRoleChange}
-          mobileOpen={mobileNavOpen}
-          onCloseMobile={() => setMobileNavOpen(false)}
-        />
-
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <TopBar
-            theme={theme}
-            onToggleTheme={onToggleTheme}
+      <FileVaultProvider>
+        <div className="flex" style={{ minHeight: '100vh', background: 'var(--background)' }}>
+          <Sidebar
+            collapsed={collapsed}
+            onToggle={() => setCollapsed((v) => !v)}
+            activeItem={activeItem}
+            onNavigate={handleSidebarNavigate}
+            onBack={onBack}
             role={role}
-            onOpenMobileNav={() => setMobileNavOpen(true)}
+            onRoleChange={handleRoleChange}
+            mobileOpen={mobileNavOpen}
+            onCloseMobile={() => setMobileNavOpen(false)}
           />
 
-          <main
-            className="flex-1 overflow-y-auto scrollbar-thin"
-            style={{ background: 'var(--section-dark)' }}
-          >
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={`${role}-${activeItem}`}
-                className="p-4 sm:p-6"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              >
-                {/* Page title */}
-                <div className="mb-6">
-                  <h1
-                    className="text-xl font-bold"
-                    style={{
-                      fontFamily: 'Orbitron, sans-serif',
-                      color: 'var(--foreground)',
-                      letterSpacing: '-0.01em',
-                    }}
-                  >
-                    {meta.title}
-                  </h1>
-                  <p
-                    className="text-xs mt-0.5"
-                    style={{
-                      color: 'var(--muted-foreground)',
-                      fontFamily: 'JetBrains Mono, monospace',
-                    }}
-                  >
-                    {meta.subtitle}
-                  </p>
-                </div>
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+            <TopBar
+              theme={theme}
+              onToggleTheme={onToggleTheme}
+              role={role}
+              onOpenMobileNav={() => setMobileNavOpen(true)}
+            />
 
-                {renderContent()}
-              </motion.div>
-            </AnimatePresence>
-          </main>
+            <main
+              className="flex-1 overflow-y-auto scrollbar-thin"
+              style={{ background: 'var(--section-dark)' }}
+            >
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={`${role}-${activeItem}`}
+                  className="p-4 sm:p-6"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  {/* Page title */}
+                  <div className="mb-6">
+                    <h1
+                      className="text-xl font-bold"
+                      style={{
+                        fontFamily: 'Orbitron, sans-serif',
+                        color: 'var(--foreground)',
+                        letterSpacing: '-0.01em',
+                      }}
+                    >
+                      {meta.title}
+                    </h1>
+                    <p
+                      className="text-xs mt-0.5"
+                      style={{
+                        color: 'var(--muted-foreground)',
+                        fontFamily: 'JetBrains Mono, monospace',
+                      }}
+                    >
+                      {meta.subtitle}
+                    </p>
+                  </div>
+
+                  {renderContent()}
+                </motion.div>
+              </AnimatePresence>
+            </main>
+          </div>
+
+          <AIAssistant role={role} />
         </div>
-
-        <AIAssistant role={role} />
-      </div>
+      </FileVaultProvider>
     </CourseCatalogProvider>
   )
 }

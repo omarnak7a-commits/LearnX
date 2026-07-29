@@ -1,134 +1,203 @@
+import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import DropZone from '../shared/DropZone'
+import { useFileVault } from '../../../context/FileVaultContext'
+import type { VaultFile } from '../../../types/fileVault'
+import { aiReadinessScore } from '../../../types/fileVault'
+import FileUploadZone from './files/FileUploadZone'
+import FileSearchAndFilters, {
+  defaultFilters,
+  type FileVaultFilters,
+} from './files/FileSearchAndFilters'
+import WeekTimeline from './files/WeekTimeline'
+import FileCard, { type WorkspaceTab } from './files/FileCard'
+import FileWorkspace from './files/FileWorkspace'
+import RecentActivityRail, { AiRecommendationsPanel } from './files/RecentActivityAndInsights'
+import StatCard from '../shared/StatCard'
+import EmptyState from '../shared/EmptyState'
 
-interface FileRow {
-  name: string
-  type: string
-  size: string
-  date: string
-  icon: string
-  color: string
+/** Matches a file against a free-text query across filename, course,
+ * doctor, and — crucially — its real AI-extracted key concepts and
+ * definition terms, so searching "Binary Trees" finds any PDF whose
+ * actual content discusses binary trees, per the spec's semantic search
+ * requirement. */
+function matchesFileSearch(file: VaultFile, query: string): boolean {
+  if (!query.trim()) return true
+  const q = query.toLowerCase()
+  const haystacks = [
+    file.title,
+    file.course,
+    file.doctorName,
+    file.weekLabel,
+    ...(file.analysis?.keyConcepts ?? []),
+    ...(file.analysis?.definitions.map((d) => d.term) ?? []),
+    ...(file.tags ?? []),
+  ]
+  return haystacks.some((h) => h.toLowerCase().includes(q))
 }
 
-const rows: FileRow[] = [
-  {
-    name: 'Thermodynamics Ch.12.pdf',
-    type: 'PDF',
-    size: '4.2 MB',
-    date: '2h ago',
-    icon: '📄',
-    color: '#2DD4BF',
-  },
-  {
-    name: 'Organic Chem Lecture 9.mp4',
-    type: 'Video',
-    size: '182 MB',
-    date: '5h ago',
-    icon: '🎬',
-    color: '#a855f7',
-  },
-  {
-    name: 'Calculus Problem Set 6.docx',
-    type: 'DOCX',
-    size: '860 KB',
-    date: 'Yesterday',
-    icon: '📝',
-    color: '#f59e0b',
-  },
-  {
-    name: 'Cell Biology Slides.pptx',
-    type: 'PPTX',
-    size: '12.1 MB',
-    date: '2 days ago',
-    icon: '📊',
-    color: '#22c55e',
-  },
-  {
-    name: 'Physics Past Papers.zip',
-    type: 'Archive',
-    size: '28.4 MB',
-    date: '4 days ago',
-    icon: '🗂️',
-    color: '#38bdf8',
-  },
-]
-
+/**
+ * Smart AI File Vault — the student's intelligent academic library.
+ * Layout follows the spec exactly: Search → Filters → Week Timeline →
+ * Files Grid → AI Insights, backed entirely by real pdf.js extraction,
+ * a deterministic extractive-AI analysis engine, and IndexedDB
+ * persistence (see src/lib/fileVault/* and src/context/FileVaultContext).
+ */
 export default function MyFilesPage() {
-  return (
-    <div className="space-y-5">
-      <motion.div
-        className="glass-card p-6"
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <h3 className="text-sm font-bold mb-4" style={{ color: 'var(--foreground)' }}>
-          Upload materials
-        </h3>
-        <DropZone />
-      </motion.div>
+  const { files, loading } = useFileVault()
+  const [filters, setFilters] = useState<FileVaultFilters>(defaultFilters)
+  const [openFileId, setOpenFileId] = useState<string | null>(null)
+  const [openTab, setOpenTab] = useState<WorkspaceTab>('viewer')
 
-      <motion.div
-        className="glass-card overflow-hidden"
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-      >
+  const courses = useMemo(() => [...new Set(files.map((f) => f.course))].sort(), [files])
+
+  const filteredFiles = useMemo(() => {
+    let list = files.filter((f) => matchesFileSearch(f, filters.query))
+    if (filters.course) list = list.filter((f) => f.course === filters.course)
+    if (filters.status !== 'all') list = list.filter((f) => f.status === filters.status)
+    if (filters.onlyFavorites) list = list.filter((f) => f.favorite)
+    if (filters.onlyPinned) list = list.filter((f) => f.pinned)
+
+    switch (filters.sortBy) {
+      case 'recent-viewed':
+        return [...list].sort((a, b) => (b.lastViewedAt ?? 0) - (a.lastViewedAt ?? 0))
+      case 'title':
+        return [...list].sort((a, b) => a.title.localeCompare(b.title))
+      case 'recent-upload':
+      default:
+        return [...list].sort((a, b) => b.uploadedAt - a.uploadedAt)
+    }
+  }, [files, filters])
+
+  const openFile = files.find((f) => f.id === openFileId)
+
+  function handleOpenFile(id: string, tab: WorkspaceTab = 'viewer') {
+    setOpenFileId(id)
+    setOpenTab(tab)
+  }
+
+  if (openFile) {
+    return <FileWorkspace file={openFile} initialTab={openTab} onBack={() => setOpenFileId(null)} />
+  }
+
+  const completedCount = files.filter((f) => f.status === 'completed').length
+  const totalStudyMinutes = Math.round(files.reduce((sum, f) => sum + f.studyTimeSeconds, 0) / 60)
+  const avgReadiness =
+    files.length > 0
+      ? Math.round(files.reduce((sum, f) => sum + aiReadinessScore(f), 0) / files.length)
+      : 0
+  const pinnedFiles = files.filter((f) => f.pinned)
+
+  const isFiltering =
+    filters.query.trim() !== '' ||
+    filters.course !== null ||
+    filters.status !== 'all' ||
+    filters.onlyFavorites ||
+    filters.onlyPinned
+
+  return (
+    <div className="space-y-6">
+      {/* Stats overview */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          icon="📚"
+          label="Total Documents"
+          value={files.length}
+          color="#2DD4BF"
+          delay={0}
+        />
+        <StatCard icon="✅" label="Completed" value={completedCount} color="#22c55e" delay={0.05} />
+        <StatCard
+          icon="⏱️"
+          label="Study Time"
+          value={totalStudyMinutes}
+          suffix="m"
+          color="#f59e0b"
+          delay={0.1}
+        />
+        <StatCard
+          icon="🧠"
+          label="Avg. AI Readiness"
+          value={avgReadiness}
+          suffix="%"
+          color="#a855f7"
+          delay={0.15}
+        />
+      </div>
+
+      <FileUploadZone />
+
+      {loading ? (
         <div
-          className="px-6 py-4 border-b flex items-center justify-between"
-          style={{ borderColor: 'var(--border-subtle)' }}
+          className="glass-card p-10 text-center text-sm"
+          style={{ color: 'var(--muted-foreground)' }}
         >
-          <h3 className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
-            All files
-          </h3>
-          <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-            {rows.length} files
-          </span>
+          Loading your file library...
         </div>
-        <div className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-          {rows.map((r, i) => (
-            <motion.div
-              key={r.name}
-              className="flex items-center gap-3 px-6 py-3.5 transition-colors"
-              style={{ borderColor: 'var(--border-subtle)' }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.04 * i }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-hover)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <span
-                className="w-9 h-9 rounded-lg flex items-center justify-center text-base flex-shrink-0"
-                style={{ background: `${r.color}18` }}
-              >
-                {r.icon}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium truncate" style={{ color: 'var(--foreground)' }}>
-                  {r.name}
-                </p>
+      ) : files.length === 0 ? (
+        <div className="glass-card">
+          <EmptyState
+            icon="📚"
+            title="Your library is empty"
+            body="Upload your first PDF to build your AI-powered academic workspace."
+          />
+        </div>
+      ) : (
+        <>
+          <FileSearchAndFilters filters={filters} onChange={setFilters} courses={courses} />
+
+          {!isFiltering && <RecentActivityRail files={files} onOpenFile={handleOpenFile} />}
+
+          {pinnedFiles.length > 0 && !isFiltering && (
+            <div>
+              <h3 className="text-sm font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+                📌 Pinned
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                {pinnedFiles.map((file, i) => (
+                  <FileCard
+                    key={file.id}
+                    file={file}
+                    delay={i * 0.04}
+                    onOpen={(tab) => handleOpenFile(file.id, tab)}
+                  />
+                ))}
               </div>
-              <span
-                className="text-xs hidden sm:block w-16"
-                style={{ color: 'var(--muted-foreground)' }}
-              >
-                {r.type}
-              </span>
-              <span
-                className="text-xs hidden sm:block w-16"
-                style={{ color: 'var(--muted-foreground)' }}
-              >
-                {r.size}
-              </span>
-              <span
-                className="text-xs w-20 text-right"
-                style={{ color: 'var(--muted-foreground)' }}
-              >
-                {r.date}
-              </span>
-            </motion.div>
-          ))}
-        </div>
-      </motion.div>
+            </div>
+          )}
+
+          {isFiltering ? (
+            filteredFiles.length === 0 ? (
+              <div className="glass-card">
+                <EmptyState
+                  icon="🔍"
+                  title="No files match your search"
+                  body="Try a different keyword or clear your filters."
+                />
+              </div>
+            ) : (
+              <div>
+                <h3 className="text-sm font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+                  {filteredFiles.length} result{filteredFiles.length === 1 ? '' : 's'}
+                </h3>
+                <motion.div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4" layout>
+                  {filteredFiles.map((file, i) => (
+                    <FileCard
+                      key={file.id}
+                      file={file}
+                      delay={i * 0.04}
+                      onOpen={(tab) => handleOpenFile(file.id, tab)}
+                    />
+                  ))}
+                </motion.div>
+              </div>
+            )
+          ) : (
+            <WeekTimeline files={filteredFiles} onOpenFile={handleOpenFile} />
+          )}
+
+          <AiRecommendationsPanel files={files} onOpenFile={handleOpenFile} />
+        </>
+      )}
     </div>
   )
 }
