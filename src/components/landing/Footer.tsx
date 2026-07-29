@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import LogoMark from '../ui/LogoMark'
+import Logo from '../ui/Logo'
 
 const cols = {
   Product: ['Features', 'Pricing', 'Changelog', 'Roadmap'],
@@ -28,26 +28,30 @@ export default function Footer() {
   const [subscribed, setSubscribed] = useState(false)
 
   return (
-    <footer style={{ background: 'var(--section-deep)', borderTop: '1px solid var(--border-subtle)' }}>
+    <footer
+      style={{
+        background: 'var(--section-deep)',
+        borderTop: '1px solid var(--border-subtle)',
+      }}
+    >
       {/* Large tagline row */}
       <div className="max-w-7xl mx-auto px-8 pt-20 pb-10">
-        <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-8 pb-16 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+        <div
+          className="flex flex-col md:flex-row items-start md:items-end justify-between gap-8 pb-16 border-b"
+          style={{ borderColor: 'var(--border-subtle)' }}
+        >
           <div>
-            <div className="flex items-center gap-3 mb-4">
-              <LogoMark size={28} color="#2DD4BF" />
-              <span
-                className="text-lg font-bold tracking-wider"
-                style={{ fontFamily: 'Orbitron, sans-serif', color: 'var(--foreground)' }}
-              >
-                LearnX
-              </span>
+            <div className="mb-5">
+              <Logo variant="full" size="md" />
             </div>
             <p
               className="text-3xl md:text-4xl font-light leading-snug max-w-lg"
               style={{ color: 'var(--foreground)', letterSpacing: '-0.02em' }}
             >
               Less stress.{' '}
-              <span className="text-gradient" style={{ fontWeight: 700 }}>More success.</span>
+              <span className="text-gradient" style={{ fontWeight: 700 }}>
+                More success.
+              </span>
             </p>
           </div>
 
@@ -67,13 +71,16 @@ export default function Footer() {
               </motion.p>
             ) : (
               <form
-                onSubmit={e => { e.preventDefault(); if (email) setSubscribed(true) }}
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (email) setSubscribed(true)
+                }}
                 className="flex gap-2"
               >
                 <input
                   type="email"
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="your@email.com"
                   className="flex-1 px-3 py-2 rounded-lg text-sm outline-none transition-all"
                   style={{
@@ -81,14 +88,17 @@ export default function Footer() {
                     border: '1px solid var(--border)',
                     color: 'var(--foreground)',
                   }}
-                  onFocus={e => (e.currentTarget.style.borderColor = 'rgba(45,212,191,0.35)')}
-                  onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(45,212,191,0.35)')}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
                   required
                 />
                 <button
                   type="submit"
                   className="px-4 py-2 rounded-lg text-sm font-semibold transition-all hover:opacity-90"
-                  style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
+                  style={{
+                    background: 'var(--primary)',
+                    color: 'var(--primary-foreground)',
+                  }}
                 >
                   Join
                 </button>
@@ -105,19 +115,24 @@ export default function Footer() {
               <div key={group}>
                 <p
                   className="text-xs tracking-[0.2em] uppercase mb-4"
-                  style={{ color: 'var(--primary)', fontFamily: 'JetBrains Mono, monospace' }}
+                  style={{
+                    color: 'var(--primary)',
+                    fontFamily: 'JetBrains Mono, monospace',
+                  }}
                 >
                   {group}
                 </p>
                 <ul className="space-y-2.5">
-                  {items.map(item => (
+                  {items.map((item) => (
                     <li key={item}>
                       <a
                         href="#"
                         className="text-sm transition-colors duration-200"
                         style={{ color: 'var(--muted-foreground)' }}
-                        onMouseEnter={e => (e.currentTarget.style.color = 'var(--foreground)')}
-                        onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted-foreground)')}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--foreground)')}
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.color = 'var(--muted-foreground)')
+                        }
                       >
                         {item}
                       </a>
@@ -139,18 +154,18 @@ export default function Footer() {
           </p>
 
           <div className="flex items-center gap-3">
-            {socials.map(s => (
+            {socials.map((s) => (
               <a
                 key={s.name}
                 href="#"
                 aria-label={s.name}
                 className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:scale-110"
                 style={{ color: 'var(--muted-foreground)' }}
-                onMouseEnter={e => (e.currentTarget.style.color = 'var(--primary)')}
-                onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted-foreground)')}
+                onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--primary)')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted-foreground)')}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d={s.path}/>
+                  <path d={s.path} />
                 </svg>
               </a>
             ))}

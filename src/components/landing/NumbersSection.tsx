@@ -35,7 +35,10 @@ export default function NumbersSection() {
       style={{ background: 'var(--section-dark)' }}
     >
       {/* Very subtle top border */}
-      <div className="absolute top-0 left-16 right-16 h-px" style={{ background: 'var(--border-subtle)' }} />
+      <div
+        className="absolute top-0 left-16 right-16 h-px"
+        style={{ background: 'var(--border-subtle)' }}
+      />
 
       <div className="max-w-6xl mx-auto">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
@@ -50,12 +53,15 @@ export default function NumbersSection() {
             >
               {/* Right separator (not on last) */}
               {i < stats.length - 1 && (
-                <div className="hidden md:block absolute top-8 bottom-8 right-0 w-px" style={{ background: 'var(--border-subtle)' }} />
+                <div
+                  className="hidden md:block absolute top-8 bottom-8 right-0 w-px"
+                  style={{ background: 'var(--border-subtle)' }}
+                />
               )}
 
               {/* Number */}
               <div
-                className="flex items-baseline gap-1 mb-3"
+                className="flex items-baseline gap-1 mb-3 flex-wrap"
                 style={{ fontFamily: 'Orbitron, sans-serif' }}
               >
                 {stat.prefix && (
@@ -67,7 +73,7 @@ export default function NumbersSection() {
                 {stat.suffix && (
                   <span
                     className="font-bold"
-                    style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', color: 'var(--primary)' }}
+                    style={{ fontSize: 'clamp(1.15rem, 3vw, 2.15rem)', color: 'var(--primary)' }}
                   >
                     {stat.suffix}
                   </span>
@@ -85,12 +91,15 @@ export default function NumbersSection() {
         </div>
       </div>
 
-      <div className="absolute bottom-0 left-16 right-16 h-px" style={{ background: 'var(--border-subtle)' }} />
+      <div
+        className="absolute bottom-0 left-16 right-16 h-px"
+        style={{ background: 'var(--border-subtle)' }}
+      />
     </section>
   )
 }
 
-function NumberValue({ stat }: { stat: typeof stats[0] }) {
+function NumberValue({ stat }: { stat: (typeof stats)[0] }) {
   const ref = useCountUp<HTMLSpanElement>(stat.value, {
     duration: 2.4,
     delay: 0.1,
@@ -101,7 +110,7 @@ function NumberValue({ stat }: { stat: typeof stats[0] }) {
     <span
       ref={ref}
       style={{
-        fontSize: 'clamp(3rem, 8vw, 6rem)',
+        fontSize: 'clamp(1.75rem, 4vw, 3.25rem)',
         fontWeight: 900,
         color: 'var(--primary)',
         lineHeight: 1,

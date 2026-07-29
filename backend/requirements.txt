@@ -1,0 +1,44 @@
+# Backend reference architecture — dependency map (NOT installed/tested here).
+#
+# Pinned versions reflect what would be used in production as of this
+# writing; verify against current releases before actually installing.
+
+# --- Web framework ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9          # file uploads
+websockets==13.1                 # pipeline progress push
+
+# --- Task queue ---
+celery==5.4.0
+redis==5.0.8
+flower==2.0.1                    # Celery monitoring dashboard
+
+# --- Database ---
+sqlalchemy==2.0.34
+alembic==1.13.2
+psycopg[binary]==3.2.1
+
+# --- Storage ---
+boto3==1.35.0                    # S3-compatible object storage client
+
+# --- Validation / auth ---
+pydantic==2.9.0
+pydantic-settings==2.5.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# --- AI / media pipeline (GPU recommended; large downloads) ---
+ffmpeg-python==0.2.0             # wraps system ffmpeg/ffprobe binaries
+whisperx==3.1.5                  # ASR + forced alignment
+pyannote.audio==3.3.1            # speaker diarization
+torch==2.4.0                     # required by whisperx/pyannote/silero
+silero-vad==5.1                  # lightweight voice activity detection
+scenedetect==0.6.4               # scene/slide-change detection
+pytesseract==0.3.13              # OCR fallback for slide text
+sentence-transformers==3.1.0     # embeddings for RAG + chapter clustering
+scikit-learn==1.5.1              # clustering for topic/chapter detection
+
+# --- Security ---
+clamd==1.0.2                     # ClamAV client for virus scanning
+python-magic==0.4.27             # magic-byte file type validation

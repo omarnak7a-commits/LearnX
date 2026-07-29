@@ -9,14 +9,15 @@ import Footer from './Footer'
 
 interface LandingPageProps {
   onEnter: () => void
+  onLogin?: () => void
   theme: 'dark' | 'light'
   onToggleTheme: () => void
 }
 
-export default function LandingPage({ onEnter, theme, onToggleTheme }: LandingPageProps) {
+export default function LandingPage({ onEnter, onLogin, theme, onToggleTheme }: LandingPageProps) {
   return (
     <div style={{ background: 'var(--background)', color: 'var(--foreground)', minHeight: '100vh' }}>
-      <Navbar onEnter={onEnter} theme={theme} onToggleTheme={onToggleTheme} />
+      <Navbar onEnter={onEnter} onLogin={onLogin} theme={theme} onToggleTheme={onToggleTheme} />
       <HeroSection onEnter={onEnter} />
       <StatementSection />
       <FeaturesGrid />

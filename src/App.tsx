@@ -2,29 +2,66 @@ import { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import IntroAnimation from './components/IntroAnimation'
 import LandingPage from './components/landing/LandingPage'
+import LoginPage from './components/auth/LoginPage'
+import OnboardingFlow from './components/auth/OnboardingFlow'
 import DashboardPage from './components/dashboard/DashboardPage'
+import { ProfileProvider, useProfile } from './context/ProfileContext'
 
-type View = 'landing' | 'dashboard'
+type View = 'landing' | 'login' | 'onboarding' | 'dashboard'
 
-export default function App() {
+function AppShell() {
   const [introComplete, setIntroComplete] = useState(false)
   const [view, setView] = useState<View>('landing')
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [pendingEmail, setPendingEmail] = useState('student@university.edu')
+  const { profile, loading, recordDailyActivity } = useProfile()
 
   useEffect(() => {
     document.documentElement.className = theme === 'light' ? 'light' : ''
   }, [theme])
 
+  useEffect(() => {
+    if (view === 'dashboard') recordDailyActivity()
+  }, [view, recordDailyActivity])
+
   function toggleTheme() {
-    setTheme(t => t === 'dark' ? 'light' : 'dark')
+    setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
+  }
+
+  function handleLogin(email: string) {
+    setPendingEmail(email)
+    // First-ever login (or any session before onboarding finished) is
+    // routed into the extended Sign-Up/Onboarding flow per the spec's
+    // "collect during Sign Up or immediately after first login" wording;
+    // returning students with a saved profile skip straight to the
+    // dashboard.
+    if (!loading && profile?.onboardingComplete) {
+      setView('dashboard')
+    } else {
+      setView('onboarding')
+    }
+  }
+
+  function handleEnter() {
+    // The landing page's "Enter Dashboard" preview CTAs bypass the
+    // sign-in form entirely (pre-existing demo behaviour, unchanged) —
+    // but they must still respect the same "no dashboard without an
+    // academic identity" rule as a real login, otherwise a student could
+    // skip onboarding by using a different button.
+    if (!loading && profile?.onboardingComplete) {
+      setView('dashboard')
+    } else {
+      setView('onboarding')
+    }
   }
 
   return (
     <div style={{ background: 'var(--background)', minHeight: '100vh' }}>
-      {/* Cinematic intro overlay */}
-      {!introComplete && (
-        <IntroAnimation onComplete={() => setIntroComplete(true)} />
-      )}
+      {/* Cinematic intro overlay — AnimatePresence lets it fade out while
+          the landing page mounts underneath, avoiding a hard cut. */}
+      <AnimatePresence>
+        {!introComplete && <IntroAnimation onComplete={() => setIntroComplete(true)} />}
+      </AnimatePresence>
 
       {/* Main views */}
       {introComplete && (
@@ -38,10 +75,36 @@ export default function App() {
               transition={{ duration: 0.4 }}
             >
               <LandingPage
-                onEnter={() => setView('dashboard')}
+                onEnter={handleEnter}
+                onLogin={() => setView('login')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
               />
+            </motion.div>
+          ) : view === 'login' ? (
+            <motion.div
+              key="login"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              <LoginPage
+                onLogin={handleLogin}
+                onBackToLanding={() => setView('landing')}
+                theme={theme}
+                onToggleTheme={toggleTheme}
+              />
+            </motion.div>
+          ) : view === 'onboarding' ? (
+            <motion.div
+              key="onboarding"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              <OnboardingFlow email={pendingEmail} onComplete={() => setView('dashboard')} />
             </motion.div>
           ) : (
             <motion.div
@@ -55,11 +118,20 @@ export default function App() {
                 onBack={() => setView('landing')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
+                onLogout={() => setView('landing')}
               />
             </motion.div>
           )}
         </AnimatePresence>
       )}
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <ProfileProvider>
+      <AppShell />
+    </ProfileProvider>
   )
 }
