@@ -13,15 +13,13 @@ interface NavItem {
 const studentNav: NavItem[] = [
   { id: 'dashboard', icon: '⊞', label: 'Dashboard' },
   { id: 'courses', icon: '📚', label: 'My Courses', badge: 'NEW' },
-  { id: 'tutor', icon: '🤖', label: 'AI Workspace' },
   { id: 'files', icon: '📂', label: 'My Files' },
+  { id: 'tutor', icon: '🤖', label: 'AI Workspace' },
+  { id: 'video', icon: '🎬', label: 'Video Intelligence', badge: 'NEW' },
   { id: 'calendar', icon: '📅', label: 'Calendar' },
-  { id: 'planner', icon: '📅', label: 'Study Planner' },
   { id: 'analytics', icon: '📊', label: 'Analytics' },
   { id: 'gamification', icon: '🏆', label: 'Achievements' },
   { id: 'settings', icon: '⚙️', label: 'Settings' },
-  { id: 'video', icon: '🎬', label: 'Video Intelligence', badge: 'NEW' },
-  { id: 'quizzes', icon: '❓', label: 'Quizzes', badge: '3' },
 ]
 
 const doctorNav: NavItem[] = [

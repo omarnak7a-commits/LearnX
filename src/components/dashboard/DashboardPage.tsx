@@ -8,11 +8,9 @@ import { FileVaultProvider } from '../../context/FileVaultContext'
 
 import StudentDashboardHome from './student/StudentDashboardHome'
 import AITutorPage from './student/AITutorPage'
-import QuizzesPage from './student/QuizzesPage'
 import MyFilesPage from './student/MyFilesPage'
 import CertificatesAchievements from './student/CertificatesAchievements'
 import VideoIntelligencePage from './student/video/VideoIntelligencePage'
-import StudyPlannerPage from './student/planner/StudyPlannerPage'
 import StudentCoursesPage from './student/StudentCoursesPage'
 
 import DoctorDashboardHome from './doctor/DoctorDashboardHome'
@@ -48,22 +46,14 @@ const studentTitles: Record<string, { title: string; subtitle: string }> = {
   },
   files: {
     title: 'My Files',
-    subtitle: 'Every document, lecture, and note in one place',
+    subtitle: 'Your AI-powered study hub — upload, learn, and plan in one place',
   },
   video: {
     title: 'AI Video Intelligence',
     subtitle: 'Watch Less. Learn More.',
   },
   tutor: { title: 'AI Workspace', subtitle: 'Your adaptive study companion' },
-  planner: {
-    title: 'Study Planner',
-    subtitle: 'A study plan that rebuilds itself around you',
-  },
   calendar: { title: 'Calendar', subtitle: 'Your schedule at a glance' },
-  quizzes: {
-    title: 'Quizzes',
-    subtitle: 'AI-generated practice from your materials',
-  },
   gamification: {
     title: 'Achievements',
     subtitle: 'Certificates, achievements, and progress',
@@ -171,12 +161,8 @@ export default function DashboardPage({ onBack, theme, onToggleTheme }: Dashboar
           return <VideoIntelligencePage />
         case 'tutor':
           return <AITutorPage />
-        case 'planner':
-          return <StudyPlannerPage />
         case 'calendar':
           return <CalendarPage role={role} />
-        case 'quizzes':
-          return <QuizzesPage />
         case 'gamification':
           return <CertificatesAchievements />
         case 'analytics':

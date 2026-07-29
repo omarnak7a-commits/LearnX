@@ -11,7 +11,11 @@ import FileSearchAndFilters, {
 import WeekTimeline from './files/WeekTimeline'
 import FileCard, { type WorkspaceTab } from './files/FileCard'
 import FileWorkspace from './files/FileWorkspace'
-import RecentActivityRail, { AiRecommendationsPanel } from './files/RecentActivityAndInsights'
+import RecentActivityRail from './files/RecentActivityAndInsights'
+import TodaysStudyPlan from './files/TodaysStudyPlan'
+import StudyInsightsStrip from './files/StudyInsightsStrip'
+import StudyTimeline from './files/StudyTimeline'
+import SmartGroups from './files/SmartGroups'
 import StatCard from '../shared/StatCard'
 import EmptyState from '../shared/EmptyState'
 
@@ -31,16 +35,23 @@ function matchesFileSearch(file: VaultFile, query: string): boolean {
     ...(file.analysis?.keyConcepts ?? []),
     ...(file.analysis?.definitions.map((d) => d.term) ?? []),
     ...(file.tags ?? []),
+    ...(file.collections ?? []),
   ]
   return haystacks.some((h) => h.toLowerCase().includes(q))
 }
 
 /**
- * Smart AI File Vault — the student's intelligent academic library.
- * Layout follows the spec exactly: Search → Filters → Week Timeline →
- * Files Grid → AI Insights, backed entirely by real pdf.js extraction,
- * a deterministic extractive-AI analysis engine, and IndexedDB
- * persistence (see src/lib/fileVault/* and src/context/FileVaultContext).
+ * My Files — the student's complete AI Study Hub. Every uploaded PDF
+ * automatically becomes part of the study plan; there is no separate
+ * "Smart Planner" page. Layout: AI Insights → Today's AI Study Plan →
+ * Search → Filters → Smart Organization (This Week/Next Week/Completed/
+ * Needs Revision/Recently Viewed/Favorites/Upcoming Exams) → Study
+ * Timeline → Week Timeline → Files Grid — all computed live from real
+ * pdf.js extraction, a deterministic extractive-AI analysis engine, and
+ * IndexedDB persistence (see src/lib/fileVault/* and
+ * src/context/FileVaultContext). Planning logic itself lives in
+ * src/lib/fileVault/studyHub.ts and is derived entirely from file state
+ * — nothing is manually built by the student.
  */
 export default function MyFilesPage() {
   const { files, loading } = useFileVault()
@@ -49,6 +60,10 @@ export default function MyFilesPage() {
   const [openTab, setOpenTab] = useState<WorkspaceTab>('viewer')
 
   const courses = useMemo(() => [...new Set(files.map((f) => f.course))].sort(), [files])
+  const allCollections = useMemo(
+    () => [...new Set(files.flatMap((f) => f.collections))].sort(),
+    [files]
+  )
 
   const filteredFiles = useMemo(() => {
     let list = files.filter((f) => matchesFileSearch(f, filters.query))
@@ -96,6 +111,11 @@ export default function MyFilesPage() {
 
   return (
     <div className="space-y-6">
+      {/* AI Insights strip */}
+      {!loading && files.length > 0 && (
+        <StudyInsightsStrip files={files} onOpenFile={handleOpenFile} />
+      )}
+
       {/* Stats overview */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -124,6 +144,11 @@ export default function MyFilesPage() {
         />
       </div>
 
+      {/* Today's AI Study Plan — replaces the standalone Smart Planner page */}
+      {!loading && files.length > 0 && (
+        <TodaysStudyPlan files={files} onOpenFile={handleOpenFile} />
+      )}
+
       <FileUploadZone />
 
       {loading ? (
@@ -147,6 +172,16 @@ export default function MyFilesPage() {
 
           {!isFiltering && <RecentActivityRail files={files} onOpenFile={handleOpenFile} />}
 
+          {!isFiltering && (
+            <SmartGroups
+              files={files}
+              onOpenFile={handleOpenFile}
+              allCollections={allCollections}
+            />
+          )}
+
+          {!isFiltering && <StudyTimeline files={files} onOpenFile={handleOpenFile} />}
+
           {pinnedFiles.length > 0 && !isFiltering && (
             <div>
               <h3 className="text-sm font-bold mb-4" style={{ color: 'var(--foreground)' }}>
@@ -159,6 +194,7 @@ export default function MyFilesPage() {
                     file={file}
                     delay={i * 0.04}
                     onOpen={(tab) => handleOpenFile(file.id, tab)}
+                    allCollections={allCollections}
                   />
                 ))}
               </div>
@@ -186,16 +222,19 @@ export default function MyFilesPage() {
                       file={file}
                       delay={i * 0.04}
                       onOpen={(tab) => handleOpenFile(file.id, tab)}
+                      allCollections={allCollections}
                     />
                   ))}
                 </motion.div>
               </div>
             )
           ) : (
-            <WeekTimeline files={filteredFiles} onOpenFile={handleOpenFile} />
+            <WeekTimeline
+              files={filteredFiles}
+              onOpenFile={handleOpenFile}
+              allCollections={allCollections}
+            />
           )}
-
-          <AiRecommendationsPanel files={files} onOpenFile={handleOpenFile} />
         </>
       )}
     </div>

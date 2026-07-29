@@ -7,6 +7,7 @@ import FileCard from './FileCard'
 interface WeekTimelineProps {
   files: VaultFile[]
   onOpenFile: (id: string, tab?: WorkspaceTab) => void
+  allCollections: string[]
 }
 
 interface WeekGroup {
@@ -45,7 +46,7 @@ type SortMode = 'recent' | 'title' | 'progress'
 
 /** Automatically groups uploaded files by week with collapse/expand,
  * sort, and per-week file grids — the spec's "Week Organization" section. */
-export default function WeekTimeline({ files, onOpenFile }: WeekTimelineProps) {
+export default function WeekTimeline({ files, onOpenFile, allCollections }: WeekTimelineProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [sortMode, setSortMode] = useState<SortMode>('recent')
 
@@ -148,6 +149,7 @@ export default function WeekTimeline({ files, onOpenFile }: WeekTimelineProps) {
                           file={file}
                           delay={i * 0.04}
                           onOpen={(tab) => onOpenFile(file.id, tab)}
+                          allCollections={allCollections}
                         />
                       ))}
                     </div>

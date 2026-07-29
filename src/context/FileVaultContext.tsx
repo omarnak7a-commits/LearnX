@@ -54,6 +54,9 @@ interface FileVaultContextValue {
   deleteFile: (id: string) => Promise<void>
   toggleFavorite: (id: string) => Promise<void>
   togglePinned: (id: string) => Promise<void>
+  addToCollection: (id: string, collectionName: string) => Promise<void>
+  removeFromCollection: (id: string, collectionName: string) => Promise<void>
+  setExamDate: (id: string, examDate: number | null) => Promise<void>
   addBookmark: (id: string, page: number, label: string) => Promise<void>
   removeBookmark: (id: string, bookmarkId: string) => Promise<void>
   addNote: (id: string, page: number, text: string) => Promise<void>
@@ -174,12 +177,14 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
         studyTimeSeconds: 0,
         lastViewedAt: null,
         completedAt: null,
+        examDate: null,
 
         favorite: false,
         pinned: false,
         bookmarks: [],
         notes: [],
         tags: [],
+        collections: [],
 
         analysis,
         analysisState: 'ready',
@@ -229,6 +234,27 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
 
   const togglePinned = useCallback(
     (id: string) => mutate(id, (f) => ({ ...f, pinned: !f.pinned })),
+    [mutate]
+  )
+
+  const addToCollection = useCallback(
+    (id: string, collectionName: string) =>
+      mutate(id, (f) =>
+        f.collections.includes(collectionName)
+          ? f
+          : { ...f, collections: [...f.collections, collectionName] }
+      ),
+    [mutate]
+  )
+
+  const removeFromCollection = useCallback(
+    (id: string, collectionName: string) =>
+      mutate(id, (f) => ({ ...f, collections: f.collections.filter((c) => c !== collectionName) })),
+    [mutate]
+  )
+
+  const setExamDate = useCallback(
+    (id: string, examDate: number | null) => mutate(id, (f) => ({ ...f, examDate })),
     [mutate]
   )
 
@@ -362,6 +388,9 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
       deleteFile,
       toggleFavorite,
       togglePinned,
+      addToCollection,
+      removeFromCollection,
+      setExamDate,
       addBookmark,
       removeBookmark,
       addNote,
@@ -382,6 +411,9 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
       deleteFile,
       toggleFavorite,
       togglePinned,
+      addToCollection,
+      removeFromCollection,
+      setExamDate,
       addBookmark,
       removeBookmark,
       addNote,

@@ -6,11 +6,21 @@ import { useFileVault } from '../../../../context/FileVaultContext'
 import ProgressRing from '../../../ui/ProgressRing'
 import Badge from '../../../ui/Badge'
 import { statusMeta, formatRelativeTime, formatBytes, pagesRemaining } from './fileVaultFormat'
+import CollectionPicker from './CollectionPicker'
+import {
+  computePriority,
+  priorityMeta,
+  studyRecommendation,
+  nextSuggestedAction,
+  recommendedStudyMinutes,
+  examReadiness,
+} from '../../../../lib/fileVault/studyHub'
 
 interface FileCardProps {
   file: VaultFile
   delay?: number
   onOpen: (tab?: WorkspaceTab) => void
+  allCollections?: string[]
 }
 
 export type WorkspaceTab =
@@ -33,7 +43,7 @@ export type WorkspaceTab =
  * the full action set (Continue Reading / Generate Quiz / AI Summary /
  * Flashcards / Open Workspace) and the Smart Exam Button.
  */
-export default function FileCard({ file, delay = 0, onOpen }: FileCardProps) {
+export default function FileCard({ file, delay = 0, onOpen, allCollections = [] }: FileCardProps) {
   const { toggleFavorite, togglePinned } = useFileVault()
   const [hovered, setHovered] = useState(false)
   const pct = readingPercent(file)
@@ -41,6 +51,11 @@ export default function FileCard({ file, delay = 0, onOpen }: FileCardProps) {
   const readiness = aiReadinessScore(file)
   const status = statusMeta[file.status]
   const remaining = pagesRemaining(file)
+  const priority = computePriority(file)
+  const recommendationTag = studyRecommendation(file)
+  const nextAction = nextSuggestedAction(file)
+  const studyMinutes = recommendedStudyMinutes(file)
+  const examScore = examReadiness(file)
 
   const recommendation = fullyRead
     ? "You've finished this document — take the AI Exam to test full retention."
@@ -93,11 +108,18 @@ export default function FileCard({ file, delay = 0, onOpen }: FileCardProps) {
           </div>
         )}
 
-        {/* Top-left status badge */}
+        {/* Top-left status + priority badges */}
         <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
           <Badge tone={status.tone} size="xs">
             {status.label}
           </Badge>
+          <span
+            className="text-xs font-semibold px-1.5 py-0.5 rounded-full flex items-center gap-1"
+            style={{ background: 'rgba(0,0,0,0.5)', color: '#fff' }}
+            title={priorityMeta[priority.level].label}
+          >
+            {priorityMeta[priority.level].emoji}
+          </span>
         </div>
 
         {/* Top-right favorite/pin */}
@@ -193,6 +215,27 @@ export default function FileCard({ file, delay = 0, onOpen }: FileCardProps) {
             AI Ready {readiness}%
           </span>
         </div>
+
+        <div className="flex items-center justify-between mt-2 gap-2">
+          <button
+            onClick={() => onOpen(nextAction.tab)}
+            className="text-xs font-semibold truncate"
+            style={{ color: file.color }}
+          >
+            ▸ {recommendationTag.label}
+          </button>
+          <span
+            className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0"
+            style={{ background: 'var(--tint-2)', color: 'var(--muted-foreground)' }}
+            title="Exam readiness"
+          >
+            🎓 {examScore}%
+          </span>
+        </div>
+
+        <p className="text-xs mt-1.5" style={{ color: 'var(--muted-foreground)' }}>
+          ⏱️ Recommended: {studyMinutes} min today
+        </p>
       </div>
 
       {/* AI Preview Panel — slides up from inside the card on hover */}
@@ -238,10 +281,16 @@ export default function FileCard({ file, delay = 0, onOpen }: FileCardProps) {
                         file.analysis.difficulty.slice(1)}
                     </strong>
                   </span>
-                  <span style={{ color: 'var(--muted-foreground)' }}>
-                    {remaining > 0 ? `${remaining} pages left` : 'Fully read'}
+                  <span style={{ color: priorityMeta[priority.level].color }}>
+                    {priorityMeta[priority.level].emoji} {priorityMeta[priority.level].label}
                   </span>
                 </div>
+
+                {priority.reasons.length > 0 && (
+                  <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                    {priority.reasons.join(' · ')}
+                  </p>
+                )}
 
                 <p
                   className="text-xs p-2.5 rounded-lg leading-relaxed"
@@ -254,20 +303,32 @@ export default function FileCard({ file, delay = 0, onOpen }: FileCardProps) {
                   <MiniButton primary onClick={() => onOpen('viewer')}>
                     {pct === 0 ? 'Start Reading' : 'Continue Reading'}
                   </MiniButton>
-                  <MiniButton onClick={() => onOpen('summary')}>AI Summary</MiniButton>
-                  <MiniButton onClick={() => onOpen('flashcards')}>Flashcards</MiniButton>
+                  <MiniButton onClick={() => onOpen('summary')}>Generate Summary</MiniButton>
+                  <MiniButton onClick={() => onOpen('flashcards')}>Generate Flashcards</MiniButton>
                   {fullyRead ? (
                     <MiniButton accent onClick={() => onOpen('exam')}>
                       🎓 Take AI Exam
                     </MiniButton>
                   ) : pct > 0 ? (
                     <MiniButton onClick={() => onOpen('quiz')}>
-                      Practice Quiz (Read Pages)
+                      Generate Quiz (Read Pages)
                     </MiniButton>
                   ) : (
                     <MiniButton onClick={() => onOpen('viewer')}>Finish Reading First</MiniButton>
                   )}
+                  <MiniButton onClick={() => onOpen('chat')}>Ask AI</MiniButton>
+                  <MiniButton onClick={() => onOpen('notes')}>Create Notes</MiniButton>
+                  {(file.status === 'completed' || file.status === 'viewed') && (
+                    <MiniButton onClick={() => onOpen('viewer')}>Review Again</MiniButton>
+                  )}
                   <MiniButton onClick={() => onOpen('viewer')}>Open Workspace</MiniButton>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <CollectionPicker
+                      fileId={file.id}
+                      currentCollections={file.collections}
+                      existingCollections={allCollections}
+                    />
+                  </div>
                 </div>
               </>
             ) : (

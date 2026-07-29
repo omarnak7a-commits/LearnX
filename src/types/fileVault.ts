@@ -130,6 +130,10 @@ export interface VaultFile {
   studyTimeSeconds: number
   lastViewedAt: number | null
   completedAt: number | null
+  /** Optional exam date associated with this document's course/topic —
+   * student-settable, drives priority/readiness/insight calculations in
+   * src/lib/fileVault/studyHub.ts. Null when no exam has been scheduled. */
+  examDate: number | null
 
   // Organization
   favorite: boolean
@@ -137,6 +141,8 @@ export interface VaultFile {
   bookmarks: FileBookmark[]
   notes: StudentNote[]
   tags: string[]
+  /** Named collections this file belongs to (e.g. "Exam Prep", "Midterm Review") — student-defined, many-to-many. */
+  collections: string[]
 
   // AI
   analysis: FileAiAnalysis | null

@@ -1,4 +1,4 @@
-import type { VaultFile } from '../../types/fileVault'
+import type { VaultFile, VaultQuizAttempt } from '../../types/fileVault'
 import { extractPdf, estimateReadingMinutes } from './pdfEngine'
 import { analyzeDocument } from './textAnalysis'
 import { getFileVaultStorage } from './storage'
@@ -15,6 +15,12 @@ interface SeedFileDef {
   uploadedDaysAgo: number
   /** Fraction of pages to mark as already-read, to show varied statuses out of the box. */
   readFraction: number
+  /** Days from now this file's exam is scheduled, or null for no exam. */
+  examInDays: number | null
+  /** Days ago this file was last opened (may differ from uploadedDaysAgo to simulate staleness). */
+  lastViewedDaysAgo: number | null
+  /** Simulated quiz/exam score history (percent), oldest first. */
+  quizScores: number[]
 }
 
 const SEED_DEFS: SeedFileDef[] = [
@@ -27,6 +33,9 @@ const SEED_DEFS: SeedFileDef[] = [
     icon: '🧬',
     uploadedDaysAgo: 3,
     readFraction: 1,
+    examInDays: 6,
+    lastViewedDaysAgo: 1,
+    quizScores: [78, 88],
   },
   {
     filename: 'calculus-limits-derivatives.pdf',
@@ -37,6 +46,9 @@ const SEED_DEFS: SeedFileDef[] = [
     icon: '📐',
     uploadedDaysAgo: 3,
     readFraction: 0.65,
+    examInDays: 2,
+    lastViewedDaysAgo: 5,
+    quizScores: [],
   },
   {
     filename: 'operating-systems-scheduling.pdf',
@@ -47,6 +59,9 @@ const SEED_DEFS: SeedFileDef[] = [
     icon: '💻',
     uploadedDaysAgo: 9,
     readFraction: 0.5,
+    examInDays: null,
+    lastViewedDaysAgo: 2,
+    quizScores: [42],
   },
   {
     filename: 'physics-newtonian-mechanics.pdf',
@@ -57,13 +72,33 @@ const SEED_DEFS: SeedFileDef[] = [
     icon: '⚛️',
     uploadedDaysAgo: 9,
     readFraction: 0,
+    examInDays: 12,
+    lastViewedDaysAgo: null,
+    quizScores: [],
   },
 ]
 
 const SEED_MARKER_KEY = 'learnx-file-vault-seeded-v1'
+const DAY_MS = 24 * 60 * 60 * 1000
 
 function isoWeekInfo(date: Date) {
   return { key: weekKeyFor(date), label: weekLabelFor(date) }
+}
+
+function buildQuizAttempts(
+  scores: number[],
+  kind: 'practice' | 'exam',
+  anchorAt: number
+): VaultQuizAttempt[] {
+  return scores.map((scorePct, i) => ({
+    id: `seed-attempt-${kind}-${i}-${scorePct}`,
+    kind,
+    takenAt: anchorAt - (scores.length - i) * DAY_MS,
+    scorePct,
+    totalQuestions: 8,
+    correctCount: Math.round((scorePct / 100) * 8),
+    coveragePages: [],
+  }))
 }
 
 /**
@@ -79,7 +114,8 @@ async function buildSeedFile(def: SeedFileDef): Promise<VaultFile> {
   const arrayBuffer = await response.arrayBuffer()
   const extracted = await extractPdf(arrayBuffer.slice(0))
 
-  const uploadedAt = Date.now() - def.uploadedDaysAgo * 24 * 60 * 60 * 1000
+  const now = Date.now()
+  const uploadedAt = now - def.uploadedDaysAgo * DAY_MS
   const { key: weekKey, label: weekLabel } = isoWeekInfo(new Date(uploadedAt))
 
   const readCount = Math.round(extracted.pageCount * def.readFraction)
@@ -90,6 +126,13 @@ async function buildSeedFile(def: SeedFileDef): Promise<VaultFile> {
   const analysis = analyzeDocument(def.filename, def.title, extracted.pages)
 
   const id = `seed-${def.filename.replace(/\.pdf$/, '')}`
+
+  const lastViewedAt =
+    def.lastViewedDaysAgo !== null
+      ? now - def.lastViewedDaysAgo * DAY_MS
+      : readCount > 0
+        ? uploadedAt + 60 * 60 * 1000
+        : null
 
   return {
     id,
@@ -113,21 +156,24 @@ async function buildSeedFile(def: SeedFileDef): Promise<VaultFile> {
     currentPage: readCount > 0 ? readCount : 1,
     progressPct: extracted.pageCount > 0 ? Math.round((readCount / extracted.pageCount) * 100) : 0,
     studyTimeSeconds: readCount * 95,
-    lastViewedAt: readCount > 0 ? uploadedAt + 60 * 60 * 1000 : null,
+    lastViewedAt,
     completedAt: status === 'completed' ? uploadedAt + 2 * 60 * 60 * 1000 : null,
+    examDate: def.examInDays !== null ? now + def.examInDays * DAY_MS : null,
 
     favorite: def.readFraction === 1,
     pinned: false,
     bookmarks: [],
     notes: [],
     tags: [],
+    collections: [],
 
     analysis,
     analysisState: 'ready',
     pagesText: extracted.pages,
 
-    quizAttempts: [],
-    examAttempts: [],
+    quizAttempts: buildQuizAttempts(def.quizScores, 'practice', now).slice(0, -1),
+    examAttempts:
+      def.quizScores.length > 0 ? buildQuizAttempts(def.quizScores.slice(-1), 'exam', now) : [],
   }
 }
 

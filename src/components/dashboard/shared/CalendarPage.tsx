@@ -2,6 +2,8 @@ import { motion } from 'framer-motion'
 import MiniCalendar from './MiniCalendar'
 import Badge from '../../ui/Badge'
 import type { Role } from '../Sidebar'
+import { useFileVault } from '../../../context/FileVaultContext'
+import { daysUntil } from '../../../lib/fileVault/studyHub'
 
 interface CalendarPageProps {
   role: Role
@@ -38,9 +40,42 @@ const upcoming = {
   ],
 }
 
+/** Formats a real file-derived exam date relative to "today" without
+ * pretending to know the current calendar month's exact day numbers used
+ * by the rest of this (otherwise static) demo calendar. */
+function formatExamTime(daysAway: number): string {
+  if (daysAway <= 0) return 'Today'
+  if (daysAway === 1) return 'Tomorrow'
+  return `In ${daysAway} days`
+}
+
 export default function CalendarPage({ role }: CalendarPageProps) {
+  const { files } = useFileVault()
   const events = role === 'doctor' ? doctorEvents : studentEvents
-  const list = role === 'doctor' ? upcoming.doctor : upcoming.student
+
+  // "My Files should synchronize with Calendar" — real exam dates set on
+  // uploaded documents (src/lib/fileVault/studyHub.ts) surface here
+  // alongside the existing schedule, so there's no separate/duplicate
+  // planner interface: My Files is the source of truth for exam dates,
+  // and Calendar simply displays them.
+  const fileExamEvents =
+    role === 'student'
+      ? files
+          .filter((f) => f.examDate !== null)
+          .map((f) => {
+            const daysAway = daysUntil(f.examDate) ?? 0
+            return {
+              title: `${f.course} Exam`,
+              time: formatExamTime(daysAway),
+              color: f.color,
+              daysAway,
+            }
+          })
+          .filter((e) => e.daysAway >= 0)
+          .sort((a, b) => a.daysAway - b.daysAway)
+      : []
+
+  const list = role === 'doctor' ? upcoming.doctor : [...fileExamEvents, ...upcoming.student]
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
