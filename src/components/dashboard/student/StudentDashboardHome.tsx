@@ -1,22 +1,11 @@
 import { motion } from 'framer-motion'
-import {
-  GreetingWidget,
-  FocusChart,
-  StudyPlanCards,
-  StreaksXP,
-  ActivityFeed,
-} from '../DashboardWidgets'
+import { GreetingWidget, FocusChart, StudyPlanCards, StreaksXP } from '../DashboardWidgets'
 import QuickActions from './QuickActions'
 import MyCourses from './MyCourses'
-import StudentAnalytics from './StudentAnalytics'
-import AIRecommendations from './AIRecommendations'
 import UpcomingWork from './UpcomingWork'
-import RecentActivityPanels from './RecentActivityPanels'
-import CertificatesAchievements from './CertificatesAchievements'
-import GoalsPanel from './GoalsPanel'
 import CalendarNotifications from './CalendarNotifications'
 
-/** Full Student Dashboard overview — composes every required section. */
+/** Simplified Student Dashboard overview — focused, study-first sections only. */
 export default function StudentDashboardHome() {
   return (
     <motion.div
@@ -56,24 +45,6 @@ export default function StudentDashboardHome() {
 
       {/* Calendar + notifications */}
       <CalendarNotifications />
-
-      {/* Analytics */}
-      <StudentAnalytics />
-
-      {/* AI recommendations */}
-      <AIRecommendations />
-
-      {/* Recent uploads + AI conversations */}
-      <RecentActivityPanels />
-
-      {/* Goals */}
-      <GoalsPanel />
-
-      {/* Certificates + achievements */}
-      <CertificatesAchievements />
-
-      {/* Recent activity feed */}
-      <ActivityFeed />
     </motion.div>
   )
 }
