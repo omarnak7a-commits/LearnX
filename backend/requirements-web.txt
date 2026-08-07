@@ -1,0 +1,22 @@
+# LearnX backend — minimal runtime deps for the web service (FastAPI API host).
+# The heavy AI/ML pipeline deps (torch, whisperx, pyannote, scikit-learn, ...)
+# stay in requirements.txt — they're only needed by Celery workers, not by
+# uvicorn serving app.main:app.
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+websockets==13.1
+sqlalchemy==2.0.34
+alembic==1.13.2
+psycopg[binary]==3.2.1
+pydantic==2.9.0
+pydantic-settings==2.5.0
+pydantic[email]==2.9.0
+email-validator==2.2.0
+python-dotenv==1.0.1
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
+boto3==1.35.0
+google-auth==2.34.0
+google-auth-oauthlib==1.2.1
+resend==0.9.0

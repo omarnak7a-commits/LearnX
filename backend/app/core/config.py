@@ -28,7 +28,10 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/2"
 
     # --- Object storage (S3-compatible, e.g. MinIO in dev) ---
+    storage_backend: str = "s3"
     storage_endpoint_url: str = "http://localhost:9000"
+    storage_region: str = "us-east-1"
+    storage_bucket: str = "learnx-uploads"
     storage_bucket_videos: str = "learnx-videos"
     storage_bucket_originals: str = "learnx-originals"
     storage_access_key: str = "changeme"
@@ -39,6 +42,21 @@ class Settings(BaseSettings):
     jwt_secret: str = "changeme-generate-a-real-secret"
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 60
+
+    # --- Email (Resend) ---
+    resend_api_key: str = ""
+    email_from_address: str = "LearnX <onboarding@resend.dev>"
+
+    # --- Google OAuth 2.0 ---
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+
+    # --- App URLs / cookies ---
+    app_base_url: str = "http://localhost:8443"
+    cookie_secure: bool = False
+    require_email_verification: bool = False
+
 
     # --- AI models ---
     whisper_model_size: str = "large-v3"

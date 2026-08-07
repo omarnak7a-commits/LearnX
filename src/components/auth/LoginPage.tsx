@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import Logo from '../ui/Logo'
+import { login as apiLogin, register as apiRegister, forgotPassword } from '../../lib/auth/apiClient'
 
 interface LoginPageProps {
   onLogin: (email: string) => void
@@ -23,11 +24,54 @@ export default function LoginPage({
 }: LoginPageProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [fullName, setFullName] = useState('')
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    onLogin(email.trim() || 'student@university.edu')
+    setError(null)
+    setNotice(null)
+    setBusy(true)
+    try {
+      if (mode === 'signin') {
+        await apiLogin(email.trim(), password)
+      } else {
+        const resp = await apiRegister({
+          email: email.trim(),
+          password,
+          full_name: fullName.trim() || email.trim().split('@')[0],
+        })
+        if (resp.requires_email_verification) {
+          setNotice('Account created! Check your inbox to verify your email.')
+        }
+      }
+      onLogin(email.trim())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Authentication failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleForgotPassword() {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      setError('Enter your email address first.')
+      return
+    }
+    setError(null)
+    try {
+      await forgotPassword(email.trim())
+      setNotice('Password reset link sent — check your inbox.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send reset link.')
+    }
+  }
+
+  function handleGoogle() {
+    window.location.href = `${import.meta.env.VITE_API_BASE_URL ?? ''}/api/v1/auth/google`
   }
 
   return (
@@ -135,6 +179,23 @@ export default function LoginPage({
           ))}
         </div>
 
+        {error && (
+          <div
+            className="mb-4 px-4 py-2.5 rounded-xl text-xs font-medium"
+            style={{ background: 'rgba(248,113,113,0.12)', color: '#f87171', border: '1px solid rgba(248,113,113,0.3)' }}
+          >
+            {error}
+          </div>
+        )}
+        {notice && (
+          <div
+            className="mb-4 px-4 py-2.5 rounded-xl text-xs font-medium"
+            style={{ background: 'rgba(45,212,191,0.12)', color: '#2DD4BF', border: '1px solid rgba(45,212,191,0.3)' }}
+          >
+            {notice}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label
@@ -152,6 +213,23 @@ export default function LoginPage({
               className="input-field w-full px-4 py-2.5 rounded-xl text-sm"
             />
           </div>
+          {mode === 'signup' && (
+            <div>
+              <label
+                className="text-xs font-medium mb-1.5 block"
+                style={{ color: 'var(--muted-foreground)' }}
+              >
+                Full name
+              </label>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Alex Chen"
+                className="input-field w-full px-4 py-2.5 rounded-xl text-sm"
+              />
+            </div>
+          )}
           <div>
             <label
               className="text-xs font-medium mb-1.5 block"
@@ -162,6 +240,7 @@ export default function LoginPage({
             <input
               type="password"
               required
+              minLength={8}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
@@ -169,14 +248,28 @@ export default function LoginPage({
             />
           </div>
 
+          {mode === 'signin' && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                className="text-xs hover:underline"
+                style={{ color: 'var(--muted-foreground)' }}
+              >
+                Forgot password?
+              </button>
+            </div>
+          )}
+
           <motion.button
             type="submit"
-            className="w-full py-3 rounded-xl text-sm font-bold mt-2"
+            disabled={busy}
+            className="w-full py-3 rounded-xl text-sm font-bold mt-2 disabled:opacity-60"
             style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
             whileHover={{ scale: 1.02, boxShadow: '0 0 32px rgba(45,212,191,0.4)' }}
             whileTap={{ scale: 0.98 }}
           >
-            {mode === 'signin' ? 'Sign in' : 'Create account'}
+            {busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
           </motion.button>
         </form>
 
@@ -188,18 +281,13 @@ export default function LoginPage({
           <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <button
             type="button"
+            onClick={handleGoogle}
             className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium input-field"
           >
-            <span>🔵</span> Google
-          </button>
-          <button
-            type="button"
-            className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium input-field"
-          >
-            <span>🍎</span> Apple
+            <span>🔵</span> Continue with Google
           </button>
         </div>
       </motion.div>

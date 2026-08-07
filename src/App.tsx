@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import IntroAnimation from './components/IntroAnimation'
 import LandingPage from './components/landing/LandingPage'
 import LoginPage from './components/auth/LoginPage'
 import OnboardingFlow from './components/auth/OnboardingFlow'
+import GoogleCallbackPage from './components/auth/GoogleCallbackPage'
 import DashboardPage from './components/dashboard/DashboardPage'
 import { ProfileProvider, useProfile } from './context/ProfileContext'
+import { AuthProvider } from './context/AuthContext'
+import { NotificationsProvider } from './context/NotificationsContext'
 
 type View = 'landing' | 'login' | 'onboarding' | 'dashboard'
 
@@ -15,6 +18,11 @@ function AppShell() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [pendingEmail, setPendingEmail] = useState('student@university.edu')
   const { profile, loading, recordDailyActivity } = useProfile()
+  const [isGoogleCallback, setIsGoogleCallback] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.location.pathname.startsWith('/auth/callback/google'),
+  )
 
   useEffect(() => {
     document.documentElement.className = theme === 'light' ? 'light' : ''
@@ -27,6 +35,11 @@ function AppShell() {
   function toggleTheme() {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
   }
+
+  const handleGoogleAuthenticated = useCallback((onboardingComplete: boolean) => {
+    setIsGoogleCallback(false)
+    setView(onboardingComplete ? 'dashboard' : 'onboarding')
+  }, [])
 
   function handleLogin(email: string) {
     setPendingEmail(email)
@@ -53,6 +66,14 @@ function AppShell() {
     } else {
       setView('onboarding')
     }
+  }
+
+  if (isGoogleCallback) {
+    return (
+      <div style={{ background: 'var(--background)', minHeight: '100vh' }}>
+        <GoogleCallbackPage onAuthenticated={handleGoogleAuthenticated} />
+      </div>
+    )
   }
 
   return (
@@ -130,8 +151,12 @@ function AppShell() {
 
 export default function App() {
   return (
-    <ProfileProvider>
-      <AppShell />
-    </ProfileProvider>
+    <AuthProvider>
+      <ProfileProvider>
+        <NotificationsProvider>
+          <AppShell />
+        </NotificationsProvider>
+      </ProfileProvider>
+    </AuthProvider>
   )
 }

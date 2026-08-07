@@ -134,13 +134,21 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    hashed_password: Mapped[str] = mapped_column(String(255))
-    full_name: Mapped[str] = mapped_column(String(255))
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[str] = mapped_column(String(255), default="")
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
     country: Mapped[str | None] = mapped_column(String(128), nullable=True)
     preferred_language: Mapped[str] = mapped_column(String(8), default="en")
     bio: Mapped[str] = mapped_column(Text, default="")
+
+    # ── Auth provider / account state (real auth, not mock) ──
+    role: Mapped[str] = mapped_column(String(32), default="student")  # student | doctor | admin
+    auth_provider: Mapped[str] = mapped_column(String(32), default="email")  # email | google
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
 
     # ── Academic identity — real foreign keys, never hardcoded/duplicated
     #    strings, matching the spec's "Do NOT hardcode values." ──
