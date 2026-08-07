@@ -1,0 +1,66 @@
+# Render Blueprint for the LearnX backend (FastAPI).
+#
+# Deploy:
+#   1. render login (on your machine)
+#   2. render blueprint launch --blueprint backend/render.yaml
+#   3. Set the sync:false secrets in the Render dashboard (or `render env set`)
+#      — real values are intentionally NOT stored in this file:
+#        DATABASE_URL, JWT_SECRET, STORAGE_* keys, RESEND_API_KEY,
+#        EMAIL_FROM_ADDRESS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+#        GOOGLE_REDIRECT_URI, APP_BASE_URL, COOKIE_SECURE,
+#        REQUIRE_EMAIL_VERIFICATION
+#   4. `alembic upgrade head` runs automatically before each deploy
+#      (preDeployCommand) and creates the schema in Supabase Postgres.
+services:
+  - type: web
+    name: learnx-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements-web.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: alembic upgrade head
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: API_PREFIX
+        value: /api/v1
+      - key: CORS_ORIGINS
+        value: '["https://learn-x-ofvm.vercel.app"]'
+      # --- secrets (set in dashboard; not synced from this file) ---
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: STORAGE_ENDPOINT_URL
+        sync: false
+      - key: STORAGE_REGION
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_BUCKET_VIDEOS
+        sync: false
+      - key: STORAGE_BUCKET_ORIGINALS
+        sync: false
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: COOKIE_SECURE
+        sync: false
+      - key: REQUIRE_EMAIL_VERIFICATION
+        sync: false

@@ -1,0 +1,20 @@
+# LearnX backend dependencies for Vercel Serverless Functions (Python ASGI).
+# Vercel installs this file automatically when the project contains Python
+# functions (api/index.py). Mirrors backend/requirements-web.txt minus
+# uvicorn (Vercel's ASGI runtime provides its own server).
+fastapi==0.115.0
+python-multipart==0.0.9
+websockets==13.1
+sqlalchemy==2.0.34
+alembic==1.13.2
+psycopg[binary]==3.2.1
+pydantic==2.9.0
+pydantic-settings==2.5.0
+email-validator==2.2.0
+python-dotenv==1.0.1
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
+boto3==1.35.0
+google-auth==2.34.0
+google-auth-oauthlib==1.2.1
+resend>=2.0.0

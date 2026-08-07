@@ -18,10 +18,10 @@ import type {
 } from '../types/fileVault'
 import { readingPercent, isFullyRead } from '../types/fileVault'
 import { getFileVaultStorage } from '../lib/fileVault/storage'
-import { ensureSeeded } from '../lib/fileVault/seedLibrary'
 import { extractPdf, estimateReadingMinutes, loadPdfDocument } from '../lib/fileVault/pdfEngine'
 import { analyzeDocument, generateQuestions, hashString } from '../lib/fileVault/textAnalysis'
 import { weekKeyFor, weekLabelFor } from '../lib/fileVault/weeks'
+import { vaultApi, apiVaultFileToFrontend, vaultFileToPatch } from '../lib/fileVault/apiClient'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 const COURSE_COLORS: Record<string, { color: string; icon: string }> = {
@@ -106,11 +106,26 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      await ensureSeeded()
-      const list = await storage.listFiles()
-      if (!cancelled) {
+      try {
+        // Primary source of truth: the real /api/v1/file-vault backend.
+        const list = await vaultApi.list()
+        if (cancelled) return
+        const hydrated = await Promise.all(
+          list.map(async (api) => {
+            const base = apiVaultFileToFrontend(api)
+            // hydrate locally-cached analysis (pages text, quiz attempts)
+            const cached = await storage.getFile(api.id)
+            return cached ? { ...base, ...cached, ...apiVaultFileToFrontend(api, cached) } : base
+          })
+        )
+        setFiles(hydrated.sort((a, b) => b.uploadedAt - a.uploadedAt))
+      } catch {
+        // Backend unreachable — fall back to the local offline mirror.
+        const list = await storage.listFiles()
+        if (cancelled) return
         setFiles(list.sort((a, b) => b.uploadedAt - a.uploadedAt))
-        setLoading(false)
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     })()
     return () => {
@@ -120,6 +135,13 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
 
   const persist = useCallback(
     async (file: VaultFile) => {
+      // Push to the real backend (fire-and-forget; local state wins for UX,
+      // and failures leave the offline mirror intact).
+      try {
+        await vaultApi.update(file.id, vaultFileToPatch(file))
+      } catch {
+        // ignore network failures — keep working offline
+      }
       await storage.putFile(file)
       setFiles((prev) => {
         const idx = prev.findIndex((f) => f.id === file.id)
@@ -134,27 +156,43 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
 
   const uploadFile = useCallback(
     async (rawFile: globalThis.File, meta?: { course?: string; doctorName?: string }) => {
-      const id = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      setUploadProgress((prev) => ({ ...prev, [id]: 0 }))
+      const localId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      setUploadProgress((prev) => ({ ...prev, [localId]: 0 }))
 
       const arrayBuffer = await rawFile.arrayBuffer()
-      setUploadProgress((prev) => ({ ...prev, [id]: 35 }))
+      setUploadProgress((prev) => ({ ...prev, [localId]: 20 }))
 
-      await storage.putBlob(id, new Blob([arrayBuffer], { type: 'application/pdf' }))
-      setUploadProgress((prev) => ({ ...prev, [id]: 55 }))
+      // Real upload path: presigned PUT to Supabase Storage, then metadata.
+      let serverId = localId
+      try {
+        const init = await vaultApi.uploadInit(rawFile.name, 'application/pdf', rawFile.size)
+        setUploadProgress((prev) => ({ ...prev, [localId]: 40 }))
+        serverId = init.fileId
+        await fetch(init.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/pdf' },
+          body: arrayBuffer,
+        })
+        await vaultApi.complete(init.fileId)
+        setUploadProgress((prev) => ({ ...prev, [localId]: 55 }))
+      } catch {
+        // Backend unreachable — keep the local offline path.
+        await storage.putBlob(localId, new Blob([arrayBuffer], { type: 'application/pdf' }))
+      }
+      setUploadProgress((prev) => ({ ...prev, [localId]: 70 }))
 
       const extracted = await extractPdf(arrayBuffer.slice(0))
-      setUploadProgress((prev) => ({ ...prev, [id]: 75 }))
+      setUploadProgress((prev) => ({ ...prev, [localId]: 85 }))
 
       const title = rawFile.name.replace(/\.pdf$/i, '')
-      const analysis = analyzeDocument(id, title, extracted.pages)
-      setUploadProgress((prev) => ({ ...prev, [id]: 95 }))
+      const analysis = analyzeDocument(serverId, title, extracted.pages)
+      setUploadProgress((prev) => ({ ...prev, [localId]: 95 }))
 
       const now = Date.now()
       const palette = pickPalette(meta?.course ?? title)
 
       const file: VaultFile = {
-        id,
+        id: serverId,
         name: rawFile.name,
         title,
         course: meta?.course ?? 'Uncategorized',
@@ -194,12 +232,22 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
         examAttempts: [],
       }
 
+      if (serverId !== localId) {
+        try {
+          await vaultApi.update(serverId, {
+            ...vaultFileToPatch(file),
+            totalPages: extracted.pageCount,
+          })
+        } catch {
+          // metadata push failed — local mirror still works
+        }
+      }
       await persist(file)
-      setUploadProgress((prev) => ({ ...prev, [id]: 100 }))
+      setUploadProgress((prev) => ({ ...prev, [localId]: 100 }))
       setTimeout(() => {
         setUploadProgress((prev) => {
           const next = { ...prev }
-          delete next[id]
+          delete next[localId]
           return next
         })
       }, 900)
@@ -209,6 +257,11 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
 
   const deleteFile = useCallback(
     async (id: string) => {
+      try {
+        await vaultApi.remove(id)
+      } catch {
+        // backend unreachable — still delete locally
+      }
       await storage.deleteFile(id)
       await storage.deleteBlob(id)
       pdfDocCache.current.delete(id)
