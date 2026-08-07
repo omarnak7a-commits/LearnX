@@ -1,17 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "vite",
-  "buildCommand": "pnpm run build",
-  "outputDirectory": "dist",
-  "installCommand": "pnpm install",
   "functions": {
     "api/index.py": {
-      "runtime": "python3.11",
+      "runtime": "@vercel/python",
       "maxDuration": 60,
       "includeFiles": "backend/**"
     },
     "api/migrate.py": {
-      "runtime": "python3.11",
+      "runtime": "@vercel/python",
       "maxDuration": 60,
       "includeFiles": "backend/**"
     }
