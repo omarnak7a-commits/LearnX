@@ -3,9 +3,12 @@
 > **الحالة:** Full-stack implementation مكتملة على `arena/019fba3f-learnx`:
 > باك إند حقيقي (Google OAuth + Resend + Supabase Storage S3 + Courses/Roster +
 > File Vault + Calendar + Notifications) وواجهة مربوطة بالـ APIs عبر
-> `src/lib/*/apiClient.ts` (بدون mocks). النشر الفعلي على Vercel/Render بيتعمل
-> من جهاز فيه وصول للإنترنت الكامل — الـ sandbox اللي اتبنى فيه الكود عندها
-> network allowlist (Supabase/Vercel/Render/Resend مش متوصلة منها).
+> `src/lib/*/apiClient.ts` (بدون mocks).
+>
+> **النشر الأساسي: كل حاجة على Vercel (بدون فيزا/كارت).** الباك إند بيشتغل
+> كـ Python Serverless Functions (`api/index.py` — ASGI)، والفرونت SPA على نفس
+> الدومين (same-origin → مفيش CORS). البديل (Render) موثق في آخر الملف لمن
+> عنده كارت.
 
 ---
 
@@ -13,94 +16,129 @@
 
 | الطبقة | التقنية | ملفات النشر |
 |---|---|---|
-| Frontend (SPA) | React 19 + Vite 8 + Tailwind v4 | `vercel.json`, `VITE_API_BASE_URL` |
-| Backend (API) | FastAPI + SQLAlchemy + Alembic | `backend/render.yaml` |
+| Frontend (SPA) | React 19 + Vite 8 + Tailwind v4 | `vercel.json`, `dist/` |
+| Backend (API) | FastAPI ASGI على Vercel Functions | `api/index.py`, `requirements.txt` (جذر) |
 | قاعدة البيانات | Supabase Postgres (pooler) | migrations في `backend/alembic/` |
 | الملفات/الفيديو | Supabase Storage (S3) | `STORAGE_*` env vars |
 | الإيميلات | Resend | `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS` |
 | الدخول | Google OAuth 2.0 (Code Flow + JWKS) | `GOOGLE_*` env vars |
 
-### API المتاح (47 route):
-- `POST /api/v1/auth/register` — إنشاء حساب + إيميل تفعيل
-- `POST /api/v1/auth/login` — دخول إيميل/كلمة مرور → JWT
-- `GET  /api/v1/auth/google` + `GET /api/v1/auth/google/callback` — OAuth حقيقي
-- `POST /api/v1/auth/verify-email` • `POST /api/v1/auth/forgot-password` • `POST /api/v1/auth/reset-password` • `GET /api/v1/auth/me`
-- `GET|POST /api/v1/courses` + module/lesson/enroll/save/complete endpoints + `GET /api/v1/courses/roster/students`
-- `GET|POST /api/v1/file-vault` (رفع عبر presigned PUT لـ Supabase Storage) + notes + bookmarks
-- `GET|POST /api/v1/calendar` • `GET /api/v1/notifications`
+### التوجيه في `vercel.json`:
+```jsonc
+"rewrites": [
+  { "source": "/api/v1/(.*)", "destination": "/api/index.py" },  // FastAPI
+  { "source": "/health",        "destination": "/api/index.py" },
+  { "source": "/docs",          "destination": "/api/index.py" },
+  { "source": "/openapi.json",  "destination": "/api/index.py" },
+  { "source": "/api/migrate",   "destination": "/api/migrate.py" }, // migrations مرة واحدة
+  { "source": "/(.*)",          "destination": "/index.html" }      // SPA fallback
+]
+```
+- `functions.api/index.py` → runtime `python3.11`, `includeFiles: backend/**`
+  (بيضمن إن package الـ backend + ملفات alembic داخل حزمة الـ function).
+- الـ Python deps بيتثبتوا تلقائيًا من `requirements.txt` اللي في جذر المشروع.
 
 ## 2) الأسرار (Secrets)
 
 - ملف الأسرار الحقيقي: `.env.deployment.secrets.md` — **gitignored**.
-- نسخة الباك إند: `backend/.env` — **gitignored**.
+- نسخة الباك إند: `backend/.env` — **gitignored** (للتشغيل المحلي فقط).
 - نموذج بدون قيم: `.env.example` (committed).
 
-> ⚠️ ممنوع commit أي ملف فيه أسرار. لو اتضافت بالغلط: `git rm --cached` فورًا
-> وغيّر الأسرار المتسربة.
+> ⚠️ ممنوع commit أي ملف فيه أسرار. `vercel.json` متعمد **مفيش فيه env** — المتغيرات
+> كلها بتتحط في Vercel Dashboard مباشرة (القسم التالي).
 
-## 3) نشر الـ Frontend على Vercel (learn-x-ofvm)
+## 3) النشر الكامل على Vercel (بدون فيزا) — الخطوات
 
+### 3.1 اربط المشروع
+- GitHub → Vercel → **Add New Project** → استورد `omarnak7a-commits/LearnX`.
+  أو من CLI: `npx vercel login && npx vercel link --project learn-x-ofvm`.
+- Vercel هياخد البناء من `vercel.json`: `pnpm install && pnpm build` (الفرونت)
+  + Python function (الباك).
+
+### 3.2 حط المتغيرات في Vercel Dashboard
+Project → **Settings → Environment Variables** → أضف (Production) — القيم الحقيقية من
+`.env.deployment.secrets.md` عندك (مش مكتوبة هنا عشان الملف ده committed):
+
+| المتغير | القيمة (من ملف الأسرار) |
+|---|---|
+| `ENVIRONMENT` | `production` |
+| `API_PREFIX` | `/api/v1` |
+| `CORS_ORIGINS` | `["https://learn-x-ofvm.vercel.app"]` |
+| `DATABASE_URL` | رابط Supabase pooler (فيه `%23`) |
+| `JWT_SECRET` | الـ hex الطويل |
+| `STORAGE_ENDPOINT_URL` | `https://nmhqleagwizfyigxakqn.storage.supabase.co/storage/v1/s3` |
+| `STORAGE_REGION` | `us-east-1` |
+| `STORAGE_BUCKET` | `learnx-uploads` |
+| `STORAGE_ACCESS_KEY` | access key |
+| `STORAGE_SECRET_KEY` | secret key |
+| `SIGNED_URL_TTL_SECONDS` | `900` |
+| `RESEND_API_KEY` | مفتاح Resend |
+| `EMAIL_FROM_ADDRESS` | `LearnX <onboarding@resend.dev>` |
+| `GOOGLE_CLIENT_ID` | client id |
+| `GOOGLE_CLIENT_SECRET` | client secret |
+| `GOOGLE_REDIRECT_URI` | `https://learn-x-ofvm.vercel.app/auth/callback/google` |
+| `APP_BASE_URL` | `https://learn-x-ofvm.vercel.app` |
+| `COOKIE_SECURE` | `true` |
+| `REQUIRE_EMAIL_VERIFICATION` | `true` |
+| `MIGRATION_KEY` | (اختياري) أي نص عشوائي — لتفعيل endpoint الـ migrations |
+
+> `VITE_API_BASE_URL` **متسببهاش** (same-origin — الفرونت والـ API على نفس الدومين).
+> إضافة متغير build بيشتغل برضه لو حبيت، بنفس قيمة `APP_BASE_URL`.
+
+### 3.3 انشر
+- `npx vercel --prod` أو ادفع على الـ branch المرتبط بـ Vercel.
+- لأول مرة في عمر قاعدة البيانات، شغّل الـ migrations **مرة واحدة**:
+  ```bash
+  curl -X POST https://learn-x-ofvm.vercel.app/api/migrate \
+    -H "x-migration-key: <MIGRATION_KEY اللي حطيته في الـ Dashboard>"
+  # {"ok": true, "target": "head"}
+  ```
+  (لو `MIGRATION_KEY` مش متظبط → 503؛ مفتاح غلط → 403؛ الـ endpoint بيعمل
+  `alembic upgrade head` بس — من غير مفتاح مش شغال أصلًا.)
+
+### 3.4 فحص بعد النشر
 ```bash
-npx vercel login
-npx vercel link --project learn-x-ofvm
-npx vercel env add VITE_API_BASE_URL production   # https://learnx-api.onrender.com
-npx vercel --prod
+curl -s https://learn-x-ofvm.vercel.app/health
+# {"status":"ok","environment":"production"}
+
+curl -s https://learn-x-ofvm.vercel.app/api/v1/auth/me          # 401 (مطلوب token — تمام)
+curl -sI https://learn-x-ofvm.vercel.app | head -1              # 200 (الفرونت)
+
+# تسجيل حساب حقيقي (بييجي إيميل تفعيل من Resend)
+curl -s -X POST https://learn-x-ofvm.vercel.app/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@university.edu","password":"password123","full_name":"Alex Chen"}'
 ```
 
-- Build command في `vercel.json`: `pnpm install && pnpm build` (output: `dist`).
-- **مهم:** `VITE_API_BASE_URL` لازم يكون رابط Render بعد أول deploy للباك إند.
-- SPA routes (`/auth/callback/google`) بتتخدم عادي لأن Vercel بيدي fallback لـ `index.html`.
+### 3.5 حدود Vercel لازم تعرفها
+- **WebSockets غير مدعومة على Serverless Functions** — route الـ `/ws/...` موجود
+  في الكود بس مش مستخدم من الفرونت حاليًا؛ مش بيأثر على أي حاجة.
+- **maxDuration = 60s** على خطة Hobby — كفاية لكل الـ endpoints (كلها DB/API calls سريعة).
+- **DB connection pooling**: Vercel functions cold start بيفتح اتصال جديد — طبيعي
+  وسريع مع Supabase pooler.
 
-## 4) نشر الـ Backend على Render
+---
+
+## 4) البديل: الباك إند على Render (لو في كارت)
 
 ```bash
 npm i -g @renderinc/cli
 render blueprint launch --blueprint backend/render.yaml
 ```
-
-أو يدويًا (Web Service):
-- Root Directory: `backend`
-- Build: `pip install -r requirements-web.txt`
-- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- Pre-deploy: `alembic upgrade head` (بيشغّل migrations على Supabase قبل كل نشر)
-- Health check: `/health`
-
-ثم حط الأسرار من `.env.deployment.secrets.md` في Render dashboard:
-`DATABASE_URL, JWT_SECRET, STORAGE_ENDPOINT_URL, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY,
-STORAGE_REGION, STORAGE_BUCKET, RESEND_API_KEY, EMAIL_FROM_ADDRESS, GOOGLE_CLIENT_ID,
-GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, APP_BASE_URL, CORS_ORIGINS, COOKIE_SECURE,
-REQUIRE_EMAIL_VERIFICATION`.
-
-بعد أول deploy:
-1. خد رابط الـ service الجديد (مثل `https://learnx-api.onrender.com`).
-2. حدّث `VITE_API_BASE_URL` في Vercel بـه وأعد deploy الفرونت.
-3. لو `GOOGLE_REDIRECT_URI` بتشاور على `https://learn-x-ofvm.vercel.app/auth/callback/google`،
-   تأكد إن الفرونت منشور على نفس الدومين قبل ما تجرب الدخول بجوجل.
+- Build: `pip install -r requirements-web.txt` • Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Pre-deploy: `alembic upgrade head` (بيشغّل migrations تلقائيًا)
+- وبعدها `VITE_API_BASE_URL` في Vercel = رابط Render.
 
 ## 5) قاعدة البيانات (Supabase Postgres)
 
-- سلسلتان من migrations (`alembic upgrade head`):
+- سلسلتان migrations (`alembic upgrade head`):
   1. `fa94e7c3c032` — initial (users, universities, video_lectures, ...)
   2. `b7c9d1e2f3a4` — full-stack: auth state columns, courses/roster tables,
      vault_files, student_notes, file_bookmarks, calendar_events, notifications,
      email/password-reset tokens
 - توليد SQL يدوي للتحقق: `cd backend && alembic upgrade head --sql`
 
-## 6) فحص سريع بعد النشر
-
-```bash
-curl -s https://learnx-api.onrender.com/health
-# {"status":"ok","environment":"production"}
-
-curl -sI https://learn-x-ofvm.vercel.app | head -1    # 200
-
-# تسجيل حساب حقيقي (بييجي إيميل تفعيل من Resend)
-curl -s -X POST https://learnx-api.onrender.com/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@university.edu","password":"password123","full_name":"Alex Chen"}'
-```
-
-## 7) ملاحظات معمارية
+## 6) ملاحظات معمارية
 
 - **OAuth:** `backend/app/services/google_oauth.py` — بيـverify الـ ID token بـ
   `google.oauth2.id_token.verify_oauth2_token` (JWKS + audience)، والـ state محمي بـ HTTP-only cookie.
@@ -109,3 +147,4 @@ curl -s -X POST https://learnx-api.onrender.com/api/v1/auth/register \
   والتحليل (PDF extraction, summaries, flashcards) شغال client-side حقيقي ومتزامن مع الـ API.
 - **Courses:** شجرة Course → Module → Lesson، enrollment + lesson completion بيحسب
   progress % للطالب و completion rate للكورس، و`/roster/students` بيرجّع سجل طلاب الدكتور.
+
