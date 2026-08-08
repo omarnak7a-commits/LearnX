@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
-import { apiCompleteGoogleSignup, apiExchangeGoogleCode } from '../../lib/auth/apiClient'
 import type { AuthUser, UserRole } from '../../types/auth'
 
 interface GoogleCallbackPageProps {
@@ -8,11 +7,6 @@ interface GoogleCallbackPageProps {
   state: string | null
   onDone: (user: AuthUser) => void
   onCancel: () => void
-}
-
-function describeError(err: unknown): string {
-  if (err instanceof Error) return err.message
-  return 'An error occurred during Google authentication. Please try again.'
 }
 
 export default function GoogleCallbackPage({
@@ -41,17 +35,28 @@ export default function GoogleCallbackPage({
 
     ;(async () => {
       try {
-        const outcome = await apiExchangeGoogleCode({ code: authCode, state: authState })
-        if (outcome.status === 'authenticated') {
-          setUserFromAuthResponse(outcome.user)
-          onDone(outcome.user)
-        } else {
-          setPendingToken(outcome.pendingToken)
+        const res = await fetch('/api/v1/auth/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ code: authCode, state: authState }),
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data.detail || data.message || 'Google sign-in exchange failed')
+        }
+
+        if (data.status === 'needs_role') {
+          setPendingToken(data.pending_token || data.pendingToken)
           setStatus('needs-role')
+        } else {
+          const authUser = data.user || data
+          if (setUserFromAuthResponse) setUserFromAuthResponse(authUser)
+          onDone(authUser)
         }
       } catch (err) {
         setStatus('error')
-        setError(describeError(err))
+        setError(err instanceof Error ? err.message : 'Google authentication failed.')
       }
     })()
   }, [code, state, onDone, setUserFromAuthResponse])
@@ -60,12 +65,22 @@ export default function GoogleCallbackPage({
     if (!role || !pendingToken) return
     setSubmitting(true)
     try {
-      const result = await apiCompleteGoogleSignup({ pendingToken, role })
-      setUserFromAuthResponse(result.user)
-      onDone(result.user)
+      const res = await fetch('/api/v1/auth/google/complete-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ pending_token: pendingToken, role }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || 'Failed to complete signup')
+      }
+      const authUser = data.user || data
+      if (setUserFromAuthResponse) setUserFromAuthResponse(authUser)
+      onDone(authUser)
     } catch (err) {
       setStatus('error')
-      setError(describeError(err))
+      setError(err instanceof Error ? err.message : 'Signup completion failed.')
     } finally {
       setSubmitting(false)
     }
