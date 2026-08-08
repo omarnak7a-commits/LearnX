@@ -35,12 +35,22 @@ export default function GoogleCallbackPage({
 
     ;(async () => {
       try {
-        const res = await fetch('/api/v1/auth/google', {
+        let res = await fetch('/api/v1/auth/google/callback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({ code: authCode, state: authState }),
         })
+
+        if (res.status === 404 || res.status === 405) {
+          res = await fetch('/api/v1/auth/google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ code: authCode, state: authState }),
+          })
+        }
+
         const data = await res.json()
         if (!res.ok) {
           throw new Error(data.detail || data.message || 'Google sign-in exchange failed')
