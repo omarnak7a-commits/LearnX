@@ -257,50 +257,56 @@ def google_login() -> RedirectResponse:
     return resp
 
 
-@router.get("/google/callback")
-def google_callback(
+@router.api_route("/google/callback", methods=["GET", "POST"], response_model=GoogleAuthResult)
+@router.api_route("/google", methods=["GET", "POST"], response_model=GoogleAuthResult)
+async def google_callback(
     request: Request,
-    code: str = Query(default=""),
-    state: str = Query(default=""),
+    response: Response,
     db: Session = Depends(get_db),
-) -> RedirectResponse:
-    cookie_state = request.cookies.get(STATE_COOKIE)
-    if not state or state != cookie_state:
-        return RedirectResponse(f"{settings.app_base_url}/login?error=invalid_state")
-    if not code:
-        return RedirectResponse(f"{settings.app_base_url}/login?error=access_denied")
+    code: str | None = None,
+    state: str | None = None,
+) -> Any:
+    req_code = code
+    req_state = state
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                req_code = body.get("code") or req_code
+                req_state = body.get("state") or req_state
+        except Exception:
+            pass
+
+    if not req_code:
+        # Fallback to query params
+        req_code = request.query_params.get("code")
+        req_state = request.query_params.get("state")
+
+    if not req_code:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing Google authorization code.")
+
+    ip, ua = get_client_ip(request), get_user_agent(request)
+    try:
+        info = exchange_code_for_user_info(req_code)
+    except GoogleOAuthNotConfigured as exc:
+        raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, str(exc)) from exc
+    except GoogleOAuthError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
     try:
-        identity = exchange_code_for_identity(code)
-    except (GoogleOAuthError, ValueError) as exc:
-        logger.warning("google exchange failed: %s", exc)
-        return RedirectResponse(f"{settings.app_base_url}/login?error=google_auth_failed")
+        outcome = auth_service.login_or_register_with_google(db, info, ip, ua)
+    except AuthError as exc:
+        _raise_for_auth_error(exc)
+        raise
 
-    email = identity["email"]
-    user = db.scalar(select(User).where(User.email == email))
-    if user is None:
-        user = User(
-            email=email,
-            hashed_password=None,
-            full_name=identity["full_name"],
-            avatar_url=identity.get("avatar_url"),
-            auth_provider="google",
-            role="student",
-            is_verified=True,
-        )
-        db.add(user)
-    else:
-        user.auth_provider = "google"
-        if not user.full_name and identity["full_name"]:
-            user.full_name = identity["full_name"]
-        user.is_verified = True
-        if identity.get("avatar_url"):
-            user.avatar_url = identity["avatar_url"]
+    if outcome.user is None:
+        return GoogleAuthResult(status="needs_role", pending_token=outcome.pending_token)
 
-    user.last_login_at = datetime.utcnow()
-    db.commit()
-
-    token = create_access_token(str(user.id), user.role)
-    resp = RedirectResponse(f"{settings.app_base_url}/auth/callback/google?token={token}")
-    resp.delete_cookie(STATE_COOKIE)
-    return resp
+    tokens = auth_service.issue_tokens(db, outcome.user, remember_me=True, ip=ip, user_agent=ua)
+    _set_refresh_cookie(response, tokens.refresh_token, remember_me=True)
+    return GoogleAuthResult(
+        status="authenticated",
+        access_token=tokens.access_token,
+        token_type="bearer",
+        user=UserOut.model_validate(outcome.user),
+    )
