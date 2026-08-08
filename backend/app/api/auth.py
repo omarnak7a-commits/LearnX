@@ -257,17 +257,28 @@ def google_login() -> RedirectResponse:
     return resp
 
 
-@router.api_route("/google/callback", methods=["GET", "POST"], response_model=GoogleAuthResult)
-@router.api_route("/google", methods=["GET", "POST"], response_model=GoogleAuthResult)
+@router.api_route("/google/callback", methods=["GET", "POST"])
+@router.api_route("/google", methods=["GET", "POST"])
 async def google_callback(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
     code: str | None = None,
     state: str | None = None,
-) -> Any:
-    req_code = code
-    req_state = state
+):
+    req_code = code or request.query_params.get("code")
+    req_state = state or request.query_params.get("state")
+
+    # If GET with no code, redirect user to Google consent screen
+    if request.method == "GET" and not req_code:
+        try:
+            state_val = secrets.token_urlsafe(24)
+            _oauth_states.add(state_val)
+            url = build_authorization_url(state_val)
+            return RedirectResponse(url)
+        except GoogleOAuthNotConfigured as exc:
+            raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, str(exc)) from exc
+
     if request.method == "POST":
         try:
             body = await request.json()
@@ -276,11 +287,6 @@ async def google_callback(
                 req_state = body.get("state") or req_state
         except Exception:
             pass
-
-    if not req_code:
-        # Fallback to query params
-        req_code = request.query_params.get("code")
-        req_state = request.query_params.get("state")
 
     if not req_code:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing Google authorization code.")
@@ -300,13 +306,13 @@ async def google_callback(
         raise
 
     if outcome.user is None:
-        return GoogleAuthResult(status="needs_role", pending_token=outcome.pending_token)
+        return {"status": "needs_role", "pending_token": outcome.pending_token}
 
     tokens = auth_service.issue_tokens(db, outcome.user, remember_me=True, ip=ip, user_agent=ua)
     _set_refresh_cookie(response, tokens.refresh_token, remember_me=True)
-    return GoogleAuthResult(
-        status="authenticated",
-        access_token=tokens.access_token,
-        token_type="bearer",
-        user=UserOut.model_validate(outcome.user),
-    )
+    return {
+        "status": "authenticated",
+        "access_token": tokens.access_token,
+        "token_type": "bearer",
+        "user": UserOut.model_validate(outcome.user),
+    }
