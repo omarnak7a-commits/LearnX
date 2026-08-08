@@ -1,78 +1,65 @@
 """
 Application settings loaded from environment variables.
-
-Reference implementation only — see backend/README.md. Values below are
-sane local-dev defaults; every secret must be overridden via a real .env /
-secrets manager before this ever runs against production data.
 """
 
+import os
 from functools import lru_cache
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- App ---
-    environment: str = "development"
+    environment: str = os.getenv("ENVIRONMENT", "production")
     api_prefix: str = "/api/v1"
-    cors_origins: list[str] = ["http://localhost:8443"]
+    cors_origins_raw: str = os.getenv("CORS_ORIGINS_RAW", "https://learn-x-ofvm.vercel.app,http://localhost:8443,http://localhost:5173")
+    app_base_url: str = os.getenv("APP_BASE_URL", "https://learn-x-ofvm.vercel.app")
+    api_base_url: str = os.getenv("API_BASE_URL", "https://learn-x-ofvm.vercel.app")
 
     # --- Database ---
-    database_url: str = "postgresql+psycopg://learnx:learnx@localhost:5432/learnx"
+    database_url: str = os.getenv("DATABASE_URL", "postgresql+psycopg://learnx:learnx@localhost:5432/learnx")
 
-    # --- Redis / Celery ---
-    redis_url: str = "redis://localhost:6379/0"
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
-
-    # --- Object storage (S3-compatible, e.g. MinIO in dev) ---
-    storage_backend: str = "s3"
-    storage_endpoint_url: str = "http://localhost:9000"
-    storage_region: str = "us-east-1"
-    storage_bucket: str = "learnx-uploads"
-    storage_bucket_videos: str = "learnx-videos"
-    storage_bucket_originals: str = "learnx-originals"
-    storage_access_key: str = "changeme"
-    storage_secret_key: str = "changeme"
+    # --- Object storage (S3-compatible, Supabase Storage) ---
+    storage_backend: str = os.getenv("STORAGE_BACKEND", "s3")
+    storage_endpoint_url: str = os.getenv("STORAGE_ENDPOINT_URL", "https://nmhqleagwizfyigxakqn.storage.supabase.co/storage/v1/s3")
+    storage_region: str = os.getenv("STORAGE_REGION", "us-east-1")
+    storage_bucket: str = os.getenv("STORAGE_BUCKET", "learnx-uploads")
+    storage_access_key: str = os.getenv("STORAGE_ACCESS_KEY", "")
+    storage_secret_key: str = os.getenv("STORAGE_SECRET_KEY", "")
     signed_url_ttl_seconds: int = 900
 
-    # --- Auth ---
-    jwt_secret: str = "changeme-generate-a-real-secret"
+    # --- Auth: JWT ---
+    jwt_secret: str = os.getenv("JWT_SECRET", "changeme-generate-a-real-secret")
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 60
 
     # --- Email (Resend) ---
-    resend_api_key: str = ""
-    email_from_address: str = "LearnX <onboarding@resend.dev>"
+    resend_api_key: str = os.getenv("RESEND_API_KEY", "")
+    email_from_address: str = os.getenv("EMAIL_FROM_ADDRESS", "LearnX <onboarding@resend.dev>")
 
     # --- Google OAuth 2.0 ---
-    google_client_id: str = ""
-    google_client_secret: str = ""
-    google_redirect_uri: str = ""
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    google_redirect_uri: str = os.getenv("GOOGLE_REDIRECT_URI", "https://learn-x-ofvm.vercel.app/auth/callback/google")
 
     # --- App URLs / cookies ---
-    app_base_url: str = "http://localhost:8443"
-    cookie_secure: bool = False
+    cookie_secure: bool = True
     require_email_verification: bool = False
 
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
 
-    # --- AI models ---
-    whisper_model_size: str = "large-v3"
-    whisper_device: str = "cuda"  # falls back to "cpu" if no GPU (much slower)
-    diarization_model: str = "pyannote/speaker-diarization-3.1"
-    embeddings_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    @property
+    def google_oauth_configured(self) -> bool:
+        cid = self.google_client_id or os.environ.get("GOOGLE_CLIENT_ID", "")
+        csec = self.google_client_secret or os.environ.get("GOOGLE_CLIENT_SECRET", "")
+        return bool(cid and csec)
 
-    # --- Pipeline tuning (see stages/silence_detection.py for rationale) ---
-    silence_min_removable_seconds: float = 4.0
-    silence_energy_threshold_db: float = -40.0
-    meaningful_pause_max_seconds: float = 6.0
-
-    # --- Upload limits ---
-    max_upload_size_bytes: int = 20 * 1024 * 1024 * 1024  # 20 GB
-    chunk_size_bytes: int = 8 * 1024 * 1024  # 8 MB per resumable chunk
-
+    @property
+    def email_delivery_configured(self) -> bool:
+        key = self.resend_api_key or os.environ.get("RESEND_API_KEY", "")
+        return bool(key)
 
 @lru_cache
 def get_settings() -> Settings:
