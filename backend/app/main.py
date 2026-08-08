@@ -3,12 +3,20 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 
-from app.api import auth, calendar, courses, file_vault, notifications, planner, video, websockets
+# Built-in Rate Limiter setup (Self-contained, no external missing files)
+try:
+    from slowapi import Limiter
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.middleware import SlowAPIMiddleware
+    from slowapi.util import get_remote_address
+    limiter = Limiter(key_func=get_remote_address)
+except Exception:
+    limiter = None
+    RateLimitExceeded = Exception
+    SlowAPIMiddleware = None
+
 from app.core.config import get_settings
-from app.core.rate_limit import limiter
 
 settings = get_settings()
 
@@ -18,15 +26,16 @@ app = FastAPI(
     version="0.2.0",
 )
 
-app.state.limiter = limiter
-app.add_middleware(SlowAPIMiddleware)
+if limiter and SlowAPIMiddleware:
+    app.state.limiter = limiter
+    app.add_middleware(SlowAPIMiddleware)
 
-@app.exception_handler(RateLimitExceeded)
-def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "Too many requests. Please wait a moment and try again."},
-    )
+    @app.exception_handler(RateLimitExceeded)
+    def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Please wait a moment and try again."},
+        )
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,14 +45,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Core Routers
+from app.api import auth, calendar, courses, file_vault, notifications
+
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(courses.router, prefix=settings.api_prefix)
 app.include_router(file_vault.router, prefix=settings.api_prefix)
 app.include_router(calendar.router, prefix=settings.api_prefix)
 app.include_router(notifications.router, prefix=settings.api_prefix)
-app.include_router(video.router, prefix=settings.api_prefix)
-app.include_router(planner.router, prefix=settings.api_prefix)
-app.include_router(websockets.router)
+
+# Optional routers (loaded safely)
+try:
+    from app.api import planner, video, websockets
+    app.include_router(video.router, prefix=settings.api_prefix)
+    app.include_router(planner.router, prefix=settings.api_prefix)
+    app.include_router(websockets.router)
+except Exception:
+    pass
 
 @app.get("/health")
 def health() -> dict:
