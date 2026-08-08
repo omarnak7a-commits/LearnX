@@ -5,7 +5,6 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-# Add backend directory to sys.path
 root_dir = Path(__file__).resolve().parent.parent
 backend_dir = root_dir / "backend"
 
