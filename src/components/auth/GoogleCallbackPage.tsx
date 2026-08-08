@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
-import Logo from '../ui/Logo'
-import RoleSelectCards from './RoleSelectCards'
 import { useAuth } from '../../context/AuthContext'
 import { apiCompleteGoogleSignup, apiExchangeGoogleCode } from '../../lib/auth/apiClient'
 import type { AuthUser, UserRole } from '../../types/auth'
-import { describeError } from './LoginPage'
 
 interface GoogleCallbackPageProps {
   code: string | null
   state: string | null
   onDone: (user: AuthUser) => void
   onCancel: () => void
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message
+  return 'An error occurred during Google authentication. Please try again.'
 }
 
 export default function GoogleCallbackPage({
@@ -73,91 +74,82 @@ export default function GoogleCallbackPage({
   return (
     <div
       className="relative min-h-screen flex items-center justify-center px-6 py-12 overflow-hidden"
-      style={{ background: 'var(--section-dark)' }}
+      style={{ background: 'var(--section-dark, #0A0D14)' }}
     >
-      <div className="absolute inset-0 bg-grid opacity-40 pointer-events-none" />
-      <div className="absolute top-6 inset-x-0 px-6 flex items-center justify-center">
-        <Logo variant="full" size="sm" />
-      </div>
-
-      <motion.div
-        className={`glass-card w-full p-8 relative z-10 text-center transition-[max-width] duration-300 ${
-          status === 'needs-role' ? 'max-w-xl' : 'max-w-md'
-        }`}
-        initial={{ opacity: 0, y: 24, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-      >
-        <Logo variant="symbol" size="lg" className="mb-4 mx-auto" />
+      <div className="glass-card w-full max-w-md p-8 relative z-10 text-center rounded-2xl border border-white/10 bg-slate-900/80 shadow-2xl">
+        <div className="w-12 h-12 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center text-xl font-bold mx-auto mb-4 border border-teal-500/30">
+          LX
+        </div>
 
         {status === 'exchanging' && (
-          <>
-            <div
-              className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin mx-auto mb-4"
-              style={{ borderColor: 'var(--primary)', borderTopColor: 'transparent' }}
-            />
-            <p className="text-sm" style={{ color: 'var(--muted-foreground)' }}>
-              Completing sign-in with Google…
-            </p>
-          </>
+          <div>
+            <div className="w-10 h-10 rounded-full border-2 border-teal-400 border-t-transparent animate-spin mx-auto mb-4" />
+            <h2 className="text-lg font-bold text-white mb-1">Connecting to Google...</h2>
+            <p className="text-xs text-slate-400">Authenticating your LearnX account.</p>
+          </div>
         )}
 
         {status === 'needs-role' && (
           <div className="text-left">
-            <h1
-              className="text-lg font-bold mb-1 text-center"
-              style={{ fontFamily: 'Orbitron, sans-serif', color: 'var(--foreground)' }}
-            >
-              How will you use LearnX?
-            </h1>
-            <p className="text-xs mb-5 text-center" style={{ color: 'var(--muted-foreground)' }}>
-              Choose your account type to finish creating your LearnX account.
-            </p>
-            <RoleSelectCards value={role} onChange={setRole} showFeatures />
-            <motion.button
+            <h2 className="text-lg font-bold text-white text-center mb-1">Choose Account Type</h2>
+            <p className="text-xs text-slate-400 text-center mb-6">How will you be using LearnX?</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+              <button
+                type="button"
+                onClick={() => setRole('student')}
+                className={`p-4 rounded-xl border text-left transition-all ${
+                  role === 'student'
+                    ? 'border-teal-400 bg-teal-500/10 shadow-lg shadow-teal-500/10'
+                    : 'border-white/10 bg-slate-800/50 hover:border-white/20'
+                }`}
+              >
+                <div className="text-2xl mb-1">🎓</div>
+                <div className="font-bold text-white text-sm">Student</div>
+                <div className="text-xs text-slate-400 mt-1">Study, take quizzes & track progress</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRole('doctor')}
+                className={`p-4 rounded-xl border text-left transition-all ${
+                  role === 'doctor'
+                    ? 'border-teal-400 bg-teal-500/10 shadow-lg shadow-teal-500/10'
+                    : 'border-white/10 bg-slate-800/50 hover:border-white/20'
+                }`}
+              >
+                <div className="text-2xl mb-1">👨‍🏫</div>
+                <div className="font-bold text-white text-sm">Doctor</div>
+                <div className="text-xs text-slate-400 mt-1">Create courses & manage lectures</div>
+              </button>
+            </div>
+
+            <button
               onClick={handleCompleteSignup}
               disabled={!role || submitting}
-              className="w-full py-3 rounded-xl text-sm font-bold mt-5"
-              style={{
-                background: 'var(--primary)',
-                color: 'var(--primary-foreground)',
-                opacity: !role || submitting ? 0.5 : 1,
-              }}
-              whileHover={!role || submitting ? undefined : { scale: 1.02 }}
-              whileTap={!role || submitting ? undefined : { scale: 0.98 }}
+              className="w-full py-3 rounded-xl text-sm font-bold bg-teal-400 text-slate-950 disabled:opacity-50 hover:bg-teal-300 transition-all"
             >
-              {submitting ? 'Creating account…' : 'Continue'}
-            </motion.button>
+              {submitting ? 'Creating account...' : 'Continue to LearnX'}
+            </button>
           </div>
         )}
 
         {status === 'error' && (
-          <>
-            <div
-              className="w-14 h-14 rounded-full mx-auto flex items-center justify-center text-2xl mb-4"
-              style={{ background: 'var(--danger-soft)' }}
-            >
+          <div>
+            <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center text-xl mx-auto mb-3">
               ⚠️
             </div>
-            <h1
-              className="text-lg font-bold mb-1"
-              style={{ fontFamily: 'Orbitron, sans-serif', color: 'var(--foreground)' }}
-            >
-              Google sign-in failed
-            </h1>
-            <p className="text-xs mb-6" style={{ color: 'var(--muted-foreground)' }}>
-              {error}
-            </p>
+            <h2 className="text-lg font-bold text-white mb-1">Google Sign-in Issue</h2>
+            <p className="text-xs text-slate-400 mb-6">{error}</p>
             <button
               onClick={onCancel}
-              className="w-full py-3 rounded-xl text-sm font-bold"
-              style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
+              className="w-full py-3 rounded-xl text-sm font-bold bg-teal-400 text-slate-950 hover:bg-teal-300 transition-all"
             >
-              Back to sign in
+              Back to Sign In
             </button>
-          </>
+          </div>
         )}
-      </motion.div>
+      </div>
     </div>
   )
 }
