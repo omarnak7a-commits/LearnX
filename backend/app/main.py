@@ -65,11 +65,13 @@ except Exception:
 
 @app.get("/health")
 def health() -> dict:
+    is_google = settings.google_oauth_configured() if callable(getattr(settings, "google_oauth_configured", None)) else bool(getattr(settings, "google_oauth_configured", False))
+    is_email = settings.email_delivery_configured() if callable(getattr(settings, "email_delivery_configured", None)) else bool(getattr(settings, "email_delivery_configured", False))
     return {
         "status": "ok",
-        "environment": settings.environment,
-        "google_oauth_configured": settings.google_oauth_configured,
-        "email_delivery_configured": settings.email_delivery_configured,
+        "environment": str(settings.environment),
+        "google_oauth_configured": is_google,
+        "email_delivery_configured": is_email,
     }
 
 @app.api_route("/api/migrate", methods=["GET", "POST"])
