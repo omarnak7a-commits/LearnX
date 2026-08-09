@@ -139,8 +139,25 @@ except Exception:
     def get_current_user(): pass
     def require_role(*args): return lambda: None
 
-from app.services import auth_service
-from app.services.auth_service import AuthError
+try:
+    from app.services import auth_service
+except Exception:
+    try:
+        from app.services import auth as auth_service
+    except Exception:
+        import app.services.auth as auth_service
+
+try:
+    from app.services.auth_service import AuthError
+except Exception:
+    try:
+        from app.services.auth import AuthError
+    except Exception:
+        class AuthError(Exception):
+            def __init__(self, message: str, status_code: int = 400):
+                super().__init__(message)
+                self.message = message
+                self.status_code = status_code
 from app.services.google_oauth import (
     GoogleOAuthError,
     GoogleOAuthNotConfigured,
