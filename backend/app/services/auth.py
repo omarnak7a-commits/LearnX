@@ -165,20 +165,25 @@ def hash_token(raw_token: str) -> str:
 
 def create_access_token(user_id: str, role: str, extra_claims: dict[str, Any] | None = None) -> str:
     now = datetime.now(timezone.utc)
+    ttl_mins = getattr(settings, "access_token_ttl_minutes", 60)
     payload: dict[str, Any] = {
         "sub": user_id,
         "role": role,
         "type": "access",
         "iat": now,
-        "exp": now + timedelta(minutes=settings.access_token_ttl_minutes),
+        "exp": now + timedelta(minutes=ttl_mins),
     }
     if extra_claims:
         payload.update(extra_claims)
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    jwt_sec = getattr(settings, "jwt_secret", "changeme-generate-a-real-secret")
+    jwt_alg = getattr(settings, "jwt_algorithm", "HS256")
+    return jwt.encode(payload, jwt_sec, algorithm=jwt_alg)
 
 def decode_access_token(token: str) -> dict[str, Any]:
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        jwt_sec = getattr(settings, "jwt_secret", "changeme-generate-a-real-secret")
+        jwt_alg = getattr(settings, "jwt_algorithm", "HS256")
+        return jwt.decode(token, jwt_sec, algorithms=[jwt_alg])
     except Exception as exc:
         raise JWTError(str(exc))
 
@@ -279,14 +284,14 @@ def _issue_verification_token(db: Session, user: User) -> str:
         EmailVerificationToken(
             user_id=user.id,
             token_hash=hash_token(raw_token),
-            expires_at=datetime.utcnow() + timedelta(hours=settings.email_verification_token_ttl_hours),
+            expires_at=datetime.utcnow() + timedelta(hours=getattr(settings, "email_verification_token_ttl_hours", 24)),
         )
     )
     return raw_token
 
 
 def send_verification_email_for(user: User, raw_token: str) -> None:
-    verify_url = f"{settings.app_base_url}/verify-email?token={raw_token}"
+    verify_url = f"{getattr(settings, 'app_base_url', 'https://learn-x-ofvm.vercel.app')}/verify-email?token={raw_token}"
     send_verification_email(user.email, user.full_name, verify_url)
 
 
@@ -337,7 +342,7 @@ def authenticate_with_password(db: Session, email: str, password: str,
     if not getattr(user, "is_active", True):
         raise AccountDisabled()
 
-    if settings.require_email_verification and not getattr(user, "email_verified", True):
+    if getattr(settings, "require_email_verification", False) and not getattr(user, "email_verified", True):
         raise EmailNotVerified()
 
     if hasattr(user, "last_login"):
@@ -436,7 +441,6 @@ def complete_google_signup(db: Session, raw_pending_token: str, role: str,
         "google_sub": record.google_sub,
     }
 
-    # Dynamically filter kwargs to only columns that actually exist in the DB model
     try:
         from sqlalchemy import inspect
         valid_cols = set(inspect(User).columns.keys())
@@ -476,7 +480,9 @@ def issue_tokens(db: Session, user: User, remember_me: bool,
 
     raw_refresh = generate_opaque_token()
     ttl_days = (
-        settings.refresh_token_ttl_days_remember_me if remember_me else settings.refresh_token_ttl_days
+        getattr(settings, "refresh_token_ttl_days_remember_me", 90)
+        if remember_me
+        else getattr(settings, "refresh_token_ttl_days", 30)
     )
     expires_at = datetime.utcnow() + timedelta(days=ttl_days)
 
@@ -561,7 +567,7 @@ def request_password_reset(db: Session, email: str, ip: str | None) -> str | Non
         PasswordResetToken(
             user_id=user.id,
             token_hash=hash_token(raw_token),
-            expires_at=datetime.utcnow() + timedelta(minutes=settings.password_reset_token_ttl_minutes),
+            expires_at=datetime.utcnow() + timedelta(minutes=getattr(settings, "password_reset_token_ttl_minutes", 60)),
             request_ip=ip,
         )
     )
@@ -571,7 +577,7 @@ def request_password_reset(db: Session, email: str, ip: str | None) -> str | Non
 
 
 def send_password_reset_email_for(user_email: str, full_name: str, raw_token: str) -> None:
-    reset_url = f"{settings.app_base_url}/reset-password?token={raw_token}"
+    reset_url = f"{getattr(settings, 'app_base_url', 'https://learn-x-ofvm.vercel.app')}/reset-password?token={raw_token}"
     send_password_reset_email(user_email, full_name, reset_url)
 
 
