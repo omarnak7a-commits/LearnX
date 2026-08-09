@@ -1,114 +1,93 @@
 """
-Google OAuth 2.0 — REAL Authorization Code Flow with JWKS verification.
-
-Flow (server-side, PKCE-free client_secret flow):
-  1. GET  /api/v1/auth/google        → redirect to Google's consent screen
-  2. Google → {GOOGLE_REDIRECT_URI}?code=...&state=...
-  3. GET  /api/v1/auth/google/callback?code=...&state=...
-     → exchange code for tokens via google_auth_oauthlib.flow.Flow
-     → verify the ID token cryptographically with
-       google.oauth2.id_token.verify_oauth2_token (JWKS, audience check)
-     → upsert user (auth_provider='google') and mint our own session JWT
-     → redirect to the frontend with the token.
-
-State parameter: random value stored in a short-lived signed cookie so
-the callback cannot be CSRF-replayed.
+Real Google OAuth 2.0 (Authorization Code flow) — not a simulated login.
 """
 
 from __future__ import annotations
 
-import logging
-import secrets
+import os
+from dataclasses import dataclass
 from urllib.parse import urlencode
 
-import google.auth.transport.requests as google_requests
-import google.oauth2.id_token
-from google_auth_oauthlib.flow import Flow
+import httpx
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
 from app.core.config import get_settings
 
-logger = logging.getLogger(__name__)
-
 settings = get_settings()
 
-SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-]
+GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
+class GoogleOAuthNotConfigured(RuntimeError): pass
+class GoogleOAuthError(RuntimeError): pass
 
-class GoogleOAuthError(Exception):
-    pass
+@dataclass
+class GoogleUserInfo:
+    sub: str
+    email: str
+    email_verified: bool
+    full_name: str
+    picture: str | None
 
-
-def _require_configured() -> None:
-    if not (settings.google_client_id and settings.google_client_secret and settings.google_redirect_uri):
-        raise GoogleOAuthError("Google OAuth is not configured (missing GOOGLE_* env vars).")
-
+def get_oauth_credentials() -> tuple[str, str, str]:
+    cid = settings.google_client_id or os.environ.get("GOOGLE_CLIENT_ID", "")
+    csec = settings.google_client_secret or os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    ruri = settings.google_redirect_uri or os.environ.get(
+        "GOOGLE_REDIRECT_URI", "https://learn-x-ofvm.vercel.app/auth/callback/google"
+    )
+    if not (cid and csec):
+        raise GoogleOAuthNotConfigured("Google OAuth credentials are not fully configured.")
+    return cid, csec, ruri
 
 def build_authorization_url(state: str) -> str:
-    """URL to send the browser to Google's consent screen."""
-    _require_configured()
+    cid, _, ruri = get_oauth_credentials()
     params = {
-        "client_id": settings.google_client_id,
-        "redirect_uri": settings.google_redirect_uri,
+        "client_id": cid,
+        "redirect_uri": ruri,
         "response_type": "code",
-        "scope": " ".join(SCOPES),
-        "state": state,
-        "access_type": "offline",
+        "scope": "openid email profile",
+        "access_type": "online",
         "prompt": "select_account",
+        "state": state,
     }
-    return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+    return f"{GOOGLE_AUTH_ENDPOINT}?{urlencode(params)}"
 
+def exchange_code_for_user_info(code: str) -> GoogleUserInfo:
+    cid, csec, ruri = get_oauth_credentials()
 
-def generate_state() -> str:
-    return secrets.token_urlsafe(32)
-
-
-def _flow() -> Flow:
-    return Flow.from_client_config(
-        {
-            "web": {
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
+    token_response = httpx.post(
+        GOOGLE_TOKEN_ENDPOINT,
+        data={
+            "code": code,
+            "client_id": cid,
+            "client_secret": csec,
+            "redirect_uri": ruri,
+            "grant_type": "authorization_code",
         },
-        scopes=SCOPES,
-        redirect_uri=settings.google_redirect_uri,
+        timeout=15.0,
     )
+    if token_response.status_code != 200:
+        raise GoogleOAuthError(f"Google token exchange failed: {token_response.text}")
 
+    token_payload = token_response.json()
+    raw_id_token = token_payload.get("id_token")
+    if not raw_id_token:
+        raise GoogleOAuthError("Google token response did not include an id_token")
 
-def exchange_code_for_identity(code: str) -> dict:
-    """
-    Exchanges the authorization code for tokens, then cryptographically
-    verifies the ID token (JWKS + audience + issuer) and returns:
-        {"email", "full_name", "avatar_url", "google_sub"}
-    """
-    _require_configured()
-    flow = _flow()
-    flow.fetch_token(code=code)
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            raw_id_token,
+            google_requests.Request(),
+            cid,
+        )
+    except ValueError as exc:
+        raise GoogleOAuthError(f"Invalid Google ID token: {exc}") from exc
 
-    id_token = flow.credentials.id_token
-    if not id_token:
-        raise GoogleOAuthError("Google did not return an ID token.")
-
-    # verify_oauth2_token fetches Google's JWKS and validates the
-    # signature, audience and expiry. Raises ValueError on any failure.
-    request = google_requests.Request()
-    claims = google.oauth2.id_token.verify_oauth2_token(
-        id_token, request, settings.google_client_id
+    return GoogleUserInfo(
+        sub=claims["sub"],
+        email=claims["email"],
+        email_verified=bool(claims.get("email_verified", False)),
+        full_name=claims.get("name") or claims["email"].split("@")[0],
+        picture=claims.get("picture"),
     )
-
-    email = claims.get("email")
-    if not email:
-        raise GoogleOAuthError("Google account has no email address.")
-
-    return {
-        "email": email.lower(),
-        "full_name": claims.get("name") or claims.get("email", "").split("@")[0],
-        "avatar_url": claims.get("picture"),
-        "google_sub": claims.get("sub"),
-    }
