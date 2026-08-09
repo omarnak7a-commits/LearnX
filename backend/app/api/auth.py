@@ -139,8 +139,8 @@ except Exception:
     def get_current_user(): pass
     def require_role(*args): return lambda: None
 
-from app.services import auth_service
-from app.services.auth_service import AuthError
+from app.services import auth as auth_service
+from app.services.auth import AuthError
 from app.services.google_oauth import (
     GoogleOAuthError,
     GoogleOAuthNotConfigured,
