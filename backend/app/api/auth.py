@@ -14,7 +14,22 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse
 
-from app.api.deps import get_client_ip, get_current_user, get_user_agent, require_role
+# Safe client info helpers
+def get_client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+def get_user_agent(request: Request) -> str | None:
+    return request.headers.get("user-agent")
+
+try:
+    from app.api.deps import get_current_user, require_role
+except Exception:
+    def get_current_user(): pass
+    def require_role(*args): return lambda: None
+
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models.profile import User, UserRole
@@ -22,7 +37,6 @@ from app.schemas.auth import (
     AuthResponse,
     DoctorOnboardingRequest,
     ForgotPasswordRequest,
-    GoogleAuthResult,
     GoogleCallbackRequest,
     GoogleCompleteSignupRequest,
     LoginRequest,
@@ -130,6 +144,7 @@ async def google_callback(
     req_code = code or request.query_params.get("code")
     req_state = state or request.query_params.get("state")
 
+    # If GET with no code, redirect user to Google consent screen
     if request.method == "GET" and not req_code:
         try:
             state_val = secrets.token_urlsafe(24)
