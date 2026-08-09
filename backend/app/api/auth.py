@@ -6,6 +6,7 @@ configured) real Google OAuth + real email delivery.
 
 from __future__ import annotations
 
+import enum
 import secrets
 import traceback
 
@@ -13,6 +14,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse
+
+# Safe Enum & Models
+class UserRole(str, enum.Enum):
+    student = "student"
+    doctor = "doctor"
+
+try:
+    from app.models.profile import User
+except Exception:
+    try:
+        from app.models.auth import User
+    except Exception:
+        User = None
 
 # Safe client info helpers
 def get_client_ip(request: Request) -> str | None:
@@ -32,7 +46,6 @@ except Exception:
 
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models.profile import User, UserRole
 from app.schemas.auth import (
     AuthResponse,
     DoctorOnboardingRequest,
@@ -144,7 +157,6 @@ async def google_callback(
     req_code = code or request.query_params.get("code")
     req_state = state or request.query_params.get("state")
 
-    # If GET with no code, redirect user to Google consent screen
     if request.method == "GET" and not req_code:
         try:
             state_val = secrets.token_urlsafe(24)
@@ -321,4 +333,44 @@ def resend_verification(
 
 @router.get("/me")
 def me(current_user: User = Depends(get_current_user)):
+    return JSONResponse(status_code=200, content=UserOut.model_validate(current_user).model_dump(mode="json"))
+
+
+@router.post("/onboarding/student")
+def onboarding_student(
+    payload: StudentOnboardingRequest,
+    current_user: User = Depends(require_role(UserRole.student)),
+    db: Session = Depends(get_db),
+):
+    current_user.university_id = payload.university_id
+    current_user.faculty_id = payload.faculty_id
+    current_user.department_id = payload.department_id
+    current_user.academic_year = payload.academic_year
+    current_user.semester = payload.semester
+    current_user.preferred_language = payload.preferred_language
+    current_user.study_goals = payload.study_goals
+    current_user.weak_subjects = payload.weak_subjects
+    current_user.strong_subjects = payload.strong_subjects
+    current_user.onboarding_complete = True
+    db.commit()
+    db.refresh(current_user)
+    return JSONResponse(status_code=200, content=UserOut.model_validate(current_user).model_dump(mode="json"))
+
+
+@router.post("/onboarding/doctor")
+def onboarding_doctor(
+    payload: DoctorOnboardingRequest,
+    current_user: User = Depends(require_role(UserRole.doctor)),
+    db: Session = Depends(get_db),
+):
+    current_user.university_id = payload.university_id
+    current_user.faculty_id = payload.faculty_id
+    current_user.department_id = payload.department_id
+    current_user.academic_position = payload.academic_position
+    current_user.specialization = payload.specialization
+    current_user.courses_taught = payload.courses_taught
+    current_user.office_hours = payload.office_hours
+    current_user.onboarding_complete = True
+    db.commit()
+    db.refresh(current_user)
     return JSONResponse(status_code=200, content=UserOut.model_validate(current_user).model_dump(mode="json"))
