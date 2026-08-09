@@ -8,7 +8,7 @@ import enum
 import secrets
 import traceback
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -139,25 +139,8 @@ except Exception:
     def get_current_user(): pass
     def require_role(*args): return lambda: None
 
-try:
-    from app.services import auth_service
-except Exception:
-    try:
-        from app.services import auth as auth_service
-    except Exception:
-        import app.services.auth as auth_service
-
-try:
-    from app.services.auth_service import AuthError
-except Exception:
-    try:
-        from app.services.auth import AuthError
-    except Exception:
-        class AuthError(Exception):
-            def __init__(self, message: str, status_code: int = 400):
-                super().__init__(message)
-                self.message = message
-                self.status_code = status_code
+from app.services import auth_service
+from app.services.auth_service import AuthError
 from app.services.google_oauth import (
     GoogleOAuthError,
     GoogleOAuthNotConfigured,
@@ -304,19 +287,19 @@ def google_complete_signup(
     ip, ua = get_client_ip(request), get_user_agent(request)
     try:
         user = auth_service.complete_google_signup(db, payload.pending_token, payload.role, ip, ua)
-    except AuthError as exc:
-        _raise_for_auth_error(exc)
-        raise
-
-    tokens = auth_service.issue_tokens(db, user, remember_me=True, ip=ip, user_agent=ua)
-    _set_refresh_cookie(response, tokens.refresh_token, remember_me=True)
-    return JSONResponse(
-        status_code=200,
-        content={
-            "access_token": tokens.access_token,
-            "user": UserOut.model_validate(user).model_dump(mode="json"),
-        },
-    )
+        tokens = auth_service.issue_tokens(db, user, remember_me=True, ip=ip, user_agent=ua)
+        _set_refresh_cookie(response, tokens.refresh_token, remember_me=True)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "authenticated",
+                "access_token": tokens.access_token,
+                "token_type": "bearer",
+                "user": UserOut.model_validate(user).model_dump(mode="json"),
+            },
+        )
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"detail": f"Complete Signup Error: {str(exc)}", "trace": traceback.format_exc()})
 
 @router.post("/refresh")
 def refresh(
