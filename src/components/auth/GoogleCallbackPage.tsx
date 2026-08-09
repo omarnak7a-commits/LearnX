@@ -27,7 +27,7 @@ export default function GoogleCallbackPage({
     const authCode = code || params.get('code')
     const authState = state || params.get('state')
 
-    if (!authCode || !authState) {
+    if (!authCode) {
       setStatus('error')
       setError('Missing Google authorization details. Please try signing in again.')
       return
@@ -51,7 +51,14 @@ export default function GoogleCallbackPage({
           })
         }
 
-        const data = await res.json()
+        const text = await res.text()
+        let data: any = {}
+        try {
+          data = JSON.parse(text)
+        } catch {
+          throw new Error(`Server returned (${res.status}): ${text.substring(0, 120)}`)
+        }
+
         if (!res.ok) {
           throw new Error(data.detail || data.message || 'Google sign-in exchange failed')
         }
@@ -81,7 +88,13 @@ export default function GoogleCallbackPage({
         credentials: 'include',
         body: JSON.stringify({ pending_token: pendingToken, role }),
       })
-      const data = await res.json()
+      const text = await res.text()
+      let data: any = {}
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error(`Server error (${res.status}): ${text.substring(0, 120)}`)
+      }
       if (!res.ok) {
         throw new Error(data.detail || data.message || 'Failed to complete signup')
       }
