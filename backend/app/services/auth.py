@@ -424,6 +424,7 @@ def complete_google_signup(db: Session, raw_pending_token: str, role: str,
         return existing_user
 
     user_kwargs = {
+        "id": _uuid(),
         "email": record.email,
         "hashed_password": UNUSABLE_PASSWORD_HASH,
         "full_name": record.full_name,
@@ -431,10 +432,17 @@ def complete_google_signup(db: Session, raw_pending_token: str, role: str,
         "provider": "google",
         "avatar_url": record.avatar_url,
         "email_verified": record.email_verified,
-        "onboarding_complete": False,
+        "onboarding_complete": True,
+        "google_sub": record.google_sub,
     }
-    if hasattr(User, "google_sub"):
-        user_kwargs["google_sub"] = record.google_sub
+
+    # Dynamically filter kwargs to only columns that actually exist in the DB model
+    try:
+        from sqlalchemy import inspect
+        valid_cols = set(inspect(User).columns.keys())
+        user_kwargs = {k: v for k, v in user_kwargs.items() if k in valid_cols}
+    except Exception:
+        pass
 
     user = User(**user_kwargs)
     db.add(user)
