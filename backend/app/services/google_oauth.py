@@ -91,3 +91,7 @@ def exchange_code_for_user_info(code: str) -> GoogleUserInfo:
         full_name=claims.get("name") or claims["email"].split("@")[0],
         picture=claims.get("picture"),
     )
+
+# Aliases for 100% full compatibility
+exchange_code_for_identity = exchange_code_for_user_info
+get_google_user_info = exchange_code_for_user_info
