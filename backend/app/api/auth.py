@@ -1,7 +1,5 @@
 """
-Real authentication API — every endpoint here does genuine work against
-the database, real password hashing, real JWT issuance, and (when
-configured) real Google OAuth + real email delivery.
+Real authentication API — self-contained, robust, production-ready.
 """
 
 from __future__ import annotations
@@ -9,13 +7,23 @@ from __future__ import annotations
 import enum
 import secrets
 import traceback
+from datetime import datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse
 
-# Safe Enum & Models
+from app.core.config import get_settings
+from app.core.db import get_db
+
+settings = get_settings()
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+# ── Self-Contained Enums & Schemas ──────────────────────────────────────────
+
 class UserRole(str, enum.Enum):
     student = "student"
     doctor = "doctor"
@@ -28,7 +36,94 @@ except Exception:
     except Exception:
         User = None
 
-# Safe client info helpers
+class RegisterRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=128)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+    role: str = Field(default="student")
+    model_config = ConfigDict(extra="ignore")
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    remember_me: bool = False
+    model_config = ConfigDict(extra="ignore")
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+    model_config = ConfigDict(extra="ignore")
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8, max_length=128)
+    model_config = ConfigDict(extra="ignore")
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+    model_config = ConfigDict(extra="ignore")
+
+class ResendVerificationRequest(BaseModel):
+    email: str
+    model_config = ConfigDict(extra="ignore")
+
+class GoogleCallbackRequest(BaseModel):
+    code: str
+    state: str | None = None
+    model_config = ConfigDict(extra="ignore")
+
+class GoogleCompleteSignupRequest(BaseModel):
+    pending_token: str
+    role: str
+    model_config = ConfigDict(extra="ignore")
+
+class RefreshRequest(BaseModel):
+    refresh_token: str | None = None
+    model_config = ConfigDict(extra="ignore")
+
+class StudentOnboardingRequest(BaseModel):
+    university_id: str | None = None
+    faculty_id: str | None = None
+    department_id: str | None = None
+    academic_year: str | None = None
+    semester: str | None = None
+    preferred_language: str = "ar"
+    study_goals: list[str] = Field(default_factory=list)
+    weak_subjects: list[str] = Field(default_factory=list)
+    strong_subjects: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="ignore")
+
+class DoctorOnboardingRequest(BaseModel):
+    university_id: str | None = None
+    faculty_id: str | None = None
+    department_id: str | None = None
+    academic_position: str | None = None
+    specialization: str | None = None
+    courses_taught: list[str] = Field(default_factory=list)
+    office_hours: str | None = None
+    model_config = ConfigDict(extra="ignore")
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    role: str | Any = "student"
+    provider: str = "email"
+    avatar_url: str | None = None
+    email_verified: bool = False
+    onboarding_complete: bool = False
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Any
+    model_config = ConfigDict(extra="ignore")
+
+class MessageResponse(BaseModel):
+    message: str
+
+# ── Safe Helpers ────────────────────────────────────────────────────────────
+
 def get_client_ip(request: Request) -> str | None:
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
@@ -44,24 +139,6 @@ except Exception:
     def get_current_user(): pass
     def require_role(*args): return lambda: None
 
-from app.core.config import get_settings
-from app.core.db import get_db
-from app.schemas.auth import (
-    AuthResponse,
-    DoctorOnboardingRequest,
-    ForgotPasswordRequest,
-    GoogleCallbackRequest,
-    GoogleCompleteSignupRequest,
-    LoginRequest,
-    MessageResponse,
-    RefreshRequest,
-    RegisterRequest,
-    ResendVerificationRequest,
-    ResetPasswordRequest,
-    StudentOnboardingRequest,
-    UserOut,
-    VerifyEmailRequest,
-)
 from app.services import auth_service
 from app.services.auth_service import AuthError
 from app.services.google_oauth import (
@@ -71,11 +148,7 @@ from app.services.google_oauth import (
     exchange_code_for_user_info,
 )
 
-settings = get_settings()
-router = APIRouter(prefix="/auth", tags=["auth"])
-
 _oauth_states: set[str] = set()
-
 
 def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me: bool) -> None:
     max_age = (
@@ -92,16 +165,15 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me:
         path="/",
     )
 
-
 def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key=settings.refresh_cookie_name, domain=settings.cookie_domain, path="/"
     )
 
-
 def _raise_for_auth_error(exc: AuthError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
+# ── Endpoints ───────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def register(
@@ -123,8 +195,7 @@ def register(
 
     tokens = auth_service.issue_tokens(db, user, remember_me=False, ip=ip, user_agent=ua)
     _set_refresh_cookie(response, tokens.refresh_token, remember_me=False)
-    return AuthResponse(access_token=tokens.access_token, user=UserOut.model_validate(user))
-
+    return AuthResponse(access_token=tokens.access_token, user=UserOut.model_validate(user).model_dump())
 
 @router.post("/login", response_model=AuthResponse)
 def login(
@@ -142,8 +213,7 @@ def login(
 
     tokens = auth_service.issue_tokens(db, user, remember_me=payload.remember_me, ip=ip, user_agent=ua)
     _set_refresh_cookie(response, tokens.refresh_token, remember_me=payload.remember_me)
-    return AuthResponse(access_token=tokens.access_token, user=UserOut.model_validate(user))
-
+    return AuthResponse(access_token=tokens.access_token, user=UserOut.model_validate(user).model_dump())
 
 @router.api_route("/google/callback", methods=["GET", "POST"])
 @router.api_route("/google", methods=["GET", "POST"])
@@ -207,7 +277,6 @@ async def google_callback(
     except Exception as exc:
         return JSONResponse(status_code=500, content={"detail": f"Auth Token Error: {str(exc)}"})
 
-
 @router.post("/google/complete-signup")
 def google_complete_signup(
     request: Request,
@@ -231,7 +300,6 @@ def google_complete_signup(
             "user": UserOut.model_validate(user).model_dump(mode="json"),
         },
     )
-
 
 @router.post("/refresh")
 def refresh(
@@ -263,7 +331,6 @@ def refresh(
         },
     )
 
-
 @router.post("/logout", response_model=MessageResponse)
 def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> MessageResponse:
     raw_token = request.cookies.get(settings.refresh_cookie_name)
@@ -271,7 +338,6 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)) 
         auth_service.revoke_refresh_token(db, raw_token)
     _clear_refresh_cookie(response)
     return MessageResponse(message="Logged out.")
-
 
 @router.post("/logout-all", response_model=MessageResponse)
 def logout_all(
@@ -282,7 +348,6 @@ def logout_all(
     auth_service.revoke_all_sessions(db, current_user)
     _clear_refresh_cookie(response)
     return MessageResponse(message="Logged out of all devices.")
-
 
 @router.post("/forgot-password", response_model=MessageResponse)
 def forgot_password(
@@ -298,7 +363,6 @@ def forgot_password(
         message="If an account exists for this email, a password reset link has been sent."
     )
 
-
 @router.post("/reset-password", response_model=MessageResponse)
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> MessageResponse:
     try:
@@ -308,7 +372,6 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
         raise
     return MessageResponse(message="Your password has been reset. You can now log in.")
 
-
 @router.post("/verify-email")
 def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
     try:
@@ -317,7 +380,6 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
         _raise_for_auth_error(exc)
         raise
     return JSONResponse(status_code=200, content=UserOut.model_validate(user).model_dump(mode="json"))
-
 
 @router.post("/resend-verification", response_model=MessageResponse)
 def resend_verification(
@@ -330,11 +392,9 @@ def resend_verification(
             auth_service.send_verification_email_for(user, raw_token)
     return MessageResponse(message="If an account exists for this email, a verification link has been sent.")
 
-
 @router.get("/me")
 def me(current_user: User = Depends(get_current_user)):
     return JSONResponse(status_code=200, content=UserOut.model_validate(current_user).model_dump(mode="json"))
-
 
 @router.post("/onboarding/student")
 def onboarding_student(
@@ -355,7 +415,6 @@ def onboarding_student(
     db.commit()
     db.refresh(current_user)
     return JSONResponse(status_code=200, content=UserOut.model_validate(current_user).model_dump(mode="json"))
-
 
 @router.post("/onboarding/doctor")
 def onboarding_doctor(
