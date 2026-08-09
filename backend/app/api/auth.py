@@ -1,260 +1,121 @@
-"""Auth API — email/password + Google OAuth 2.0 (real flows).
-
-Endpoints:
-  POST /auth/register          → create account, send verification email
-  POST /auth/login             → issue session JWT
-  GET  /auth/me                → current user (requires bearer token)
-  POST /auth/verify-email      → verify with emailed token
-  POST /auth/resend-verification
-  POST /auth/forgot-password   → email a reset link
-  POST /auth/reset-password    → set new password with emailed token
-  GET  /auth/google            → redirect to Google consent screen
-  GET  /auth/google/callback   → exchange code, verify ID token (JWKS),
-                                 upsert user, redirect to frontend with JWT
+"""
+Real authentication API — every endpoint here does genuine work against
+the database, real password hashing, real JWT issuance, and (when
+configured) real Google OAuth + real email delivery.
 """
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime
+import secrets
+import traceback
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from starlette.responses import RedirectResponse
 
+from app.api.deps import get_client_ip, get_current_user, get_user_agent, require_role
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models.auth_tokens import EmailVerificationToken, PasswordResetToken
-from app.models.profile import User
+from app.models.profile import User, UserRole
 from app.schemas.auth import (
     AuthResponse,
+    DoctorOnboardingRequest,
     ForgotPasswordRequest,
+    GoogleAuthResult,
+    GoogleCallbackRequest,
+    GoogleCompleteSignupRequest,
     LoginRequest,
+    MessageResponse,
+    RefreshRequest,
     RegisterRequest,
+    ResendVerificationRequest,
     ResetPasswordRequest,
+    StudentOnboardingRequest,
     UserOut,
     VerifyEmailRequest,
 )
-from app.services import email as email_service
-from app.services.auth import (
-    create_access_token,
-    generate_token,
-    hash_password,
-    hash_token,
-    token_expiry,
-    verify_password,
-)
+from app.services import auth_service
+from app.services.auth_service import AuthError
 from app.services.google_oauth import (
     GoogleOAuthError,
+    GoogleOAuthNotConfigured,
     build_authorization_url,
-    exchange_code_for_identity,
-    generate_state,
+    exchange_code_for_user_info,
 )
-from app.api.deps import get_current_user
-
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/auth", tags=["auth"])
 
 settings = get_settings()
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+_oauth_states: set[str] = set()
 
 
-def _user_out(user: User) -> UserOut:
-    return UserOut(
-        id=str(user.id),
-        email=user.email,
-        full_name=user.full_name,
-        role=user.role,
-        auth_provider=user.auth_provider,
-        is_verified=user.is_verified,
-        avatar_url=user.avatar_url,
-        onboarding_complete=user.onboarding_complete,
+def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me: bool) -> None:
+    max_age = (
+        settings.refresh_token_ttl_days_remember_me if remember_me else settings.refresh_token_ttl_days
+    ) * 24 * 60 * 60
+    response.set_cookie(
+        key=settings.refresh_cookie_name,
+        value=raw_refresh_token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        max_age=max_age,
+        domain=settings.cookie_domain,
+        path="/",
     )
 
 
-def _auth_response(user: User) -> AuthResponse:
-    return AuthResponse(
-        access_token=create_access_token(str(user.id), user.role),
-        user=_user_out(user),
-        requires_email_verification=settings.require_email_verification and not user.is_verified,
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.refresh_cookie_name, domain=settings.cookie_domain, path="/"
     )
+
+
+def _raise_for_auth_error(exc: AuthError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    existing = db.scalar(select(User).where(User.email == payload.email.lower()))
-    if existing is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.")
-
-    user = User(
-        email=payload.email.lower(),
-        hashed_password=hash_password(payload.password),
-        full_name=payload.full_name,
-        role="student",
-        auth_provider="email",
-        is_verified=not settings.require_email_verification,
-    )
-    db.add(user)
-    db.flush()
-
-    if settings.require_email_verification:
-        token = generate_token()
-        db.add(
-            EmailVerificationToken(
-                user_id=user.id,
-                token_hash=hash_token(token),
-                expires_at=token_expiry(),
-            )
+def register(
+    request: Request,
+    payload: RegisterRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthResponse:
+    ip, ua = get_client_ip(request), get_user_agent(request)
+    try:
+        user, raw_verification_token = auth_service.register_user(
+            db, payload.full_name, payload.email, payload.password, payload.role, ip, ua
         )
-    db.commit()
-    db.refresh(user)
+    except AuthError as exc:
+        _raise_for_auth_error(exc)
+        raise
 
-    if settings.require_email_verification:
-        verify_url = f"{settings.app_base_url}/verify-email?token={token}"
-        try:
-            email_service.send_verification_email(user.email, user.full_name, verify_url)
-        except email_service.EmailError as exc:
-            logger.warning("verification email not sent: %s", exc)
+    auth_service.send_verification_email_for(user, raw_verification_token)
 
-    return _auth_response(user)
+    tokens = auth_service.issue_tokens(db, user, remember_me=False, ip=ip, user_agent=ua)
+    _set_refresh_cookie(response, tokens.refresh_token, remember_me=False)
+    return AuthResponse(access_token=tokens.access_token, user=UserOut.model_validate(user))
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    user = db.scalar(select(User).where(User.email == payload.email.lower()))
-    if user is None or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password.")
-    if not user.is_active:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is deactivated.")
-
-    user.last_login_at = datetime.utcnow()
-    db.commit()
-    return _auth_response(user)
-
-
-@router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)) -> UserOut:
-    return _user_out(user)
-
-
-@router.post("/verify-email", response_model=UserOut)
-def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> UserOut:
-    record = db.scalar(
-        select(EmailVerificationToken).where(
-            EmailVerificationToken.token_hash == hash_token(payload.token)
-        )
-    )
-    if record is None or record.used:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid verification token.")
-    if record.expires_at < datetime.utcnow():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Verification token expired.")
-
-    user = db.get(User, record.user_id)
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
-
-    record.used = True
-    user.is_verified = True
-    db.commit()
-
+def login(
+    request: Request,
+    payload: LoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthResponse:
+    ip, ua = get_client_ip(request), get_user_agent(request)
     try:
-        email_service.send_welcome_email(user.email, user.full_name)
-    except email_service.EmailError:
-        pass
-    return _user_out(user)
+        user = auth_service.authenticate_with_password(db, payload.email, payload.password, ip, ua)
+    except AuthError as exc:
+        _raise_for_auth_error(exc)
+        raise
 
-
-@router.post("/resend-verification", status_code=status.HTTP_202_ACCEPTED)
-def resend_verification(payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict:
-    user = db.scalar(select(User).where(User.email == payload.email.lower()))
-    if user is not None and not user.is_verified:
-        token = generate_token()
-        db.add(
-            EmailVerificationToken(
-                user_id=user.id,
-                token_hash=hash_token(token),
-                expires_at=token_expiry(),
-            )
-        )
-        db.commit()
-        verify_url = f"{settings.app_base_url}/verify-email?token={token}"
-        try:
-            email_service.send_verification_email(user.email, user.full_name, verify_url)
-        except email_service.EmailError as exc:
-            logger.warning("verification email not sent: %s", exc)
-    # Always 202 to avoid account enumeration.
-    return {"ok": True}
-
-
-@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict:
-    user = db.scalar(select(User).where(User.email == payload.email.lower()))
-    if user is not None:
-        token = generate_token()
-        db.add(
-            PasswordResetToken(
-                user_id=user.id,
-                token_hash=hash_token(token),
-                expires_at=token_expiry(),
-            )
-        )
-        db.commit()
-        reset_url = f"{settings.app_base_url}/reset-password?token={token}"
-        try:
-            email_service.send_password_reset_email(user.email, user.full_name, reset_url)
-        except email_service.EmailError as exc:
-            logger.warning("reset email not sent: %s", exc)
-    return {"ok": True}
-
-
-@router.post("/reset-password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict:
-    record = db.scalar(
-        select(PasswordResetToken).where(
-            PasswordResetToken.token_hash == hash_token(payload.token)
-        )
-    )
-    if record is None or record.used:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid reset token.")
-    if record.expires_at < datetime.utcnow():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reset token expired.")
-
-    user = db.get(User, record.user_id)
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
-
-    record.used = True
-    user.hashed_password = hash_password(payload.new_password)
-    db.commit()
-    return {"ok": True}
-
-
-# ────────────────────────────────────────────────────────────────────
-# Google OAuth 2.0
-# ────────────────────────────────────────────────────────────────────
-
-STATE_COOKIE = "learnx_oauth_state"
-
-
-@router.get("/google")
-def google_login() -> RedirectResponse:
-    state = generate_state()
-    try:
-        url = build_authorization_url(state)
-    except GoogleOAuthError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-
-    resp = RedirectResponse(url)
-    resp.set_cookie(
-        STATE_COOKIE,
-        state,
-        httponly=True,
-        samesite="lax",
-        secure=settings.cookie_secure,
-        max_age=600,
-    )
-    return resp
+    tokens = auth_service.issue_tokens(db, user, remember_me=payload.remember_me, ip=ip, user_agent=ua)
+    _set_refresh_cookie(response, tokens.refresh_token, remember_me=payload.remember_me)
+    return AuthResponse(access_token=tokens.access_token, user=UserOut.model_validate(user))
 
 
 @router.api_route("/google/callback", methods=["GET", "POST"])
@@ -269,7 +130,6 @@ async def google_callback(
     req_code = code or request.query_params.get("code")
     req_state = state or request.query_params.get("state")
 
-    # If GET with no code, redirect user to Google consent screen
     if request.method == "GET" and not req_code:
         try:
             state_val = secrets.token_urlsafe(24)
@@ -319,3 +179,131 @@ async def google_callback(
         )
     except Exception as exc:
         return JSONResponse(status_code=500, content={"detail": f"Auth Token Error: {str(exc)}"})
+
+
+@router.post("/google/complete-signup")
+def google_complete_signup(
+    request: Request,
+    payload: GoogleCompleteSignupRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    ip, ua = get_client_ip(request), get_user_agent(request)
+    try:
+        user = auth_service.complete_google_signup(db, payload.pending_token, payload.role, ip, ua)
+    except AuthError as exc:
+        _raise_for_auth_error(exc)
+        raise
+
+    tokens = auth_service.issue_tokens(db, user, remember_me=True, ip=ip, user_agent=ua)
+    _set_refresh_cookie(response, tokens.refresh_token, remember_me=True)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "access_token": tokens.access_token,
+            "user": UserOut.model_validate(user).model_dump(mode="json"),
+        },
+    )
+
+
+@router.post("/refresh")
+def refresh(
+    request: Request,
+    response: Response,
+    payload: RefreshRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    raw_token = (payload.refresh_token if payload else None) or request.cookies.get(
+        settings.refresh_cookie_name
+    )
+    if not raw_token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No refresh token provided.")
+
+    ip, ua = get_client_ip(request), get_user_agent(request)
+    try:
+        user, tokens = auth_service.rotate_refresh_token(db, raw_token, ip, ua)
+    except AuthError as exc:
+        _clear_refresh_cookie(response)
+        _raise_for_auth_error(exc)
+        raise
+
+    _set_refresh_cookie(response, tokens.refresh_token, remember_me=False)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "access_token": tokens.access_token,
+            "user": UserOut.model_validate(user).model_dump(mode="json"),
+        },
+    )
+
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> MessageResponse:
+    raw_token = request.cookies.get(settings.refresh_cookie_name)
+    if raw_token:
+        auth_service.revoke_refresh_token(db, raw_token)
+    _clear_refresh_cookie(response)
+    return MessageResponse(message="Logged out.")
+
+
+@router.post("/logout-all", response_model=MessageResponse)
+def logout_all(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MessageResponse:
+    auth_service.revoke_all_sessions(db, current_user)
+    _clear_refresh_cookie(response)
+    return MessageResponse(message="Logged out of all devices.")
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+def forgot_password(
+    request: Request, payload: ForgotPasswordRequest, db: Session = Depends(get_db)
+) -> MessageResponse:
+    ip = get_client_ip(request)
+    raw_token = auth_service.request_password_reset(db, payload.email, ip)
+    if raw_token:
+        user = auth_service.get_user_by_email(db, payload.email)
+        if user:
+            auth_service.send_password_reset_email_for(user.email, user.full_name, raw_token)
+    return MessageResponse(
+        message="If an account exists for this email, a password reset link has been sent."
+    )
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> MessageResponse:
+    try:
+        auth_service.reset_password(db, payload.token, payload.new_password)
+    except AuthError as exc:
+        _raise_for_auth_error(exc)
+        raise
+    return MessageResponse(message="Your password has been reset. You can now log in.")
+
+
+@router.post("/verify-email")
+def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
+    try:
+        user = auth_service.verify_email(db, payload.token)
+    except AuthError as exc:
+        _raise_for_auth_error(exc)
+        raise
+    return JSONResponse(status_code=200, content=UserOut.model_validate(user).model_dump(mode="json"))
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+def resend_verification(
+    request: Request, payload: ResendVerificationRequest, db: Session = Depends(get_db)
+) -> MessageResponse:
+    raw_token = auth_service.resend_verification(db, payload.email)
+    if raw_token:
+        user = auth_service.get_user_by_email(db, payload.email)
+        if user:
+            auth_service.send_verification_email_for(user, raw_token)
+    return MessageResponse(message="If an account exists for this email, a verification link has been sent.")
+
+
+@router.get("/me")
+def me(current_user: User = Depends(get_current_user)):
+    return JSONResponse(status_code=200, content=UserOut.model_validate(current_user).model_dump(mode="json"))
