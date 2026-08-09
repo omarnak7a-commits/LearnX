@@ -276,8 +276,8 @@ async def google_callback(
             _oauth_states.add(state_val)
             url = build_authorization_url(state_val)
             return RedirectResponse(url)
-        except GoogleOAuthNotConfigured as exc:
-            raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, str(exc)) from exc
+        except Exception as exc:
+            return JSONResponse(status_code=500, content={"detail": f"Google Config Error: {str(exc)}"})
 
     if request.method == "POST":
         try:
@@ -289,30 +289,33 @@ async def google_callback(
             pass
 
     if not req_code:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing Google authorization code.")
+        return JSONResponse(status_code=400, content={"detail": "Missing Google authorization code."})
 
     ip, ua = get_client_ip(request), get_user_agent(request)
     try:
         info = exchange_code_for_user_info(req_code)
-    except GoogleOAuthNotConfigured as exc:
-        raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, str(exc)) from exc
-    except GoogleOAuthError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"detail": f"Google Token Exchange Error: {str(exc)}"})
 
     try:
         outcome = auth_service.login_or_register_with_google(db, info, ip, ua)
-    except AuthError as exc:
-        _raise_for_auth_error(exc)
-        raise
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"detail": f"Database Error: {str(exc)}"})
 
     if outcome.user is None:
-        return {"status": "needs_role", "pending_token": outcome.pending_token}
+        return JSONResponse(status_code=200, content={"status": "needs_role", "pending_token": outcome.pending_token})
 
-    tokens = auth_service.issue_tokens(db, outcome.user, remember_me=True, ip=ip, user_agent=ua)
-    _set_refresh_cookie(response, tokens.refresh_token, remember_me=True)
-    return {
-        "status": "authenticated",
-        "access_token": tokens.access_token,
-        "token_type": "bearer",
-        "user": UserOut.model_validate(outcome.user),
-    }
+    try:
+        tokens = auth_service.issue_tokens(db, outcome.user, remember_me=True, ip=ip, user_agent=ua)
+        _set_refresh_cookie(response, tokens.refresh_token, remember_me=True)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "authenticated",
+                "access_token": tokens.access_token,
+                "token_type": "bearer",
+                "user": UserOut.model_validate(outcome.user).model_dump(mode="json"),
+            },
+        )
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"detail": f"Auth Token Error: {str(exc)}"})
