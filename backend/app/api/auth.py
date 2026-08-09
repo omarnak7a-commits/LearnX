@@ -151,20 +151,32 @@ from app.services.google_oauth import (
 _oauth_states: set[str] = set()
 
 def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me: bool) -> None:
-    max_age = (
-        settings.refresh_token_ttl_days_remember_me if remember_me else settings.refresh_token_ttl_days
-    ) * 24 * 60 * 60
+    days = (
+        getattr(settings, "refresh_token_ttl_days_remember_me", 90)
+        if remember_me
+        else getattr(settings, "refresh_token_ttl_days", 30)
+    )
+    max_age = days * 24 * 60 * 60
+    cookie_name = getattr(settings, "refresh_cookie_name", "learnx_refresh_token")
+    cookie_sec = getattr(settings, "cookie_secure", True)
+    cookie_dom = getattr(settings, "cookie_domain", None)
     response.set_cookie(
-        key=settings.refresh_cookie_name,
+        key=cookie_name,
         value=raw_refresh_token,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=cookie_sec,
         samesite="lax",
         max_age=max_age,
-        domain=settings.cookie_domain,
+        domain=cookie_dom,
         path="/",
     )
 
+def _clear_refresh_cookie(response: Response) -> None:
+    cookie_name = getattr(settings, "refresh_cookie_name", "learnx_refresh_token")
+    cookie_dom = getattr(settings, "cookie_domain", None)
+    response.delete_cookie(
+        key=cookie_name, domain=cookie_dom, path="/"
+    )
 def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key=settings.refresh_cookie_name, domain=settings.cookie_domain, path="/"
