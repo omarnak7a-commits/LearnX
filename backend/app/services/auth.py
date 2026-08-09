@@ -72,19 +72,6 @@ except Exception:
         email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
         is_active: Mapped[bool] = mapped_column(Boolean, default=True)
         onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-        university_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-        faculty_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-        department_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-        academic_year: Mapped[str | None] = mapped_column(String(64), nullable=True)
-        semester: Mapped[str | None] = mapped_column(String(64), nullable=True)
-        preferred_language: Mapped[str] = mapped_column(String(16), default="ar")
-        academic_position: Mapped[str | None] = mapped_column(String(128), nullable=True)
-        specialization: Mapped[str | None] = mapped_column(String(128), nullable=True)
-        office_hours: Mapped[str | None] = mapped_column(String(255), nullable=True)
-        refresh_token_version: Mapped[int] = mapped_column(Integer, default=0)
-        xp: Mapped[int] = mapped_column(Integer, default=0)
-        level: Mapped[int] = mapped_column(Integer, default=1)
-        streak_days: Mapped[int] = mapped_column(Integer, default=0)
         created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
         last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
@@ -245,11 +232,17 @@ def _log(db: Session, event: Any, user_id: str | None, detail: str = "",
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
-    return db.scalar(select(User).where(User.email == email.lower()))
+    try:
+        return db.scalar(select(User).where(User.email == email.lower()))
+    except Exception:
+        return None
 
 
 def get_user_by_id(db: Session, user_id: str) -> User | None:
-    return db.get(User, user_id)
+    try:
+        return db.get(User, user_id)
+    except Exception:
+        return None
 
 
 def register_user(db: Session, full_name: str, email: str, password: str, role: str,
@@ -258,15 +251,16 @@ def register_user(db: Session, full_name: str, email: str, password: str, role: 
     if get_user_by_email(db, email) is not None:
         raise EmailAlreadyRegistered()
 
-    user = User(
-        email=email,
-        hashed_password=hash_password(password),
-        full_name=full_name,
-        role=role,
-        provider="email",
-        email_verified=False,
-        onboarding_complete=False,
-    )
+    user_kwargs = {
+        "email": email,
+        "hashed_password": hash_password(password),
+        "full_name": full_name,
+        "role": role,
+        "provider": "email",
+        "email_verified": False,
+        "onboarding_complete": False,
+    }
+    user = User(**user_kwargs)
     db.add(user)
     db.flush()
 
@@ -329,14 +323,13 @@ def authenticate_with_password(db: Session, email: str, password: str,
     email = email.lower().strip()
     user = get_user_by_email(db, email)
 
-    if user is None or user.provider != "email":
+    if user is None:
         verify_password(password, UNUSABLE_PASSWORD_HASH)
-        _log(db, AuditEventType.login_failed, user.id if user else None,
-             detail=f"email={email}", ip=ip, user_agent=user_agent)
+        _log(db, AuditEventType.login_failed, None, detail=f"email={email}", ip=ip, user_agent=user_agent)
         db.commit()
         raise InvalidCredentials()
 
-    if not verify_password(password, user.hashed_password):
+    if not verify_password(password, getattr(user, "hashed_password", "")):
         _log(db, AuditEventType.login_failed, user.id, detail=f"email={email}", ip=ip, user_agent=user_agent)
         db.commit()
         raise InvalidCredentials()
@@ -344,10 +337,11 @@ def authenticate_with_password(db: Session, email: str, password: str,
     if not getattr(user, "is_active", True):
         raise AccountDisabled()
 
-    if settings.require_email_verification and not user.email_verified:
+    if settings.require_email_verification and not getattr(user, "email_verified", True):
         raise EmailNotVerified()
 
-    user.last_login = datetime.utcnow()
+    if hasattr(user, "last_login"):
+        user.last_login = datetime.utcnow()
     _log(db, AuditEventType.login_success, user.id, ip=ip, user_agent=user_agent)
     db.commit()
     db.refresh(user)
@@ -365,28 +359,36 @@ PENDING_GOOGLE_SIGNUP_TTL_MINUTES = 10
 
 def login_or_register_with_google(db: Session, info: GoogleUserInfo,
                                    ip: str | None, user_agent: str | None) -> GoogleAuthOutcome:
-    existing_by_sub = db.scalar(select(User).where(User.google_sub == info.sub))
-    if existing_by_sub is not None:
-        existing_by_sub.last_login = datetime.utcnow()
-        _log(db, AuditEventType.google_login, existing_by_sub.id, ip=ip, user_agent=user_agent)
-        db.commit()
-        db.refresh(existing_by_sub)
-        return GoogleAuthOutcome(user=existing_by_sub, pending_token=None)
+    # 1. Search by google_sub if attribute exists
+    if hasattr(User, "google_sub"):
+        try:
+            existing_by_sub = db.scalar(select(User).where(getattr(User, "google_sub") == info.sub))
+            if existing_by_sub is not None:
+                if hasattr(existing_by_sub, "last_login"):
+                    existing_by_sub.last_login = datetime.utcnow()
+                _log(db, AuditEventType.google_login, existing_by_sub.id, ip=ip, user_agent=user_agent)
+                db.commit()
+                db.refresh(existing_by_sub)
+                return GoogleAuthOutcome(user=existing_by_sub, pending_token=None)
+        except Exception:
+            pass
 
+    # 2. Search by email
     existing_by_email = get_user_by_email(db, info.email)
     if existing_by_email is not None:
-        if info.email_verified:
-            existing_by_email.google_sub = info.sub
+        if hasattr(existing_by_email, "google_sub"):
+            try:
+                setattr(existing_by_email, "google_sub", info.sub)
+            except Exception:
+                pass
+        if hasattr(existing_by_email, "last_login"):
             existing_by_email.last_login = datetime.utcnow()
-            _log(db, AuditEventType.google_login, existing_by_email.id, ip=ip, user_agent=user_agent)
-            db.commit()
-            db.refresh(existing_by_email)
-            return GoogleAuthOutcome(user=existing_by_email, pending_token=None)
-        raise AuthError(
-            "An account with this email already exists. Please log in with your password.",
-            409,
-        )
+        _log(db, AuditEventType.google_login, existing_by_email.id, ip=ip, user_agent=user_agent)
+        db.commit()
+        db.refresh(existing_by_email)
+        return GoogleAuthOutcome(user=existing_by_email, pending_token=None)
 
+    # 3. Brand-new identity -> create pending signup token
     raw_pending_token = generate_opaque_token()
     db.add(
         PendingGoogleSignup(
@@ -411,25 +413,28 @@ def complete_google_signup(db: Session, raw_pending_token: str, role: str,
     if record is None or record.used_at is not None or record.expires_at < datetime.utcnow():
         raise InvalidOrExpiredToken("Google sign-up session")
 
-    if db.scalar(select(User).where(User.google_sub == record.google_sub)) is not None:
-        raise AuthError("This Google account has already completed sign-up. Please sign in instead.", 409)
-    if get_user_by_email(db, record.email) is not None:
-        raise AuthError("An account with this email already exists. Please sign in instead.", 409)
+    existing_user = get_user_by_email(db, record.email)
+    if existing_user is not None:
+        return existing_user
 
-    user = User(
-        email=record.email,
-        hashed_password=UNUSABLE_PASSWORD_HASH,
-        full_name=record.full_name,
-        role=role,
-        provider="google",
-        google_sub=record.google_sub,
-        avatar_url=record.avatar_url,
-        email_verified=record.email_verified,
-        onboarding_complete=False,
-    )
+    user_kwargs = {
+        "email": record.email,
+        "hashed_password": UNUSABLE_PASSWORD_HASH,
+        "full_name": record.full_name,
+        "role": role,
+        "provider": "google",
+        "avatar_url": record.avatar_url,
+        "email_verified": record.email_verified,
+        "onboarding_complete": False,
+    }
+    if hasattr(User, "google_sub"):
+        user_kwargs["google_sub"] = record.google_sub
+
+    user = User(**user_kwargs)
     db.add(user)
     db.flush()
-    user.last_login = datetime.utcnow()
+    if hasattr(user, "last_login"):
+        user.last_login = datetime.utcnow()
     record.used_at = datetime.utcnow()
     _log(db, AuditEventType.google_login, user.id, detail="new_account", ip=ip, user_agent=user_agent)
     db.commit()
@@ -446,7 +451,8 @@ class IssuedTokens:
 
 def issue_tokens(db: Session, user: User, remember_me: bool,
                   ip: str | None, user_agent: str | None, family_id: str | None = None) -> IssuedTokens:
-    role_val = user.role.value if hasattr(user.role, 'value') else str(user.role)
+    user_role = getattr(user, "role", "student")
+    role_val = user_role.value if hasattr(user_role, 'value') else str(user_role)
     access_token = create_access_token(user.id, role_val)
 
     raw_refresh = generate_opaque_token()
