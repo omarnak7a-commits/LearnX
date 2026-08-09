@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from jose import jwt
+from jose import jwt, JWTError
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -186,6 +186,12 @@ def create_access_token(user_id: str, role: str, extra_claims: dict[str, Any] | 
     if extra_claims:
         payload.update(extra_claims)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+def decode_access_token(token: str) -> dict[str, Any]:
+    try:
+        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except Exception as exc:
+        raise JWTError(str(exc))
 
 try:
     from app.services.email import send_password_reset_email, send_verification_email
