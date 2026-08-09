@@ -5,6 +5,7 @@ Real Google OAuth 2.0 (Authorization Code flow) — not a simulated login.
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -30,6 +31,12 @@ class GoogleUserInfo:
     full_name: str
     picture: str | None
 
+
+def generate_state() -> str:
+    """Generates a secure random OAuth state token."""
+    return secrets.token_urlsafe(32)
+
+
 def get_oauth_credentials() -> tuple[str, str, str]:
     cid = settings.google_client_id or os.environ.get("GOOGLE_CLIENT_ID", "")
     csec = settings.google_client_secret or os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -40,8 +47,10 @@ def get_oauth_credentials() -> tuple[str, str, str]:
         raise GoogleOAuthNotConfigured("Google OAuth credentials are not fully configured.")
     return cid, csec, ruri
 
-def build_authorization_url(state: str) -> str:
+
+def build_authorization_url(state: str | None = None) -> str:
     cid, _, ruri = get_oauth_credentials()
+    actual_state = state or generate_state()
     params = {
         "client_id": cid,
         "redirect_uri": ruri,
@@ -49,9 +58,10 @@ def build_authorization_url(state: str) -> str:
         "scope": "openid email profile",
         "access_type": "online",
         "prompt": "select_account",
-        "state": state,
+        "state": actual_state,
     }
     return f"{GOOGLE_AUTH_ENDPOINT}?{urlencode(params)}"
+
 
 def exchange_code_for_user_info(code: str) -> GoogleUserInfo:
     cid, csec, ruri = get_oauth_credentials()
@@ -92,6 +102,8 @@ def exchange_code_for_user_info(code: str) -> GoogleUserInfo:
         picture=claims.get("picture"),
     )
 
-# Aliases for 100% full compatibility
+
+# Aliases for 100% full compatibility across all auth routers
 exchange_code_for_identity = exchange_code_for_user_info
 get_google_user_info = exchange_code_for_user_info
+verify_google_token = exchange_code_for_user_info
