@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column, Session
 from app.core.config import get_settings
 from app.core.db import Base
 
+logger = logging.getLogger("learnx.auth")
 settings = get_settings()
 
 def _uuid() -> str:
@@ -223,12 +225,7 @@ class InvalidOrExpiredToken(AuthError):
 
 def _log(db: Session, event: Any, user_id: str | None, detail: str = "",
          ip: str | None = None, user_agent: str | None = None) -> None:
-    try:
-        ev_str = event.value if hasattr(event, "value") else str(event)
-        db.add(AuditLog(user_id=user_id, event_type=ev_str, detail=detail,
-                         ip_address=ip, user_agent=user_agent))
-    except Exception:
-        pass
+    logger.info("AUDIT: event=%s user=%s detail=%s ip=%s", event, user_id, detail, ip)
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
@@ -247,6 +244,11 @@ def get_user_by_id(db: Session, user_id: str) -> User | None:
 
 def register_user(db: Session, full_name: str, email: str, password: str, role: str,
                    ip: str | None, user_agent: str | None) -> tuple[User, str]:
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+    except Exception:
+        pass
+
     email = email.lower().strip()
     if get_user_by_email(db, email) is not None:
         raise EmailAlreadyRegistered()
@@ -290,7 +292,7 @@ def send_verification_email_for(user: User, raw_token: str) -> None:
 
 def resend_verification(db: Session, email: str) -> str | None:
     user = get_user_by_email(db, email)
-    if user is None or user.email_verified:
+    if user is None or getattr(user, "email_verified", False):
         return None
     raw_token = _issue_verification_token(db, user)
     _log(db, AuditEventType.email_verification_resent, user.id)
@@ -326,12 +328,10 @@ def authenticate_with_password(db: Session, email: str, password: str,
     if user is None:
         verify_password(password, UNUSABLE_PASSWORD_HASH)
         _log(db, AuditEventType.login_failed, None, detail=f"email={email}", ip=ip, user_agent=user_agent)
-        db.commit()
         raise InvalidCredentials()
 
     if not verify_password(password, getattr(user, "hashed_password", "")):
         _log(db, AuditEventType.login_failed, user.id, detail=f"email={email}", ip=ip, user_agent=user_agent)
-        db.commit()
         raise InvalidCredentials()
 
     if not getattr(user, "is_active", True):
@@ -359,7 +359,11 @@ PENDING_GOOGLE_SIGNUP_TTL_MINUTES = 10
 
 def login_or_register_with_google(db: Session, info: GoogleUserInfo,
                                    ip: str | None, user_agent: str | None) -> GoogleAuthOutcome:
-    # 1. Search by google_sub if attribute exists
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+    except Exception:
+        pass
+
     if hasattr(User, "google_sub"):
         try:
             existing_by_sub = db.scalar(select(User).where(getattr(User, "google_sub") == info.sub))
@@ -373,7 +377,6 @@ def login_or_register_with_google(db: Session, info: GoogleUserInfo,
         except Exception:
             pass
 
-    # 2. Search by email
     existing_by_email = get_user_by_email(db, info.email)
     if existing_by_email is not None:
         if hasattr(existing_by_email, "google_sub"):
@@ -388,19 +391,17 @@ def login_or_register_with_google(db: Session, info: GoogleUserInfo,
         db.refresh(existing_by_email)
         return GoogleAuthOutcome(user=existing_by_email, pending_token=None)
 
-    # 3. Brand-new identity -> create pending signup token
     raw_pending_token = generate_opaque_token()
-    db.add(
-        PendingGoogleSignup(
-            token_hash=hash_token(raw_pending_token),
-            google_sub=info.sub,
-            email=info.email.lower(),
-            email_verified=info.email_verified,
-            full_name=info.full_name,
-            avatar_url=info.picture,
-            expires_at=datetime.utcnow() + timedelta(minutes=PENDING_GOOGLE_SIGNUP_TTL_MINUTES),
-        )
+    pending_record = PendingGoogleSignup(
+        token_hash=hash_token(raw_pending_token),
+        google_sub=info.sub,
+        email=info.email.lower(),
+        email_verified=info.email_verified,
+        full_name=info.full_name,
+        avatar_url=info.picture,
+        expires_at=datetime.utcnow() + timedelta(minutes=PENDING_GOOGLE_SIGNUP_TTL_MINUTES),
     )
+    db.add(pending_record)
     _log(db, AuditEventType.google_login, None, detail=f"pending_signup email={info.email}", ip=ip, user_agent=user_agent)
     db.commit()
     return GoogleAuthOutcome(user=None, pending_token=raw_pending_token)
@@ -408,6 +409,11 @@ def login_or_register_with_google(db: Session, info: GoogleUserInfo,
 
 def complete_google_signup(db: Session, raw_pending_token: str, role: str,
                             ip: str | None, user_agent: str | None) -> User:
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+    except Exception:
+        pass
+
     token_hash = hash_token(raw_pending_token)
     record = db.scalar(select(PendingGoogleSignup).where(PendingGoogleSignup.token_hash == token_hash))
     if record is None or record.used_at is not None or record.expires_at < datetime.utcnow():
@@ -451,6 +457,11 @@ class IssuedTokens:
 
 def issue_tokens(db: Session, user: User, remember_me: bool,
                   ip: str | None, user_agent: str | None, family_id: str | None = None) -> IssuedTokens:
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+    except Exception:
+        pass
+
     user_role = getattr(user, "role", "student")
     role_val = user_role.value if hasattr(user_role, 'value') else str(user_role)
     access_token = create_access_token(user.id, role_val)
