@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import Logo from '../ui/Logo'
 import { useProfile } from '../../context/ProfileContext'
+import { useAuth } from '../../context/AuthContext'
 import { getDepartment, getAcademicYear } from '../../data/academicCatalog'
 
 export type Role = 'student' | 'doctor'
@@ -50,7 +51,6 @@ interface SidebarProps {
   onNavigate: (item: string) => void
   onBack: () => void
   role: Role
-  onRoleChange: (role: Role) => void
   mobileOpen?: boolean
   onCloseMobile?: () => void
 }
@@ -62,26 +62,31 @@ export default function Sidebar({
   onNavigate,
   onBack,
   role,
-  onRoleChange,
   mobileOpen = false,
   onCloseMobile,
 }: SidebarProps) {
   const navItems = role === 'doctor' ? doctorNav : studentNav
   const { profile } = useProfile()
-  const studentDisplayName = profile?.fullName || 'Student'
-  const studentInitials =
-    studentDisplayName
+  const { user } = useAuth()
+
+  const displayName =
+    user?.fullName || profile?.fullName || (role === 'doctor' ? 'Doctor' : 'Student')
+  const initials =
+    displayName
       .split(' ')
       .map((part) => part.charAt(0))
       .slice(0, 2)
       .join('')
-      .toUpperCase() || 'S'
+      .toUpperCase() || (role === 'doctor' ? 'DR' : 'S')
   const studentDepartment = getDepartment(profile?.departmentId)
   const studentYear = getAcademicYear(profile?.academicYearId)
-  const studentSubtitle =
-    studentDepartment && studentYear
-      ? `${studentDepartment.name} · ${studentYear.label}`
-      : 'Comp Sci · Year 2'
+  const doctorDepartment = getDepartment(user?.departmentId ?? null)
+  const subtitle =
+    role === 'doctor'
+      ? [user?.academicPosition, doctorDepartment?.name].filter(Boolean).join(' · ') || 'Doctor'
+      : studentDepartment && studentYear
+        ? `${studentDepartment.name} · ${studentYear.label}`
+        : 'Student'
 
   return (
     <>
@@ -170,43 +175,28 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* Role switcher (demo/preview convenience — Student workspace vs. Doctor workspace) */}
+        {/* Real, backend-persisted read-only role badge */}
         <div className="px-3 pt-3">
           {!collapsed ? (
             <div
-              className="relative flex rounded-xl p-1 text-xs font-semibold"
-              style={{ background: 'var(--muted)' }}
+              className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold"
+              style={{
+                background: 'rgba(0,229,192,0.1)',
+                border: '1px solid rgba(0,229,192,0.24)',
+                color: '#00E5C0',
+              }}
             >
-              {(['student', 'doctor'] as Role[]).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => onRoleChange(r)}
-                  className="relative flex-1 py-1.5 rounded-lg z-10 transition-colors capitalize"
-                  style={{
-                    color: role === r ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
-                  }}
-                >
-                  {role === r && (
-                    <motion.span
-                      layoutId="role-pill"
-                      className="absolute inset-0 rounded-lg -z-10"
-                      style={{ background: 'var(--primary)' }}
-                      transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                    />
-                  )}
-                  {r === 'student' ? 'Student' : 'Doctor'}
-                </button>
-              ))}
+              <span>{role === 'doctor' ? '👨‍🏫' : '🎓'}</span>
+              {role === 'doctor' ? 'Doctor' : 'Student'}
             </div>
           ) : (
-            <button
-              onClick={() => onRoleChange(role === 'student' ? 'doctor' : 'student')}
+            <div
               className="w-full flex items-center justify-center py-1.5 rounded-lg text-xs font-bold"
-              style={{ background: 'var(--muted)', color: 'var(--primary)' }}
-              aria-label="Switch role"
+              style={{ background: 'rgba(0,229,192,0.1)', color: '#00E5C0' }}
+              aria-label={role === 'doctor' ? 'Doctor account' : 'Student account'}
             >
-              {role === 'student' ? '🎓' : '🩺'}
-            </button>
+              {role === 'doctor' ? '👨‍🏫' : '🎓'}
+            </div>
           )}
         </div>
 
@@ -263,7 +253,6 @@ export default function Sidebar({
                   </span>
                 )}
 
-                {/* Tooltip when collapsed */}
                 {collapsed && (
                   <div className="surface-tooltip absolute left-full ml-3 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg">
                     {item.label}
@@ -294,13 +283,11 @@ export default function Sidebar({
                 {role === 'student' && profile?.avatarDataUrl ? (
                   <img
                     src={profile.avatarDataUrl}
-                    alt={studentDisplayName}
+                    alt={displayName}
                     className="w-full h-full object-cover"
                   />
-                ) : role === 'doctor' ? (
-                  'DR'
                 ) : (
-                  studentInitials
+                  initials
                 )}
               </div>
               <div className="min-w-0">
@@ -308,10 +295,10 @@ export default function Sidebar({
                   className="text-xs font-semibold truncate"
                   style={{ color: 'var(--foreground)' }}
                 >
-                  {role === 'doctor' ? 'Dr. Sarah Novak' : studentDisplayName}
+                  {displayName}
                 </p>
                 <p className="text-xs truncate" style={{ color: 'var(--muted-foreground)' }}>
-                  {role === 'doctor' ? 'Professor · CS Dept.' : studentSubtitle}
+                  {subtitle}
                 </p>
               </div>
             </div>
