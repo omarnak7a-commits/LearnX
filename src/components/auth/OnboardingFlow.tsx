@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Logo from '../ui/Logo'
 import SearchableSelect from '../ui/SearchableSelect'
-import RoleSelectCards from './RoleSelectCards'
 import {
   UNIVERSITIES,
   ACADEMIC_YEARS,
@@ -276,6 +275,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
 
         <div className="min-h-[220px] flex flex-col justify-center">
           <AnimatePresence mode="wait">
+            {/* STEP 1: ROLE (Embedded) */}
             {currentStep === 1 && (
               <motion.div
                 key="step1"
@@ -288,10 +288,43 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
                 <p className="text-xs text-slate-400 text-center mb-4">
                   Select your primary account type. This configures your dashboard and permissions.
                 </p>
-                <RoleSelectCards value={role} onChange={setRole} showFeatures />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setRole('student')}
+                    className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden ${
+                      role === 'student'
+                        ? 'border-teal-400 bg-teal-500/10 shadow-lg shadow-teal-500/15 ring-2 ring-teal-400/20'
+                        : 'border-white/10 bg-slate-800/40 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="text-3xl mb-2">🎓</div>
+                    <div className="font-bold text-white text-base">Student</div>
+                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                      Learn smarter, access courses, track your GPA, and compete on the leaderboard.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRole('doctor')}
+                    className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden ${
+                      role === 'doctor'
+                        ? 'border-teal-400 bg-teal-500/10 shadow-lg shadow-teal-500/15 ring-2 ring-teal-400/20'
+                        : 'border-white/10 bg-slate-800/40 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="text-3xl mb-2">👨‍🏫</div>
+                    <div className="font-bold text-white text-base">Doctor / Instructor</div>
+                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                      Build courses, upload lectures & PDFs, manage students, and analyze performance.
+                    </p>
+                  </button>
+                </div>
               </motion.div>
             )}
 
+            {/* STEP 2: UNIVERSITY */}
             {currentStep === 2 && (
               <motion.div
                 key="step2"
@@ -319,6 +352,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
               </motion.div>
             )}
 
+            {/* STEP 3: ACADEMIC YEAR / POSITION */}
             {currentStep === 3 && (
               <motion.div
                 key="step3"
@@ -344,6 +378,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
               </motion.div>
             )}
 
+            {/* STEP 4: FACULTY / COLLEGE */}
             {currentStep === 4 && (
               <motion.div
                 key="step4"
@@ -370,6 +405,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
               </motion.div>
             )}
 
+            {/* STEP 5: DEPARTMENT */}
             {currentStep === 5 && (
               <motion.div
                 key="step5"
