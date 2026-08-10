@@ -7,16 +7,22 @@ import OnboardingFlow from './components/auth/OnboardingFlow'
 import GoogleCallbackPage from './components/auth/GoogleCallbackPage'
 import DashboardPage from './components/dashboard/DashboardPage'
 import { ProfileProvider, useProfile } from './context/ProfileContext'
-import { AuthProvider } from './context/AuthContext'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import { NotificationsProvider } from './context/NotificationsContext'
+import type { AuthUser } from './types/auth'
 
 type View = 'landing' | 'login' | 'onboarding' | 'dashboard'
+
+function dashboardPathFor(role: string): string {
+  return role === 'doctor' ? '/doctor/dashboard' : '/student/dashboard'
+}
 
 function AppShell() {
   const [introComplete, setIntroComplete] = useState(false)
   const [view, setView] = useState<View>('landing')
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [pendingEmail, setPendingEmail] = useState('student@university.edu')
+  const { user } = useAuth()
   const { recordDailyActivity } = useProfile()
   const [isGoogleCallback, setIsGoogleCallback] = useState(
     () =>
@@ -39,20 +45,38 @@ function AppShell() {
   const handleGoogleAuthenticated = useCallback((onboardingComplete: boolean = true) => {
     setIsGoogleCallback(false)
     setIntroComplete(true)
-    window.history.replaceState({}, '', '/')
+    
+    try {
+      const savedUserStr = localStorage.getItem('learnx_user')
+      const saved = savedUserStr ? JSON.parse(savedUserStr) : null
+      const roleStr = saved?.role?.value || saved?.role || user?.role || 'student'
+      window.history.replaceState({}, '', dashboardPathFor(roleStr))
+    } catch {
+      window.history.replaceState({}, '', '/student/dashboard')
+    }
+    
     setView('dashboard')
-  }, [])
+  }, [user])
 
   function handleLogin(emailOrUser?: any) {
+    setIntroComplete(true)
+    let roleStr = 'student'
     if (typeof emailOrUser === 'string') {
       setPendingEmail(emailOrUser)
+    } else if (emailOrUser && typeof emailOrUser === 'object') {
+      roleStr = emailOrUser.role?.value || emailOrUser.role || 'student'
+    } else if (user?.role) {
+      roleStr = user.role
     }
-    setIntroComplete(true)
+    
+    window.history.replaceState({}, '', dashboardPathFor(roleStr))
     setView('dashboard')
   }
 
   function handleEnter() {
     setIntroComplete(true)
+    const roleStr = user?.role || 'student'
+    window.history.replaceState({}, '', dashboardPathFor(roleStr))
     setView('dashboard')
   }
 
@@ -76,6 +100,11 @@ function AppShell() {
             onComplete={() => {
               setIntroComplete(true)
               if (typeof window !== 'undefined' && localStorage.getItem('learnx_user')) {
+                try {
+                  const saved = JSON.parse(localStorage.getItem('learnx_user')!)
+                  const roleStr = saved.role?.value || saved.role || 'student'
+                  window.history.replaceState({}, '', dashboardPathFor(roleStr))
+                } catch {}
                 setView('dashboard')
               }
             }}
@@ -127,8 +156,10 @@ function AppShell() {
             >
               <OnboardingFlow
                 email={pendingEmail}
-                onComplete={() => {
+                onComplete={(savedUser: AuthUser) => {
                   setIntroComplete(true)
+                  const targetRole = savedUser.role === 'doctor' ? 'doctor' : 'student'
+                  window.history.replaceState({}, '', dashboardPathFor(targetRole))
                   setView('dashboard')
                 }}
               />
@@ -150,6 +181,7 @@ function AppShell() {
                     localStorage.removeItem('learnx_user')
                     localStorage.removeItem('learnx_access_token')
                   } catch {}
+                  window.history.replaceState({}, '', '/')
                   setView('landing')
                 }}
               />
