@@ -1,486 +1,433 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Logo from '../ui/Logo'
 import SearchableSelect from '../ui/SearchableSelect'
+import RoleSelectCards from './RoleSelectCards'
 import {
   UNIVERSITIES,
-  COUNTRIES,
-  LANGUAGES,
-  STUDY_GOAL_OPTIONS,
   ACADEMIC_YEARS,
-  SEMESTERS,
+  DOCTOR_POSITIONS,
   getFacultiesForUniversity,
   getDepartmentsForFaculty,
 } from '../../data/academicCatalog'
+import { useAuth } from '../../context/AuthContext'
 import { useProfile } from '../../context/ProfileContext'
-import type { OnboardingInput } from '../../types/profile'
+import type { AuthUser, UserRole } from '../../types/auth'
 
 interface OnboardingFlowProps {
-  email: string
-  onComplete: () => void
+  email?: string
+  onComplete: (user: AuthUser) => void
 }
 
-type Step = 'personal' | 'academic' | 'goals'
+const STEPS = [
+  { step: 1, label: 'Role', title: 'What are you?' },
+  { step: 2, label: 'University', title: 'Which university do you attend?' },
+  { step: 3, label: 'Year', title: 'What year / position are you in?' },
+  { step: 4, label: 'Faculty', title: 'Which faculty/college are you in?' },
+  { step: 5, label: 'Department', title: 'Which department are you in?' },
+]
 
-const STEPS: Step[] = ['personal', 'academic', 'goals']
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
-
-/**
- * Extended Sign-Up / Onboarding flow — collects every field in the
- * spec's "SIGN UP" section (Personal + Academic) immediately after first
- * login, with searchable University → Faculty → Department cascading
- * dropdowns exactly as the spec's example describes. Blocks entry to the
- * dashboard until complete (`App.tsx` only renders `DashboardPage` once
- * `profile.onboardingComplete` is true) so no student ever reaches a
- * dashboard with an incomplete academic identity.
- */
 export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProps) {
-  const { completeOnboarding } = useProfile()
-  const [step, setStep] = useState<Step>('personal')
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const { user, setUserFromAuthResponse } = useAuth()
+  const { updateAcademicIdentity } = useProfile()
 
-  const [fullName, setFullName] = useState('')
-  const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null)
-  const [dateOfBirth, setDateOfBirth] = useState('')
-  const [country, setCountry] = useState<string | null>(null)
-  const [preferredLanguage, setPreferredLanguage] = useState('en')
+  const [currentStep, setCurrentStep] = useState<number>(1)
+  const [role, setRole] = useState<UserRole | null>(user?.role ?? 'student')
 
-  const [universityId, setUniversityId] = useState<string | null>(null)
-  const [facultyId, setFacultyId] = useState<string | null>(null)
-  const [departmentId, setDepartmentId] = useState<string | null>(null)
-  const [academicYearId, setAcademicYearId] = useState<string | null>(null)
-  const [semesterId, setSemesterId] = useState<string | null>(null)
-  const [studentIdNumber, setStudentIdNumber] = useState('')
-  const [studyGoals, setStudyGoals] = useState<string[]>([])
+  const [universityId, setUniversityId] = useState<string | null>(user?.universityId ?? null)
+  const [academicYearId, setAcademicYearId] = useState<string | null>(user?.academicYear ?? null)
+  const [facultyId, setFacultyId] = useState<string | null>(user?.facultyId ?? null)
+  const [departmentId, setDepartmentId] = useState<string | null>(user?.departmentId ?? null)
 
-  const [avatarError, setAvatarError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const universityOptions = useMemo(
-    () => UNIVERSITIES.map((u) => ({ id: u.id, label: u.name, sublabel: u.country })),
+    () =>
+      UNIVERSITIES.map((u) => ({
+        id: u.id,
+        label: u.name,
+        sublabel: `${u.city}, ${u.country}`,
+        icon: '🏛️',
+      })),
     []
   )
-  const facultyOptions = useMemo(
-    () =>
-      getFacultiesForUniversity(universityId).map((f) => ({
-        id: f.id,
-        label: f.name,
-        icon: f.icon,
-      })),
-    [universityId]
-  )
-  const departmentOptions = useMemo(
-    () => getDepartmentsForFaculty(facultyId).map((d) => ({ id: d.id, label: d.name })),
-    [facultyId]
-  )
-  const yearOptions = useMemo(() => ACADEMIC_YEARS.map((y) => ({ id: y.id, label: y.label })), [])
-  const semesterOptions = useMemo(() => SEMESTERS.map((s) => ({ id: s.id, label: s.label })), [])
-  const countryOptions = useMemo(() => COUNTRIES.map((c) => ({ id: c, label: c })), [])
-  const languageOptions = useMemo(() => LANGUAGES.map((l) => ({ id: l.id, label: l.label })), [])
 
-  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setAvatarError('Please choose an image file.')
+  const yearOptions = useMemo(() => {
+    if (role === 'doctor') {
+      return DOCTOR_POSITIONS.map((p) => ({ id: p.id, label: p.label, icon: '👨‍🏫' }))
+    }
+    return ACADEMIC_YEARS.map((y) => ({ id: y.id, label: y.label, icon: '🎓' }))
+  }, [role])
+
+  const facultyOptions = useMemo(() => {
+    if (!universityId) return []
+    return getFacultiesForUniversity(universityId).map((f) => ({
+      id: f.id,
+      label: f.name,
+      icon: f.icon || '📚',
+    }))
+  }, [universityId])
+
+  const departmentOptions = useMemo(() => {
+    if (!facultyId) return []
+    return getDepartmentsForFaculty(facultyId).map((d) => ({
+      id: d.id,
+      label: d.name,
+      icon: '📂',
+    }))
+  }, [facultyId])
+
+  const canProceed = useMemo(() => {
+    if (currentStep === 1) return Boolean(role)
+    if (currentStep === 2) return Boolean(universityId)
+    if (currentStep === 3) return Boolean(academicYearId)
+    if (currentStep === 4) return Boolean(facultyId)
+    if (currentStep === 5) {
+      if (departmentOptions.length > 0) return Boolean(departmentId)
+      return true
+    }
+    return false
+  }, [currentStep, role, universityId, academicYearId, facultyId, departmentId, departmentOptions])
+
+  function handleNext() {
+    setError(null)
+    if (!canProceed) {
+      if (currentStep === 1) setError('Please select your role (Student or Doctor).')
+      else if (currentStep === 2) setError('Please select your university.')
+      else if (currentStep === 3) setError('Please select your academic year or position.')
+      else if (currentStep === 4) setError('Please select your faculty / college.')
+      else if (currentStep === 5 && departmentOptions.length > 0)
+        setError('Please select your department.')
       return
     }
-    if (file.size > 4 * 1024 * 1024) {
-      setAvatarError('Image must be under 4MB.')
-      return
+    if (currentStep < 5) {
+      setCurrentStep((s) => s + 1)
+    } else {
+      void handleSubmitFinal()
     }
-    setAvatarError(null)
-    const dataUrl = await readFileAsDataUrl(file)
-    setAvatarDataUrl(dataUrl)
   }
 
-  function toggleGoal(goal: string) {
-    setStudyGoals((prev) =>
-      prev.includes(goal) ? prev.filter((g) => g !== goal) : [...prev, goal]
-    )
-  }
-
-  const personalValid = fullName.trim().length >= 2
-  const academicValid = Boolean(
-    universityId && facultyId && departmentId && academicYearId && semesterId
-  )
-  const canFinish = personalValid && academicValid
-
-  function goNext() {
-    const idx = STEPS.indexOf(step)
-    if (idx < STEPS.length - 1) setStep(STEPS[idx + 1])
-  }
-  function goBack() {
-    const idx = STEPS.indexOf(step)
-    if (idx > 0) setStep(STEPS[idx - 1])
-  }
-
-  function handleFinish() {
-    if (!canFinish) return
-    const input: OnboardingInput = {
-      fullName: fullName.trim(),
-      avatarDataUrl,
-      dateOfBirth: dateOfBirth || null,
-      country,
-      preferredLanguage,
-      universityId: universityId!,
-      facultyId: facultyId!,
-      departmentId: departmentId!,
-      academicYearId: academicYearId!,
-      semesterId: semesterId!,
-      studentIdNumber: studentIdNumber.trim() || null,
-      studyGoals,
+  function handleBack() {
+    setError(null)
+    if (currentStep > 1) {
+      setCurrentStep((s) => s - 1)
     }
-    completeOnboarding(input, email)
-    onComplete()
   }
 
-  const stepIndex = STEPS.indexOf(step)
+  async function handleSubmitFinal() {
+    if (!canProceed || submitting) return
+    setSubmitting(true)
+    setError(null)
+
+    const chosenRole = role ?? 'student'
+    const finalPayload = {
+      role: chosenRole,
+      university_id: universityId,
+      faculty_id: facultyId,
+      department_id: departmentId || null,
+      academic_year: academicYearId,
+      onboarding_complete: true,
+    }
+
+    try {
+      const token = localStorage.getItem('learnx_access_token')
+      const endpoint =
+        chosenRole === 'doctor' ? '/api/v1/auth/onboarding/doctor' : '/api/v1/auth/onboarding/student'
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          university_id: universityId,
+          faculty_id: facultyId,
+          department_id: departmentId,
+          academic_year: academicYearId,
+          academic_position: academicYearId,
+          specialization: 'General',
+        }),
+      })
+
+      let updatedUserData: any = null
+      if (res.ok) updatedUserData = await res.json()
+
+      try {
+        await fetch('/api/v1/auth/me', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: 'include',
+          body: JSON.stringify(finalPayload),
+        })
+      } catch {}
+
+      const activeUser: AuthUser = {
+        id: updatedUserData?.id || user?.id || String(Date.now()),
+        email: updatedUserData?.email || user?.email || email || '',
+        fullName: updatedUserData?.fullName || updatedUserData?.full_name || user?.fullName || 'User',
+        role: chosenRole,
+        provider: user?.provider || 'email',
+        avatarUrl: user?.avatarUrl ?? null,
+        emailVerified: true,
+        onboardingComplete: true,
+        universityId,
+        facultyId,
+        departmentId,
+        academicYear: academicYearId,
+        preferredLanguage: 'ar',
+        studyGoals: [],
+        weakSubjects: [],
+        strongSubjects: [],
+        coursesTaught: [],
+        xp: user?.xp ?? 0,
+        level: user?.level ?? 1,
+        streakDays: user?.streakDays ?? 0,
+        createdAt: user?.createdAt ?? new Date().toISOString(),
+        lastLogin: new Date().toISOString(),
+      }
+
+      setUserFromAuthResponse(activeUser)
+      updateAcademicIdentity({
+        universityId,
+        facultyId,
+        departmentId,
+        academicYearId,
+        semesterId: null,
+      })
+
+      localStorage.setItem('learnx_user', JSON.stringify(activeUser))
+      onComplete(activeUser)
+
+      const targetUrl = chosenRole === 'doctor' ? '/doctor/dashboard' : '/student/dashboard'
+      window.location.href = targetUrl
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save onboarding. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   return (
     <div
-      className="relative min-h-screen flex items-center justify-center px-6 py-12 overflow-hidden"
-      style={{ background: 'var(--section-dark)' }}
+      className="relative min-h-screen flex items-center justify-center px-4 py-12 overflow-hidden"
+      style={{ background: 'var(--section-dark, #0A0D14)' }}
     >
-      <div className="absolute inset-0 bg-grid opacity-40 pointer-events-none" />
-      <div
-        className="absolute top-0 right-0 w-[500px] h-[500px] pointer-events-none"
-        style={{
-          background:
-            'radial-gradient(circle at 70% 30%, rgba(45,212,191,0.08) 0%, transparent 65%)',
-        }}
-      />
-
+      <div className="absolute inset-0 bg-grid opacity-30 pointer-events-none" />
       <motion.div
-        className="glass-card w-full max-w-xl p-8 relative z-10"
-        initial={{ opacity: 0, y: 24, scale: 0.98 }}
+        className="glass-card w-full max-w-xl p-6 sm:p-8 relative z-10 rounded-2xl border border-white/10 bg-slate-900/80 shadow-2xl backdrop-blur-xl"
+        initial={{ opacity: 0, y: 20, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.4 }}
       >
         <div className="flex flex-col items-center mb-6">
-          <Logo variant="symbol" size="lg" className="mb-4" />
+          <Logo variant="symbol" size="lg" className="mb-3" />
           <h1
-            className="text-xl font-bold"
-            style={{
-              fontFamily: 'Orbitron, sans-serif',
-              color: 'var(--foreground)',
-              letterSpacing: '-0.01em',
-            }}
+            className="text-xl sm:text-2xl font-bold text-white text-center"
+            style={{ fontFamily: 'Orbitron, sans-serif' }}
           >
-            Set up your academic identity
+            {STEPS[currentStep - 1].title}
           </h1>
-          <p className="text-xs mt-1.5 text-center" style={{ color: 'var(--muted-foreground)' }}>
-            One quick step so LearnX can personalize your dashboard, rankings, and study plan.
+          <p className="text-xs text-slate-400 mt-1 text-center">
+            Step {currentStep} of 5 · Academic Profile Setup
           </p>
         </div>
 
-        {/* Step indicator */}
-        <div className="flex items-center gap-2 mb-7">
-          {STEPS.map((s, i) => (
-            <div key={s} className="flex-1 flex items-center gap-2">
-              <div
-                className="w-full h-1 rounded-full overflow-hidden"
-                style={{ background: 'var(--tint-2)' }}
-              >
-                <motion.div
-                  className="h-full rounded-full"
-                  style={{ background: 'linear-gradient(90deg, #2DD4BF, var(--secondary))' }}
-                  initial={false}
-                  animate={{ width: i <= stepIndex ? '100%' : '0%' }}
-                  transition={{ duration: 0.4 }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <AnimatePresence mode="wait">
-          {step === 'personal' && (
-            <motion.div
-              key="personal"
-              initial={{ opacity: 0, x: 16 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -16 }}
-              transition={{ duration: 0.3 }}
-              className="space-y-4"
-            >
-              <div className="flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-16 h-16 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
-                  style={{
-                    background: avatarDataUrl
-                      ? undefined
-                      : 'linear-gradient(135deg, var(--primary), var(--secondary))',
-                    color: 'var(--primary-foreground)',
-                  }}
-                  aria-label="Upload profile picture"
-                >
-                  {avatarDataUrl ? (
-                    <img src={avatarDataUrl} alt="Profile" className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-xl font-bold">
-                      {fullName.trim().charAt(0).toUpperCase() || '+'}
-                    </span>
-                  )}
-                </button>
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-xs font-semibold px-3 py-1.5 rounded-full"
-                    style={{ background: 'rgba(45,212,191,0.1)', color: 'var(--primary)' }}
+        {/* 5-Step Progress Indicator */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            {STEPS.map((s) => {
+              const isPast = s.step < currentStep
+              const isCurrent = s.step === currentStep
+              return (
+                <div key={s.step} className="flex-1 flex flex-col items-center gap-1 text-center">
+                  <span
+                    className={`text-[10px] font-bold uppercase transition-colors ${
+                      isCurrent ? 'text-teal-400' : isPast ? 'text-slate-300' : 'text-slate-600'
+                    }`}
                   >
-                    Upload photo (optional)
-                  </button>
-                  {avatarError && (
-                    <p className="text-xs mt-1" style={{ color: 'var(--danger)' }}>
-                      {avatarError}
-                    </p>
-                  )}
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleAvatarChange}
-                />
-              </div>
-
-              <div>
-                <label
-                  className="text-xs font-medium mb-1.5 flex items-center gap-1"
-                  style={{ color: 'var(--muted-foreground)' }}
-                >
-                  Full Name <span style={{ color: 'var(--danger)' }}>*</span>
-                </label>
-                <input
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="e.g. Ahmed Hassan"
-                  className="input-field w-full px-4 py-2.5 rounded-xl text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label
-                    className="text-xs font-medium mb-1.5 block"
-                    style={{ color: 'var(--muted-foreground)' }}
-                  >
-                    Date of Birth (optional)
-                  </label>
-                  <input
-                    type="date"
-                    value={dateOfBirth}
-                    onChange={(e) => setDateOfBirth(e.target.value)}
-                    className="input-field w-full px-4 py-2.5 rounded-xl text-sm"
+                    0{s.step} {s.label}
+                  </span>
+                  <div
+                    className={`h-1.5 w-full rounded-full transition-all duration-300 ${
+                      isPast ? 'bg-teal-400' : isCurrent ? 'bg-teal-400 shadow-sm shadow-teal-400/50' : 'bg-slate-800'
+                    }`}
                   />
                 </div>
-                <SearchableSelect
-                  label="Country"
-                  placeholder="Select country"
-                  options={countryOptions}
-                  value={country}
-                  onChange={setCountry}
-                />
-              </div>
+              )
+            })}
+          </div>
+        </div>
 
-              <SearchableSelect
-                label="Preferred Language"
-                options={languageOptions}
-                value={preferredLanguage}
-                onChange={setPreferredLanguage}
-              />
-            </motion.div>
-          )}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="mb-4 px-3.5 py-2.5 rounded-xl text-xs bg-red-500/10 text-red-400 border border-red-500/20 text-center"
+          >
+            {error}
+          </motion.div>
+        )}
 
-          {step === 'academic' && (
-            <motion.div
-              key="academic"
-              initial={{ opacity: 0, x: 16 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -16 }}
-              transition={{ duration: 0.3 }}
-              className="space-y-4"
-            >
-              <SearchableSelect
-                label="University"
-                required
-                placeholder="e.g. Cairo University"
-                options={universityOptions}
-                value={universityId}
-                onChange={(id) => {
-                  setUniversityId(id)
-                  setFacultyId(null)
-                  setDepartmentId(null)
-                }}
-              />
-              <SearchableSelect
-                label="Faculty / College"
-                required
-                placeholder={
-                  universityId ? 'e.g. Faculty of Engineering' : 'Choose a university first'
-                }
-                options={facultyOptions}
-                value={facultyId}
-                disabled={!universityId}
-                onChange={(id) => {
-                  setFacultyId(id)
-                  setDepartmentId(null)
-                }}
-              />
-              <SearchableSelect
-                label="Department"
-                required
-                placeholder={facultyId ? 'e.g. Computer Engineering' : 'Choose a faculty first'}
-                options={departmentOptions}
-                value={departmentId}
-                disabled={!facultyId}
-                onChange={setDepartmentId}
-              />
-              <div className="grid grid-cols-2 gap-4">
+        <div className="min-h-[220px] flex flex-col justify-center">
+          <AnimatePresence mode="wait">
+            {currentStep === 1 && (
+              <motion.div
+                key="step1"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-3"
+              >
+                <p className="text-xs text-slate-400 text-center mb-4">
+                  Select your primary account type. This configures your dashboard and permissions.
+                </p>
+                <RoleSelectCards value={role} onChange={setRole} showFeatures />
+              </motion.div>
+            )}
+
+            {currentStep === 2 && (
+              <motion.div
+                key="step2"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-4"
+              >
+                <p className="text-xs text-slate-400 text-center mb-2">
+                  Search and select your university from our accredited directory.
+                </p>
                 <SearchableSelect
-                  label="Academic Year"
+                  label="University"
                   required
-                  placeholder="e.g. Second Year"
+                  placeholder="e.g. Cairo University, MIT, Imperial College..."
+                  options={universityOptions}
+                  value={universityId}
+                  onChange={(id) => {
+                    setUniversityId(id)
+                    setFacultyId(null)
+                    setDepartmentId(null)
+                  }}
+                />
+              </motion.div>
+            )}
+
+            {currentStep === 3 && (
+              <motion.div
+                key="step3"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-4"
+              >
+                <p className="text-xs text-slate-400 text-center mb-2">
+                  {role === 'doctor'
+                    ? 'Select your current academic teaching rank.'
+                    : 'Select your current academic study level.'}
+                </p>
+                <SearchableSelect
+                  label={role === 'doctor' ? 'Academic Position' : 'Academic Year'}
+                  required
+                  placeholder={role === 'doctor' ? 'e.g. Assistant Professor, Lecturer...' : 'e.g. 1st Year, 2nd Year...'}
                   options={yearOptions}
                   value={academicYearId}
                   onChange={setAcademicYearId}
                 />
-                <SearchableSelect
-                  label="Semester"
-                  required
-                  placeholder="e.g. Semester 1"
-                  options={semesterOptions}
-                  value={semesterId}
-                  onChange={setSemesterId}
-                />
-              </div>
-              <div>
-                <label
-                  className="text-xs font-medium mb-1.5 block"
-                  style={{ color: 'var(--muted-foreground)' }}
-                >
-                  Student ID (optional)
-                </label>
-                <input
-                  value={studentIdNumber}
-                  onChange={(e) => setStudentIdNumber(e.target.value)}
-                  placeholder="e.g. 20231234"
-                  className="input-field w-full px-4 py-2.5 rounded-xl text-sm"
-                />
-              </div>
-            </motion.div>
-          )}
+              </motion.div>
+            )}
 
-          {step === 'goals' && (
-            <motion.div
-              key="goals"
-              initial={{ opacity: 0, x: 16 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -16 }}
-              transition={{ duration: 0.3 }}
-              className="space-y-4"
-            >
-              <div>
-                <p className="text-sm font-semibold mb-1" style={{ color: 'var(--foreground)' }}>
-                  What are your study goals?
-                </p>
-                <p className="text-xs mb-3" style={{ color: 'var(--muted-foreground)' }}>
-                  Pick as many as apply — this tunes your AI study plan and dashboard insights.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {STUDY_GOAL_OPTIONS.map((goal) => {
-                    const active = studyGoals.includes(goal)
-                    return (
-                      <button
-                        key={goal}
-                        type="button"
-                        onClick={() => toggleGoal(goal)}
-                        className="text-xs font-medium px-3 py-2.5 rounded-xl text-left transition-colors"
-                        style={{
-                          background: active ? 'rgba(45,212,191,0.12)' : 'var(--tint-1)',
-                          border: `1px solid ${active ? 'rgba(45,212,191,0.4)' : 'var(--border-subtle)'}`,
-                          color: active ? 'var(--primary)' : 'var(--foreground)',
-                        }}
-                      >
-                        {active ? '✓ ' : ''}
-                        {goal}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              <div
-                className="p-4 rounded-xl"
-                style={{ background: 'var(--tint-1)', border: '1px solid var(--border-subtle)' }}
+            {currentStep === 4 && (
+              <motion.div
+                key="step4"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-4"
               >
-                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--foreground)' }}>
-                  Your academic identity
+                <p className="text-xs text-slate-400 text-center mb-2">
+                  Faculties available for your selected university.
                 </p>
-                <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                  {fullName || 'Your name'} · {email}
-                </p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                <SearchableSelect
+                  label="Faculty / College"
+                  required
+                  placeholder="e.g. Faculty of Engineering, Faculty of Medicine..."
+                  options={facultyOptions}
+                  value={facultyId}
+                  onChange={(id) => {
+                    setFacultyId(id)
+                    setDepartmentId(null)
+                  }}
+                />
+              </motion.div>
+            )}
 
-        <div className="flex items-center gap-3 mt-7">
-          {stepIndex > 0 && (
+            {currentStep === 5 && (
+              <motion.div
+                key="step5"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-4"
+              >
+                <p className="text-xs text-slate-400 text-center mb-2">
+                  {departmentOptions.length > 0
+                    ? 'Select your department or major specialization.'
+                    : 'Your selected faculty does not require a separate department.'}
+                </p>
+                {departmentOptions.length > 0 ? (
+                  <SearchableSelect
+                    label="Department"
+                    required
+                    placeholder="e.g. Computer Science, Mechanical Engineering..."
+                    options={departmentOptions}
+                    value={departmentId}
+                    onChange={setDepartmentId}
+                  />
+                ) : (
+                  <div className="p-4 rounded-xl border border-teal-500/20 bg-teal-500/5 text-center">
+                    <p className="text-sm font-semibold text-teal-400 mb-1">✓ General Department</p>
+                    <p className="text-xs text-slate-400">
+                      All required academic identity data has been gathered.
+                    </p>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="flex items-center gap-3 mt-8">
+          {currentStep > 1 && (
             <button
               type="button"
-              onClick={goBack}
-              className="px-4 py-2.5 rounded-xl text-sm font-semibold input-field"
-              style={{ color: 'var(--muted-foreground)' }}
+              onClick={handleBack}
+              disabled={submitting}
+              className="px-5 py-3 rounded-xl text-sm font-semibold text-slate-300 bg-slate-800/80 hover:bg-slate-800 border border-white/10 transition-all"
             >
               Back
             </button>
           )}
-          {step !== 'goals' ? (
-            <motion.button
-              type="button"
-              onClick={goNext}
-              disabled={step === 'personal' ? !personalValid : !academicValid}
-              className="flex-1 py-3 rounded-xl text-sm font-bold"
-              style={{
-                background: 'var(--primary)',
-                color: 'var(--primary-foreground)',
-                opacity: (step === 'personal' ? !personalValid : !academicValid) ? 0.5 : 1,
-              }}
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              Continue
-            </motion.button>
-          ) : (
-            <motion.button
-              type="button"
-              onClick={handleFinish}
-              disabled={!canFinish}
-              className="flex-1 py-3 rounded-xl text-sm font-bold"
-              style={{
-                background: 'var(--primary)',
-                color: 'var(--primary-foreground)',
-                opacity: !canFinish ? 0.5 : 1,
-              }}
-              whileHover={{ scale: 1.01, boxShadow: '0 0 32px rgba(45,212,191,0.4)' }}
-              whileTap={{ scale: 0.98 }}
-            >
-              Enter LearnX
-            </motion.button>
-          )}
+
+          <motion.button
+            type="button"
+            onClick={handleNext}
+            disabled={!canProceed || submitting}
+            className="flex-1 py-3 rounded-xl text-sm font-bold bg-teal-400 text-slate-950 disabled:opacity-40 hover:bg-teal-300 transition-all flex items-center justify-center gap-2"
+            whileHover={!canProceed || submitting ? undefined : { scale: 1.01 }}
+            whileTap={!canProceed || submitting ? undefined : { scale: 0.99 }}
+          >
+            {submitting ? 'Saving Profile…' : currentStep === 5 ? 'Complete & Enter LearnX 🚀' : 'Continue →'}
+          </motion.button>
         </div>
       </motion.div>
     </div>
