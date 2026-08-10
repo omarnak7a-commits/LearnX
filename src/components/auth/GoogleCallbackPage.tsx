@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useAuth } from '../../context/AuthContext'
-import type { AuthUser, UserRole } from '../../types/auth'
+import type { UserRole } from '../../types/auth'
 
 interface GoogleCallbackPageProps {
-  code: string | null
-  state: string | null
-  onDone: (user: AuthUser) => void
-  onCancel: () => void
+  code?: string | null
+  state?: string | null
+  onDone?: (user: any) => void
+  onCancel?: () => void
 }
 
 export default function GoogleCallbackPage({
@@ -15,12 +14,28 @@ export default function GoogleCallbackPage({
   onDone,
   onCancel,
 }: GoogleCallbackPageProps) {
-  const { setUserFromAuthResponse } = useAuth()
   const [status, setStatus] = useState<'exchanging' | 'needs-role' | 'error'>('exchanging')
   const [error, setError] = useState<string | null>(null)
   const [pendingToken, setPendingToken] = useState<string | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
   const [submitting, setSubmitting] = useState(false)
+
+  function navigateToDashboard(userObj: any, chosenRole?: string) {
+    try {
+      const targetRole = chosenRole || userObj?.role || 'student'
+      const roleStr = typeof targetRole === 'string' ? targetRole : (targetRole?.value || 'student')
+      const targetUrl = roleStr === 'doctor' ? '/doctor/dashboard' : '/student/dashboard'
+      
+      if (typeof onDone === 'function') {
+        try { onDone(userObj) } catch {}
+      }
+      
+      // Direct navigation to dashboard
+      window.location.href = targetUrl
+    } catch {
+      window.location.href = '/'
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -56,7 +71,7 @@ export default function GoogleCallbackPage({
         try {
           data = JSON.parse(text)
         } catch {
-          throw new Error(`Server returned (${res.status}): ${text.substring(0, 120)}`)
+          throw new Error(`Server returned: ${text.substring(0, 100)}`)
         }
 
         if (!res.ok) {
@@ -68,15 +83,14 @@ export default function GoogleCallbackPage({
           setStatus('needs-role')
         } else {
           const authUser = data.user || data
-          if (setUserFromAuthResponse) setUserFromAuthResponse(authUser)
-          onDone(authUser)
+          navigateToDashboard(authUser)
         }
       } catch (err) {
         setStatus('error')
         setError(err instanceof Error ? err.message : 'Google authentication failed.')
       }
     })()
-  }, [code, state, onDone, setUserFromAuthResponse])
+  }, [code, state])
 
   async function handleCompleteSignup() {
     if (!role || !pendingToken) return
@@ -93,20 +107,26 @@ export default function GoogleCallbackPage({
       try {
         data = JSON.parse(text)
       } catch {
-        throw new Error(`Server error (${res.status}): ${text.substring(0, 120)}`)
+        throw new Error(`Server error: ${text.substring(0, 100)}`)
       }
       if (!res.ok) {
         throw new Error(data.detail || data.message || 'Failed to complete signup')
       }
       const authUser = data.user || data
-      if (setUserFromAuthResponse) setUserFromAuthResponse(authUser)
-      onDone(authUser)
+      navigateToDashboard(authUser, role)
     } catch (err) {
       setStatus('error')
       setError(err instanceof Error ? err.message : 'Signup completion failed.')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  function handleCancelClick() {
+    if (typeof onCancel === 'function') {
+      try { onCancel(); return; } catch {}
+    }
+    window.location.href = '/'
   }
 
   return (
@@ -180,7 +200,7 @@ export default function GoogleCallbackPage({
             <h2 className="text-lg font-bold text-white mb-1">Google Sign-in Issue</h2>
             <p className="text-xs text-slate-400 mb-6">{error}</p>
             <button
-              onClick={onCancel}
+              onClick={handleCancelClick}
               className="w-full py-3 rounded-xl text-sm font-bold bg-teal-400 text-slate-950 hover:bg-teal-300 transition-all"
             >
               Back to Sign In
