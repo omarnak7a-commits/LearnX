@@ -10,6 +10,39 @@ import {
 } from 'react'
 import type { AuthUser } from '../types/auth'
 
+function normalizeUser(raw: any): AuthUser | null {
+  if (!raw) return null
+  const roleStr = raw.role?.value || raw.role || 'student'
+  return {
+    id: raw.id || '',
+    email: raw.email || '',
+    fullName: raw.fullName || raw.full_name || raw.name || '',
+    role: roleStr === 'doctor' ? 'doctor' : 'student',
+    provider: raw.provider || 'google',
+    avatarUrl: raw.avatarUrl || raw.avatar_url || raw.picture || null,
+    emailVerified: Boolean(raw.emailVerified ?? raw.email_verified ?? true),
+    onboardingComplete: Boolean(raw.onboardingComplete ?? raw.onboarding_complete ?? true),
+    universityId: raw.universityId || raw.university_id || null,
+    facultyId: raw.facultyId || raw.faculty_id || null,
+    departmentId: raw.departmentId || raw.department_id || null,
+    academicYear: raw.academicYear || raw.academic_year || null,
+    semester: raw.semester || null,
+    preferredLanguage: raw.preferredLanguage || raw.preferred_language || 'ar',
+    studyGoals: raw.studyGoals || raw.study_goals || [],
+    weakSubjects: raw.weakSubjects || raw.weak_subjects || [],
+    strongSubjects: raw.strongSubjects || raw.strong_subjects || [],
+    academicPosition: raw.academicPosition || raw.academic_position || null,
+    specialization: raw.specialization || null,
+    coursesTaught: raw.coursesTaught || raw.courses_taught || [],
+    officeHours: raw.officeHours || raw.office_hours || null,
+    xp: raw.xp || 0,
+    level: raw.level || 1,
+    streakDays: raw.streakDays || raw.streak_days || 0,
+    createdAt: raw.createdAt || raw.created_at || new Date().toISOString(),
+    lastLogin: raw.lastLogin || raw.last_login || null,
+  }
+}
+
 interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
@@ -21,7 +54,7 @@ interface AuthContextValue {
     role: 'student' | 'doctor'
   }) => Promise<AuthUser>
   login: (input: { email: string; password: string; rememberMe: boolean }) => Promise<AuthUser>
-  setUserFromAuthResponse: (user: AuthUser) => void
+  setUserFromAuthResponse: (user: any) => void
   logout: () => Promise<void>
   logoutAllDevices: () => Promise<void>
   refreshUser: () => Promise<void>
@@ -33,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
     try {
       const saved = localStorage.getItem('learnx_user')
-      return saved ? JSON.parse(saved) : null
+      return saved ? normalizeUser(JSON.parse(saved)) : null
     } catch {
       return null
     }
@@ -50,13 +83,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         credentials: 'include',
       })
       if (res.ok) {
-        const me = await res.json()
-        setUser(me)
-        localStorage.setItem('learnx_user', JSON.stringify(me))
-      } else if (res.status === 401 || res.status === 403) {
-        localStorage.removeItem('learnx_user')
-        localStorage.removeItem('learnx_access_token')
-        setUser(null)
+        const raw = await res.json()
+        const normalized = normalizeUser(raw)
+        setUser(normalized)
+        if (normalized) localStorage.setItem('learnx_user', JSON.stringify(normalized))
       }
     } catch {}
   }, [])
@@ -74,9 +104,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         if (refreshRes.ok) {
           const data = await refreshRes.json()
-          const authUser = data.user || data
-          setUser(authUser)
-          localStorage.setItem('learnx_user', JSON.stringify(authUser))
+          const normalized = normalizeUser(data.user || data)
+          setUser(normalized)
+          if (normalized) localStorage.setItem('learnx_user', JSON.stringify(normalized))
           if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
         } else {
           await refreshUser()
@@ -107,11 +137,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || data.message || 'Registration failed')
-      const authUser = data.user || data
-      setUser(authUser)
-      localStorage.setItem('learnx_user', JSON.stringify(authUser))
+      const normalized = normalizeUser(data.user || data)!
+      setUser(normalized)
+      localStorage.setItem('learnx_user', JSON.stringify(normalized))
       if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
-      return authUser
+      return normalized
     },
     []
   )
@@ -130,20 +160,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || data.message || 'Login failed')
-      const authUser = data.user || data
-      setUser(authUser)
-      localStorage.setItem('learnx_user', JSON.stringify(authUser))
+      const normalized = normalizeUser(data.user || data)!
+      setUser(normalized)
+      localStorage.setItem('learnx_user', JSON.stringify(normalized))
       if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
-      return authUser
+      return normalized
     },
     []
   )
 
-  const setUserFromAuthResponse = useCallback((nextUser: AuthUser) => {
-    setUser(nextUser)
-    try {
-      localStorage.setItem('learnx_user', JSON.stringify(nextUser))
-    } catch {}
+  const setUserFromAuthResponse = useCallback((nextUser: any) => {
+    const normalized = normalizeUser(nextUser)
+    setUser(normalized)
+    if (normalized) {
+      try {
+        localStorage.setItem('learnx_user', JSON.stringify(normalized))
+      } catch {}
+    }
   }, [])
 
   const logout = useCallback(async () => {
@@ -153,6 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('learnx_user')
       localStorage.removeItem('learnx_access_token')
       setUser(null)
+      window.location.href = '/'
     }
   }, [])
 
@@ -168,6 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('learnx_user')
       localStorage.removeItem('learnx_access_token')
       setUser(null)
+      window.location.href = '/'
     }
   }, [])
 
