@@ -95,7 +95,7 @@ function AppShell() {
               transition={{ duration: 0.4 }}
             >
               <LandingPage
-                onEnter={() => setView('login')}
+                onEnter={handleEnter}
                 onLogin={() => setView('login')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
