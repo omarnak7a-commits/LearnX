@@ -4,8 +4,6 @@ import Logo from '../ui/Logo'
 import SearchableSelect from '../ui/SearchableSelect'
 import {
   UNIVERSITIES,
-  ACADEMIC_YEARS,
-  DOCTOR_POSITIONS,
   getFacultiesForUniversity,
   getDepartmentsForFaculty,
 } from '../../data/academicCatalog'
@@ -24,6 +22,27 @@ const STEPS = [
   { step: 3, label: 'Year', title: 'What year / position are you in?' },
   { step: 4, label: 'Faculty', title: 'Which faculty/college are you in?' },
   { step: 5, label: 'Department', title: 'Which department are you in?' },
+]
+
+const STUDENT_YEARS = [
+  { id: 'year-1', label: '1st Year', icon: '🎓' },
+  { id: 'year-2', label: '2nd Year', icon: '🎓' },
+  { id: 'year-3', label: '3rd Year', icon: '🎓' },
+  { id: 'year-4', label: '4th Year', icon: '🎓' },
+  { id: 'year-5', label: '5th Year', icon: '🎓' },
+  { id: 'year-6', label: '6th Year', icon: '🎓' },
+  { id: 'graduate', label: 'Graduate', icon: '🎓' },
+  { id: 'other', label: 'Other', icon: '🎓' },
+]
+
+const DOCTOR_RANKS = [
+  { id: 'ta', label: 'Teaching Assistant', icon: '👨‍🏫' },
+  { id: 'lecturer', label: 'Lecturer', icon: '👨‍🏫' },
+  { id: 'asst-prof', label: 'Assistant Professor', icon: '👨‍🏫' },
+  { id: 'assoc-prof', label: 'Associate Professor', icon: '👨‍🏫' },
+  { id: 'prof', label: 'Professor', icon: '👨‍🏫' },
+  { id: 'dept-head', label: 'Department Head', icon: '👨‍🏫' },
+  { id: 'other-doc', label: 'Other', icon: '👨‍🏫' },
 ]
 
 export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProps) {
@@ -53,10 +72,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
   )
 
   const yearOptions = useMemo(() => {
-    if (role === 'doctor') {
-      return DOCTOR_POSITIONS.map((p) => ({ id: p.id, label: p.label, icon: '👨‍🏫' }))
-    }
-    return ACADEMIC_YEARS.map((y) => ({ id: y.id, label: y.label, icon: '🎓' }))
+    return role === 'doctor' ? DOCTOR_RANKS : STUDENT_YEARS
   }, [role])
 
   const facultyOptions = useMemo(() => {
@@ -275,7 +291,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
 
         <div className="min-h-[220px] flex flex-col justify-center">
           <AnimatePresence mode="wait">
-            {/* STEP 1: ROLE (Embedded) */}
+            {/* STEP 1: ROLE */}
             {currentStep === 1 && (
               <motion.div
                 key="step1"
