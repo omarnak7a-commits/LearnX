@@ -13,15 +13,25 @@ import { NotificationsProvider } from './context/NotificationsContext'
 type View = 'landing' | 'login' | 'onboarding' | 'dashboard'
 
 function AppShell() {
-  const [introComplete, setIntroComplete] = useState(false)
-  const [view, setView] = useState<View>('landing')
+  const [introComplete, setIntroComplete] = useState(() => {
+    return (
+      typeof window !== 'undefined' &&
+      (window.location.pathname.startsWith('/auth/callback/google') ||
+        Boolean(localStorage.getItem('learnx_user')))
+    )
+  })
+  const [view, setView] = useState<View>(() => {
+    return typeof window !== 'undefined' && Boolean(localStorage.getItem('learnx_user'))
+      ? 'dashboard'
+      : 'landing'
+  })
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [pendingEmail, setPendingEmail] = useState('student@university.edu')
-  const { profile, loading, recordDailyActivity } = useProfile()
+  const { recordDailyActivity } = useProfile()
   const [isGoogleCallback, setIsGoogleCallback] = useState(
     () =>
       typeof window !== 'undefined' &&
-      window.location.pathname.startsWith('/auth/callback/google'),
+      window.location.pathname.startsWith('/auth/callback/google')
   )
 
   useEffect(() => {
@@ -36,55 +46,41 @@ function AppShell() {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
   }
 
-  const handleGoogleAuthenticated = useCallback((onboardingComplete: boolean) => {
+  const handleGoogleAuthenticated = useCallback((onboardingComplete: boolean = true) => {
     setIsGoogleCallback(false)
-    setView(onboardingComplete ? 'dashboard' : 'onboarding')
+    setIntroComplete(true)
+    window.history.replaceState({}, '', '/')
+    setView('dashboard')
   }, [])
 
   function handleLogin(email: string) {
     setPendingEmail(email)
-    // First-ever login (or any session before onboarding finished) is
-    // routed into the extended Sign-Up/Onboarding flow per the spec's
-    // "collect during Sign Up or immediately after first login" wording;
-    // returning students with a saved profile skip straight to the
-    // dashboard.
-    if (!loading && profile?.onboardingComplete) {
-      setView('dashboard')
-    } else {
-      setView('onboarding')
-    }
+    setIntroComplete(true)
+    setView('dashboard')
   }
 
   function handleEnter() {
-    // The landing page's "Enter Dashboard" preview CTAs bypass the
-    // sign-in form entirely (pre-existing demo behaviour, unchanged) —
-    // but they must still respect the same "no dashboard without an
-    // academic identity" rule as a real login, otherwise a student could
-    // skip onboarding by using a different button.
-    if (!loading && profile?.onboardingComplete) {
-      setView('dashboard')
-    } else {
-      setView('onboarding')
-    }
+    setIntroComplete(true)
+    setView('dashboard')
   }
 
   if (isGoogleCallback) {
     return (
       <div style={{ background: 'var(--background)', minHeight: '100vh' }}>
-        <GoogleCallbackPage onAuthenticated={handleGoogleAuthenticated} />
+        <GoogleCallbackPage
+          onAuthenticated={handleGoogleAuthenticated}
+          onDone={handleGoogleAuthenticated}
+        />
       </div>
     )
   }
 
   return (
     <div style={{ background: 'var(--background)', minHeight: '100vh' }}>
-      {/* Cinematic intro overlay — AnimatePresence lets it fade out while
-          the landing page mounts underneath, avoiding a hard cut. */}
       <AnimatePresence>
         {!introComplete && <IntroAnimation onComplete={() => setIntroComplete(true)} />}
       </AnimatePresence>
 
-      {/* Main views */}
       {introComplete && (
         <AnimatePresence mode="wait">
           {view === 'landing' ? (
@@ -139,7 +135,13 @@ function AppShell() {
                 onBack={() => setView('landing')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
-                onLogout={() => setView('landing')}
+                onLogout={() => {
+                  try {
+                    localStorage.removeItem('learnx_user')
+                    localStorage.removeItem('learnx_access_token')
+                  } catch {}
+                  setView('landing')
+                }}
               />
             </motion.div>
           )}
