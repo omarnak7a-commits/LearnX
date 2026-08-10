@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { UserRole } from '../../types/auth'
 
 interface GoogleCallbackPageProps {
   code?: string | null
@@ -12,10 +13,45 @@ export default function GoogleCallbackPage({
   code,
   state,
   onAuthenticated,
+  onDone,
   onCancel,
 }: GoogleCallbackPageProps) {
-  const [status, setStatus] = useState<'exchanging' | 'error'>('exchanging')
+  const [status, setStatus] = useState<'exchanging' | 'needs-role' | 'error'>('exchanging')
   const [error, setError] = useState<string | null>(null)
+  const [pendingToken, setPendingToken] = useState<string | null>(null)
+  const [role, setRole] = useState<UserRole | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  function completeAuth(authUser: any, tokenStr?: string, chosenRole?: string) {
+    try {
+      const targetRole = chosenRole || authUser?.role || 'student'
+      const roleStr = typeof targetRole === 'string' ? targetRole : (targetRole?.value || 'student')
+      
+      const userToSave = {
+        ...authUser,
+        role: roleStr,
+        onboardingComplete: true,
+      }
+
+      try {
+        localStorage.setItem('learnx_user', JSON.stringify(userToSave))
+        if (tokenStr) localStorage.setItem('learnx_access_token', tokenStr)
+      } catch {}
+
+      if (typeof onAuthenticated === 'function') {
+        onAuthenticated(true)
+        return
+      }
+      if (typeof onDone === 'function') {
+        onDone(userToSave)
+        return
+      }
+
+      window.location.href = roleStr === 'doctor' ? '/doctor/dashboard' : '/student/dashboard'
+    } catch {
+      window.location.href = '/'
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -58,39 +94,49 @@ export default function GoogleCallbackPage({
           throw new Error(data.detail || data.message || 'Google sign-in exchange failed')
         }
 
-        const rawUser = data.user || data
-        const isAlreadyOnboarded = Boolean(
-          (rawUser.onboardingComplete || rawUser.onboarding_complete) &&
-          (rawUser.universityId || rawUser.university_id)
-        )
-
-        const authUser = {
-          ...rawUser,
-          role: rawUser.role?.value || rawUser.role || 'student',
-          onboardingComplete: isAlreadyOnboarded,
-        }
-
-        try {
-          localStorage.setItem('learnx_user', JSON.stringify(authUser))
-          if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
-        } catch {}
-
-        if (typeof onAuthenticated === 'function') {
-          onAuthenticated(isAlreadyOnboarded)
-          return
-        }
-
-        if (isAlreadyOnboarded) {
-          window.location.href = authUser.role === 'doctor' ? '/doctor/dashboard' : '/student/dashboard'
+        if (data.status === 'needs_role') {
+          setPendingToken(data.pending_token || data.pendingToken)
+          setStatus('needs-role')
         } else {
-          window.location.href = '/'
+          const authUser = data.user || data
+          completeAuth(authUser, data.access_token)
         }
       } catch (err) {
         setStatus('error')
         setError(err instanceof Error ? err.message : 'Google authentication failed.')
       }
     })()
-  }, [code, state, onAuthenticated])
+  }, [code, state])
+
+  async function handleCompleteSignup() {
+    if (!role || !pendingToken) return
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/v1/auth/google/complete-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ pending_token: pendingToken, role }),
+      })
+      const text = await res.text()
+      let data: any = {}
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error(`Server error: ${text.substring(0, 100)}`)
+      }
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || 'Failed to complete signup')
+      }
+      const authUser = data.user || data
+      completeAuth(authUser, data.access_token, role)
+    } catch (err) {
+      setStatus('error')
+      setError(err instanceof Error ? err.message : 'Signup completion failed.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   function handleCancelClick() {
     if (typeof onCancel === 'function') {
@@ -114,6 +160,51 @@ export default function GoogleCallbackPage({
             <div className="w-10 h-10 rounded-full border-2 border-teal-400 border-t-transparent animate-spin mx-auto mb-4" />
             <h2 className="text-lg font-bold text-white mb-1">Connecting to Google...</h2>
             <p className="text-xs text-slate-400">Authenticating your LearnX account.</p>
+          </div>
+        )}
+
+        {status === 'needs-role' && (
+          <div className="text-left">
+            <h2 className="text-lg font-bold text-white text-center mb-1">Choose Account Type</h2>
+            <p className="text-xs text-slate-400 text-center mb-6">How will you be using LearnX?</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+              <button
+                type="button"
+                onClick={() => setRole('student')}
+                className={`p-4 rounded-xl border text-left transition-all ${
+                  role === 'student'
+                    ? 'border-teal-400 bg-teal-500/10 shadow-lg shadow-teal-500/10'
+                    : 'border-white/10 bg-slate-800/50 hover:border-white/20'
+                }`}
+              >
+                <div className="text-2xl mb-1">🎓</div>
+                <div className="font-bold text-white text-sm">Student</div>
+                <div className="text-xs text-slate-400 mt-1">Study, take quizzes & track progress</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRole('doctor')}
+                className={`p-4 rounded-xl border text-left transition-all ${
+                  role === 'doctor'
+                    ? 'border-teal-400 bg-teal-500/10 shadow-lg shadow-teal-500/10'
+                    : 'border-white/10 bg-slate-800/50 hover:border-white/20'
+                }`}
+              >
+                <div className="text-2xl mb-1">👨‍🏫</div>
+                <div className="font-bold text-white text-sm">Doctor</div>
+                <div className="text-xs text-slate-400 mt-1">Create courses & manage lectures</div>
+              </button>
+            </div>
+
+            <button
+              onClick={handleCompleteSignup}
+              disabled={!role || submitting}
+              className="w-full py-3 rounded-xl text-sm font-bold bg-teal-400 text-slate-950 disabled:opacity-50 hover:bg-teal-300 transition-all"
+            >
+              {submitting ? 'Creating account...' : 'Continue to LearnX'}
+            </button>
           </div>
         )}
 
