@@ -4,6 +4,7 @@ import type { UserRole } from '../../types/auth'
 interface GoogleCallbackPageProps {
   code?: string | null
   state?: string | null
+  onAuthenticated?: (onboardingComplete: boolean) => void
   onDone?: (user: any) => void
   onCancel?: () => void
 }
@@ -11,6 +12,7 @@ interface GoogleCallbackPageProps {
 export default function GoogleCallbackPage({
   code,
   state,
+  onAuthenticated,
   onDone,
   onCancel,
 }: GoogleCallbackPageProps) {
@@ -20,18 +22,32 @@ export default function GoogleCallbackPage({
   const [role, setRole] = useState<UserRole | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  function navigateToDashboard(userObj: any, chosenRole?: string) {
+  function completeAuth(authUser: any, tokenStr?: string, chosenRole?: string) {
     try {
-      const targetRole = chosenRole || userObj?.role || 'student'
+      const targetRole = chosenRole || authUser?.role || 'student'
       const roleStr = typeof targetRole === 'string' ? targetRole : (targetRole?.value || 'student')
-      const targetUrl = roleStr === 'doctor' ? '/doctor/dashboard' : '/student/dashboard'
       
-      if (typeof onDone === 'function') {
-        try { onDone(userObj) } catch {}
+      const userToSave = {
+        ...authUser,
+        role: roleStr,
+        onboardingComplete: true,
       }
-      
-      // Direct navigation to dashboard
-      window.location.href = targetUrl
+
+      try {
+        localStorage.setItem('learnx_user', JSON.stringify(userToSave))
+        if (tokenStr) localStorage.setItem('learnx_access_token', tokenStr)
+      } catch {}
+
+      if (typeof onAuthenticated === 'function') {
+        onAuthenticated(true)
+        return
+      }
+      if (typeof onDone === 'function') {
+        onDone(userToSave)
+        return
+      }
+
+      window.location.href = roleStr === 'doctor' ? '/doctor/dashboard' : '/student/dashboard'
     } catch {
       window.location.href = '/'
     }
@@ -83,7 +99,7 @@ export default function GoogleCallbackPage({
           setStatus('needs-role')
         } else {
           const authUser = data.user || data
-          navigateToDashboard(authUser)
+          completeAuth(authUser, data.access_token)
         }
       } catch (err) {
         setStatus('error')
@@ -113,7 +129,7 @@ export default function GoogleCallbackPage({
         throw new Error(data.detail || data.message || 'Failed to complete signup')
       }
       const authUser = data.user || data
-      navigateToDashboard(authUser, role)
+      completeAuth(authUser, data.access_token, role)
     } catch (err) {
       setStatus('error')
       setError(err instanceof Error ? err.message : 'Signup completion failed.')
