@@ -3,9 +3,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import IntroAnimation from './components/IntroAnimation'
 import LandingPage from './components/landing/LandingPage'
 import LoginPage from './components/auth/LoginPage'
-import ForgotPasswordPage from './components/auth/ForgotPasswordPage'
-import ResetPasswordPage from './components/auth/ResetPasswordPage'
-import VerifyEmailPage from './components/auth/VerifyEmailPage'
 import GoogleCallbackPage from './components/auth/GoogleCallbackPage'
 import OnboardingFlow from './components/auth/OnboardingFlow'
 import DashboardPage from './components/dashboard/DashboardPage'
@@ -17,9 +14,6 @@ import type { AuthUser } from './types/auth'
 type View =
   | 'landing'
   | 'login'
-  | 'forgot-password'
-  | 'reset-password'
-  | 'verify-email'
   | 'google-callback'
   | 'onboarding'
   | 'dashboard'
@@ -30,7 +24,6 @@ function dashboardPathFor(role: 'student' | 'doctor'): string {
 
 function parseInitialRoute(): {
   view: View | null
-  token: string | null
   code: string | null
   state: string | null
   dashboardIntent: 'student' | 'doctor' | null
@@ -38,22 +31,16 @@ function parseInitialRoute(): {
   const path = window.location.pathname
   const params = new URLSearchParams(window.location.search)
 
-  if (path === '/reset-password') {
-    return { view: 'reset-password', token: params.get('token'), code: null, state: null, dashboardIntent: null }
-  }
-  if (path === '/verify-email') {
-    return { view: 'verify-email', token: params.get('token'), code: null, state: null, dashboardIntent: null }
-  }
   if (path.startsWith('/auth/callback/google')) {
-    return { view: 'google-callback', token: null, code: params.get('code'), state: params.get('state'), dashboardIntent: null }
+    return { view: 'google-callback', code: params.get('code'), state: params.get('state'), dashboardIntent: null }
   }
   if (path === '/student/dashboard') {
-    return { view: null, token: null, code: null, state: null, dashboardIntent: 'student' }
+    return { view: null, code: null, state: null, dashboardIntent: 'student' }
   }
   if (path === '/doctor/dashboard') {
-    return { view: null, token: null, code: null, state: null, dashboardIntent: 'doctor' }
+    return { view: null, code: null, state: null, dashboardIntent: 'doctor' }
   }
-  return { view: null, token: null, code: null, state: null, dashboardIntent: null }
+  return { view: null, code: null, state: null, dashboardIntent: null }
 }
 
 function AppShell() {
@@ -196,49 +183,10 @@ function AppShell() {
             >
               <LoginPage
                 onAuthenticated={handleAuthenticated}
-                onForgotPassword={() => setView('forgot-password')}
+                onForgotPassword={() => setView('login')}
                 onBackToLanding={() => setView('landing')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
-              />
-            </motion.div>
-          ) : view === 'forgot-password' ? (
-            <motion.div
-              key="forgot"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.4 }}
-            >
-              <ForgotPasswordPage onBackToLogin={() => setView('login')} />
-            </motion.div>
-          ) : view === 'reset-password' ? (
-            <motion.div
-              key="reset"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.4 }}
-            >
-              <ResetPasswordPage
-                token={initialRoute.token ?? ''}
-                onBackToLogin={() => goToAppRoute('login')}
-              />
-            </motion.div>
-          ) : view === 'verify-email' ? (
-            <motion.div
-              key="verify"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.4 }}
-            >
-              <VerifyEmailPage
-                token={initialRoute.token}
-                onContinue={() => {
-                  if (user) handleAuthenticated(user)
-                  else goToAppRoute('login')
-                }}
               />
             </motion.div>
           ) : view === 'google-callback' ? (
