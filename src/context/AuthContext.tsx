@@ -9,17 +9,6 @@ import {
   type ReactNode,
 } from 'react'
 import type { AuthUser } from '../types/auth'
-import {
-  apiGetMe,
-  apiLogin,
-  apiLogout,
-  apiLogoutAllDevices,
-  apiRefreshSession,
-  apiRegister,
-  getAccessToken,
-  setAccessToken,
-} from '../lib/auth/apiClient'
-import { ApiError } from '../lib/auth/apiClient'
 
 interface AuthContextValue {
   user: AuthUser | null
@@ -52,55 +41,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const bootstrapped = useRef(false)
 
+  const refreshUser = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('learnx_access_token')
+      if (!token) return
+      const res = await fetch('/api/v1/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const me = await res.json()
+        setUser(me)
+        localStorage.setItem('learnx_user', JSON.stringify(me))
+      } else if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem('learnx_user')
+        localStorage.removeItem('learnx_access_token')
+        setUser(null)
+      }
+    } catch {}
+  }, [])
+
   useEffect(() => {
     if (bootstrapped.current) return
     bootstrapped.current = true
     ;(async () => {
       try {
-        const savedToken = localStorage.getItem('learnx_access_token')
-        if (savedToken) setAccessToken(savedToken)
-
-        const restored = await apiRefreshSession()
-        if (restored) {
-          setUser(restored.user)
-          try {
-            localStorage.setItem('learnx_user', JSON.stringify(restored.user))
-            if (restored.accessToken) localStorage.setItem('learnx_access_token', restored.accessToken)
-          } catch {}
-        } else if (getAccessToken()) {
-          try {
-            const me = await apiGetMe()
-            setUser(me)
-            localStorage.setItem('learnx_user', JSON.stringify(me))
-          } catch {}
+        const token = localStorage.getItem('learnx_access_token')
+        const refreshRes = await fetch('/api/v1/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          credentials: 'include',
+        })
+        if (refreshRes.ok) {
+          const data = await refreshRes.json()
+          const authUser = data.user || data
+          setUser(authUser)
+          localStorage.setItem('learnx_user', JSON.stringify(authUser))
+          if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
+        } else {
+          await refreshUser()
         }
       } catch {} finally {
         setLoading(false)
       }
     })()
-  }, [])
-
-  const refreshUser = useCallback(async () => {
-    try {
-      const me = await apiGetMe()
-      setUser(me)
-      try { localStorage.setItem('learnx_user', JSON.stringify(me)) } catch {}
-    } catch (err) {
-      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-        try {
-          localStorage.removeItem('learnx_user')
-          localStorage.removeItem('learnx_access_token')
-        } catch {}
-        setUser(null)
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!user) return
-    const intervalId = window.setInterval(() => { void refreshUser() }, 5 * 60 * 1000)
-    return () => window.clearInterval(intervalId)
-  }, [user, refreshUser])
+  }, [refreshUser])
 
   const register = useCallback(
     async (input: {
@@ -109,26 +94,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string
       role: 'student' | 'doctor'
     }) => {
-      const result = await apiRegister(input)
-      setUser(result.user)
-      try {
-        localStorage.setItem('learnx_user', JSON.stringify(result.user))
-        if (result.accessToken) localStorage.setItem('learnx_access_token', result.accessToken)
-      } catch {}
-      return result.user
+      const res = await fetch('/api/v1/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          full_name: input.fullName,
+          email: input.email,
+          password: input.password,
+          role: input.role,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.message || 'Registration failed')
+      const authUser = data.user || data
+      setUser(authUser)
+      localStorage.setItem('learnx_user', JSON.stringify(authUser))
+      if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
+      return authUser
     },
     []
   )
 
   const login = useCallback(
     async (input: { email: string; password: string; rememberMe: boolean }) => {
-      const result = await apiLogin(input)
-      setUser(result.user)
-      try {
-        localStorage.setItem('learnx_user', JSON.stringify(result.user))
-        if (result.accessToken) localStorage.setItem('learnx_access_token', result.accessToken)
-      } catch {}
-      return result.user
+      const res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          email: input.email,
+          password: input.password,
+          remember_me: input.rememberMe,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.message || 'Login failed')
+      const authUser = data.user || data
+      setUser(authUser)
+      localStorage.setItem('learnx_user', JSON.stringify(authUser))
+      if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
+      return authUser
     },
     []
   )
@@ -142,24 +148,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await apiLogout()
+      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' })
     } finally {
-      try {
-        localStorage.removeItem('learnx_user')
-        localStorage.removeItem('learnx_access_token')
-      } catch {}
+      localStorage.removeItem('learnx_user')
+      localStorage.removeItem('learnx_access_token')
       setUser(null)
     }
   }, [])
 
   const logoutAllDevices = useCallback(async () => {
     try {
-      await apiLogoutAllDevices()
+      const token = localStorage.getItem('learnx_access_token')
+      await fetch('/api/v1/auth/logout-all', {
+        method: 'POST',
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+      })
     } finally {
-      try {
-        localStorage.removeItem('learnx_user')
-        localStorage.removeItem('learnx_access_token')
-      } catch {}
+      localStorage.removeItem('learnx_user')
+      localStorage.removeItem('learnx_access_token')
       setUser(null)
     }
   }, [])
