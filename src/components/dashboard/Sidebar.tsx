@@ -65,24 +65,25 @@ export default function Sidebar({
   mobileOpen = false,
   onCloseMobile,
 }: SidebarProps) {
-  const navItems = role === 'doctor' ? doctorNav : studentNav
+  const isDoctor = role === 'doctor'
+  const navItems = isDoctor ? doctorNav : studentNav
   const { profile } = useProfile()
   const { user } = useAuth()
 
   const displayName =
-    user?.fullName || profile?.fullName || (role === 'doctor' ? 'Doctor' : 'Student')
+    user?.fullName || profile?.fullName || (isDoctor ? 'Doctor' : 'Student')
   const initials =
     displayName
       .split(' ')
       .map((part) => part.charAt(0))
       .slice(0, 2)
       .join('')
-      .toUpperCase() || (role === 'doctor' ? 'DR' : 'S')
+      .toUpperCase() || (isDoctor ? 'DR' : 'S')
   const studentDepartment = getDepartment(profile?.departmentId)
   const studentYear = getAcademicYear(profile?.academicYearId)
   const doctorDepartment = getDepartment(user?.departmentId ?? null)
   const subtitle =
-    role === 'doctor'
+    isDoctor
       ? [user?.academicPosition, doctorDepartment?.name].filter(Boolean).join(' · ') || 'Doctor'
       : studentDepartment && studentYear
         ? `${studentDepartment.name} · ${studentYear.label}`
@@ -175,32 +176,7 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* Real, backend-persisted read-only role badge */}
-        <div className="px-3 pt-3">
-          {!collapsed ? (
-            <div
-              className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold"
-              style={{
-                background: 'rgba(0,229,192,0.1)',
-                border: '1px solid rgba(0,229,192,0.24)',
-                color: '#00E5C0',
-              }}
-            >
-              <span>{role === 'doctor' ? '👨‍🏫' : '🎓'}</span>
-              {role === 'doctor' ? 'Doctor' : 'Student'}
-            </div>
-          ) : (
-            <div
-              className="w-full flex items-center justify-center py-1.5 rounded-lg text-xs font-bold"
-              style={{ background: 'rgba(0,229,192,0.1)', color: '#00E5C0' }}
-              aria-label={role === 'doctor' ? 'Doctor account' : 'Student account'}
-            >
-              {role === 'doctor' ? '👨‍🏫' : '🎓'}
-            </div>
-          )}
-        </div>
-
-        {/* Nav items */}
+        {/* Nav items — Starts directly without any role toggle */}
         <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto scrollbar-thin">
           {navItems.map((item) => {
             const isActive = activeItem === item.id
@@ -274,13 +250,13 @@ export default function Sidebar({
                 className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 overflow-hidden"
                 style={{
                   background:
-                    role === 'student' && profile?.avatarDataUrl
+                    !isDoctor && profile?.avatarDataUrl
                       ? undefined
                       : 'linear-gradient(135deg, var(--primary), var(--secondary))',
                   color: 'var(--primary-foreground)',
                 }}
               >
-                {role === 'student' && profile?.avatarDataUrl ? (
+                {!isDoctor && profile?.avatarDataUrl ? (
                   <img
                     src={profile.avatarDataUrl}
                     alt={displayName}
