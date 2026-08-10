@@ -17,7 +17,7 @@ function AppShell() {
   const [view, setView] = useState<View>('landing')
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [pendingEmail, setPendingEmail] = useState('student@university.edu')
-  const { profile, loading, recordDailyActivity } = useProfile()
+  const { recordDailyActivity } = useProfile()
   const [isGoogleCallback, setIsGoogleCallback] = useState(
     () =>
       typeof window !== 'undefined' &&
@@ -40,24 +40,20 @@ function AppShell() {
     setIsGoogleCallback(false)
     setIntroComplete(true)
     window.history.replaceState({}, '', '/')
-    setView(onboardingComplete ? 'dashboard' : 'onboarding')
+    setView('dashboard')
   }, [])
 
-  function handleLogin(email: string) {
-    setPendingEmail(email)
-    if (!loading && profile?.onboardingComplete) {
-      setView('dashboard')
-    } else {
-      setView('onboarding')
+  function handleLogin(emailOrUser?: any) {
+    if (typeof emailOrUser === 'string') {
+      setPendingEmail(emailOrUser)
     }
+    setIntroComplete(true)
+    setView('dashboard')
   }
 
   function handleEnter() {
-    if (!loading && profile?.onboardingComplete) {
-      setView('dashboard')
-    } else {
-      setView('onboarding')
-    }
+    setIntroComplete(true)
+    setView('dashboard')
   }
 
   if (isGoogleCallback) {
@@ -75,7 +71,16 @@ function AppShell() {
     <div style={{ background: 'var(--background)', minHeight: '100vh' }}>
       {/* Cinematic intro overlay */}
       <AnimatePresence>
-        {!introComplete && <IntroAnimation onComplete={() => setIntroComplete(true)} />}
+        {!introComplete && (
+          <IntroAnimation
+            onComplete={() => {
+              setIntroComplete(true)
+              if (typeof window !== 'undefined' && localStorage.getItem('learnx_user')) {
+                setView('dashboard')
+              }
+            }}
+          />
+        )}
       </AnimatePresence>
 
       {/* Main views */}
@@ -90,7 +95,7 @@ function AppShell() {
               transition={{ duration: 0.4 }}
             >
               <LandingPage
-                onEnter={handleEnter}
+                onEnter={() => setView('login')}
                 onLogin={() => setView('login')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
@@ -106,6 +111,7 @@ function AppShell() {
             >
               <LoginPage
                 onLogin={handleLogin}
+                onAuthenticated={handleLogin}
                 onBackToLanding={() => setView('landing')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
@@ -119,7 +125,13 @@ function AppShell() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.4 }}
             >
-              <OnboardingFlow email={pendingEmail} onComplete={() => setView('dashboard')} />
+              <OnboardingFlow
+                email={pendingEmail}
+                onComplete={() => {
+                  setIntroComplete(true)
+                  setView('dashboard')
+                }}
+              />
             </motion.div>
           ) : (
             <motion.div
@@ -133,7 +145,13 @@ function AppShell() {
                 onBack={() => setView('landing')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
-                onLogout={() => setView('landing')}
+                onLogout={() => {
+                  try {
+                    localStorage.removeItem('learnx_user')
+                    localStorage.removeItem('learnx_access_token')
+                  } catch {}
+                  setView('landing')
+                }}
               />
             </motion.div>
           )}
