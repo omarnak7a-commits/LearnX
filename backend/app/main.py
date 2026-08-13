@@ -22,8 +22,8 @@ settings = get_settings()
 
 app = FastAPI(
     title="LearnX API",
-    description="Production authentication + Courses + File Vault + Calendar backend.",
-    version="0.2.0",
+    description="Production authentication + Courses + File Vault + Calendar + online AI backend.",
+    version="0.3.0",
 )
 
 if limiter and SlowAPIMiddleware:
@@ -46,13 +46,14 @@ app.add_middleware(
 )
 
 # Core Routers
-from app.api import auth, calendar, courses, file_vault, notifications
+from app.api import ai, auth, calendar, courses, file_vault, notifications
 
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(courses.router, prefix=settings.api_prefix)
 app.include_router(file_vault.router, prefix=settings.api_prefix)
 app.include_router(calendar.router, prefix=settings.api_prefix)
 app.include_router(notifications.router, prefix=settings.api_prefix)
+app.include_router(ai.router, prefix=settings.api_prefix)
 
 # Optional routers (loaded safely)
 try:

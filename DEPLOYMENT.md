@@ -72,6 +72,12 @@ Project → **Settings → Environment Variables** → أضف (Production) — �
 | `STORAGE_ACCESS_KEY` | access key |
 | `STORAGE_SECRET_KEY` | secret key |
 | `SIGNED_URL_TTL_SECONDS` | `900` |
+| `GEMINI_API_KEY` | مفتاح Google Gemini (backend only) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` |
+| `GROQ_API_KEY` | مفتاح Groq (backend only) |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` |
+| `AI_PROVIDER` | `gemini` |
+| `AI_FALLBACK_PROVIDER` | `groq` |
 | `RESEND_API_KEY` | مفتاح Resend |
 | `EMAIL_FROM_ADDRESS` | `LearnX <onboarding@resend.dev>` |
 | `GOOGLE_CLIENT_ID` | client id |
@@ -143,8 +149,12 @@ render blueprint launch --blueprint backend/render.yaml
 - **OAuth:** `backend/app/services/google_oauth.py` — بيـverify الـ ID token بـ
   `google.oauth2.id_token.verify_oauth2_token` (JWKS + audience)، والـ state محمي بـ HTTP-only cookie.
 - **التخزين:** كل object باسم namespace `users/{user_id}/...`، والقراءة بس عبر presigned URLs قصيرة الأجل.
-- **File Vault:** الرفع الكبير بيمر مباشرة client → Supabase Storage (presigned PUT)،
-  والتحليل (PDF extraction, summaries, flashcards) شغال client-side حقيقي ومتزامن مع الـ API.
+- **File Vault:** الرفع الكبير بيمر مباشرة client → Supabase Storage (presigned PUT). تحليل PDF
+  يمر عبر FastAPI بعد التحقق من ملكية صف `VaultFile` واسم storage المعزول للمستخدم؛ لا يُرسل
+  storage key أو signed URL من المتصفح إلى مزود AI.
+- **Online AI:** كل الطلبات تمر `Frontend → FastAPI → AIService`. يتم استدعاء
+  `gemini-2.5-flash` أولًا، ثم Groq تلقائيًا عند timeout/rate limit/provider failure. مفاتيح
+  المزودين backend-only ولا يوجد أي متغير `VITE_GEMINI_*` أو `VITE_GROQ_*`.
 - **Courses:** شجرة Course → Module → Lesson، enrollment + lesson completion بيحسب
   progress % للطالب و completion rate للكورس، و`/roster/students` بيرجّع سجل طلاب الدكتور.
 

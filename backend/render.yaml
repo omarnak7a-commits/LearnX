@@ -5,8 +5,9 @@
 #   2. render blueprint launch --blueprint backend/render.yaml
 #   3. Set the sync:false secrets in the Render dashboard (or `render env set`)
 #      — real values are intentionally NOT stored in this file:
-#        DATABASE_URL, JWT_SECRET, STORAGE_* keys, RESEND_API_KEY,
-#        EMAIL_FROM_ADDRESS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+#        DATABASE_URL, JWT_SECRET, STORAGE_* keys, GEMINI_API_KEY,
+#        GROQ_API_KEY, RESEND_API_KEY, EMAIL_FROM_ADDRESS,
+#        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
 #        GOOGLE_REDIRECT_URI, APP_BASE_URL, COOKIE_SECURE,
 #        REQUIRE_EMAIL_VERIFICATION
 #   4. `alembic upgrade head` runs automatically before each deploy
@@ -48,6 +49,18 @@ services:
         sync: false
       - key: STORAGE_SECRET_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: AI_PROVIDER
+        value: gemini
+      - key: AI_FALLBACK_PROVIDER
+        value: groq
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM_ADDRESS

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import Badge from '../../ui/Badge'
+import { aiApi } from '../../../lib/ai/apiClient'
 
 interface Capability {
   icon: string
@@ -42,7 +43,12 @@ const capabilities: Capability[] = [
   },
 ]
 
-const history = [
+interface TeachingMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+const history: TeachingMessage[] = [
   {
     role: 'assistant',
     text: "Hi Dr. Novak 👋 I'm your AI Teaching Assistant. I can generate quizzes, summarize lectures, and outline a syllabus — what would you like to work on?",
@@ -52,20 +58,36 @@ const history = [
 export default function AITeachingAssistant() {
   const [messages, setMessages] = useState(history)
   const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
 
-  function send(text: string) {
-    if (!text.trim()) return
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: `On it — drafting "${text.slice(0, 44)}${
-          text.length > 44 ? '…' : ''
-        }" now. I'll pull from your CS201 materials to keep it aligned with the syllabus. 📚`,
-      },
-    ])
+  async function send(text: string) {
+    const message = text.trim()
+    if (!message || sending) return
+    const chatHistory = messages.slice(-20).map((item) => ({
+      role: item.role,
+      content: item.text,
+    }))
+    setMessages((prev) => [...prev, { role: 'user', text: message }])
     setInput('')
+    setSending(true)
+    try {
+      const response = await aiApi.chat({
+        message,
+        mode: 'direct',
+        history: chatHistory,
+      })
+      setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: error instanceof Error ? error.message : 'AI is temporarily unavailable. Please try again.',
+        },
+      ])
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -121,7 +143,7 @@ export default function AITeachingAssistant() {
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            send(input)
+            void send(input)
           }}
           className="flex items-center gap-2 px-4 py-3.5 border-t"
           style={{ borderColor: 'var(--border-subtle)' }}
@@ -134,6 +156,7 @@ export default function AITeachingAssistant() {
           />
           <button
             type="submit"
+            disabled={sending}
             className="w-10 h-10 rounded-xl flex items-center justify-center transition-all flex-shrink-0"
             style={{
               background: input.trim() ? 'var(--primary)' : 'var(--tint-3)',
@@ -167,7 +190,7 @@ export default function AITeachingAssistant() {
           {capabilities.map((c, i) => (
             <motion.button
               key={c.title}
-              onClick={() => send(c.title)}
+              onClick={() => void send(c.title)}
               className="flex items-center gap-3 p-3 rounded-xl text-left transition-colors"
               style={{ background: 'var(--tint-1)' }}
               initial={{ opacity: 0, x: -8 }}

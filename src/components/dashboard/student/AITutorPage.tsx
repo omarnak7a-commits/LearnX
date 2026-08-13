@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
+import { aiApi } from '../../../lib/ai/apiClient'
 
 const suggestions = [
   "Explain Newton's Second Law simply",
@@ -9,7 +10,12 @@ const suggestions = [
   'What are my weakest topics?',
 ]
 
-const initialHistory = [
+interface TutorMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+const initialHistory: TutorMessage[] = [
   {
     role: 'assistant',
     text: "Hi Alex! 👋 I'm your AI Tutor. Ready to help you crush today's goals. What would you like to work on?",
@@ -21,20 +27,36 @@ export default function AITutorPage() {
   const [messages, setMessages] = useState(initialHistory)
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<'Socratic' | 'Direct' | 'Mentor'>('Direct')
+  const [sending, setSending] = useState(false)
 
-  function send(text: string) {
-    if (!text.trim()) return
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: `Great question about "${text.slice(0, 48)}${
-          text.length > 48 ? '…' : ''
-        }". Here's a ${mode.toLowerCase()}-mode explanation, broken into clear steps so it sticks. 🎯`,
-      },
-    ])
+  async function send(text: string) {
+    const message = text.trim()
+    if (!message || sending) return
+    const history = messages.slice(-20).map((item) => ({
+      role: item.role,
+      content: item.text,
+    }))
+    setMessages((prev) => [...prev, { role: 'user', text: message }])
     setInput('')
+    setSending(true)
+    try {
+      const response = await aiApi.chat({
+        message,
+        mode: mode.toLowerCase() as 'socratic' | 'direct' | 'mentor',
+        history,
+      })
+      setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: error instanceof Error ? error.message : 'AI is temporarily unavailable. Please try again.',
+        },
+      ])
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -103,7 +125,7 @@ export default function AITutorPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            send(input)
+            void send(input)
           }}
           className="flex items-center gap-2 px-4 py-3.5 border-t"
           style={{ borderColor: 'var(--border-subtle)' }}
@@ -116,6 +138,7 @@ export default function AITutorPage() {
           />
           <button
             type="submit"
+            disabled={sending}
             className="w-10 h-10 rounded-xl flex items-center justify-center transition-all flex-shrink-0"
             style={{
               background: input.trim() ? 'var(--primary)' : 'var(--tint-3)',
@@ -150,7 +173,7 @@ export default function AITutorPage() {
             {suggestions.map((s) => (
               <button
                 key={s}
-                onClick={() => send(s)}
+                onClick={() => void send(s)}
                 className="text-left text-xs px-3 py-2.5 rounded-xl transition-colors"
                 style={{
                   background: 'var(--tint-1)',
@@ -178,6 +201,8 @@ export default function AITutorPage() {
             {['Quiz', 'Flashcards', 'Mind Map', 'Notes'].map((g) => (
               <button
                 key={g}
+                onClick={() => void send(`Generate ${g.toLowerCase()} study material for the topic I am working on.`)}
+                disabled={sending}
                 className="text-xs font-medium px-2.5 py-2 rounded-lg text-center transition-colors"
                 style={{
                   background: 'rgba(45,212,191,0.08)',

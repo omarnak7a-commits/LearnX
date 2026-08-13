@@ -204,7 +204,7 @@ export const coursesApi = {
     }),
 
   enroll: (id: string, purchasedViaReward = false) =>
-    apiFetch(`/api/v1/courses/${id}/enroll`, {
+    apiFetch<{ enrolled: boolean; progressPct?: number }>(`/api/v1/courses/${id}/enroll`, {
       method: 'POST',
       body: { purchasedViaReward },
     }),

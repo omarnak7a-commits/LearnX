@@ -22,6 +22,7 @@ import { extractPdf, estimateReadingMinutes, loadPdfDocument } from '../lib/file
 import { analyzeDocument, generateQuestions, hashString } from '../lib/fileVault/textAnalysis'
 import { weekKeyFor, weekLabelFor } from '../lib/fileVault/weeks'
 import { vaultApi, apiVaultFileToFrontend, vaultFileToPatch } from '../lib/fileVault/apiClient'
+import { aiApi } from '../lib/ai/apiClient'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 const COURSE_COLORS: Record<string, { color: string; icon: string }> = {
@@ -64,8 +65,12 @@ interface FileVaultContextValue {
   setCurrentPage: (id: string, page: number) => Promise<void>
   addStudyTime: (id: string, seconds: number) => Promise<void>
   getPdfDocument: (id: string) => Promise<PDFDocumentProxy | null>
-  generatePracticeQuiz: (id: string, count?: number) => VaultQuizQuestion[]
-  generateExam: (id: string, count: number, types: VaultQuestionType[]) => VaultQuizQuestion[]
+  generatePracticeQuiz: (id: string, count?: number) => Promise<VaultQuizQuestion[]>
+  generateExam: (
+    id: string,
+    count: number,
+    types: VaultQuestionType[]
+  ) => Promise<VaultQuizQuestion[]>
   recordAttempt: (
     id: string,
     kind: 'practice' | 'exam',
@@ -185,7 +190,18 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
       setUploadProgress((prev) => ({ ...prev, [localId]: 85 }))
 
       const title = rawFile.name.replace(/\.pdf$/i, '')
-      const analysis = analyzeDocument(serverId, title, extracted.pages)
+      // Keep the existing deterministic analyzer as an offline fallback, but
+      // prefer the authenticated backend AI for files successfully stored in
+      // the user's private File Vault namespace.
+      let analysis = analyzeDocument(serverId, title, extracted.pages)
+      if (serverId !== localId) {
+        try {
+          const generated = await aiApi.analyze({ fileId: serverId, flashcardCount: 10 })
+          analysis = generated.analysis
+        } catch {
+          // Gemini/Groq unavailable: preserve the existing offline behavior.
+        }
+      }
       setUploadProgress((prev) => ({ ...prev, [localId]: 95 }))
 
       const now = Date.now()
@@ -376,29 +392,54 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
   )
 
   const generatePracticeQuiz = useCallback(
-    (id: string, count = 6): VaultQuizQuestion[] => {
+    async (id: string, count = 6): Promise<VaultQuizQuestion[]> => {
       const file = files.find((f) => f.id === id)
       if (!file || !file.analysis) return []
       // Practice quizzes ONLY draw from pages already viewed — never
       // generate questions from unread sections, per the spec.
       const allowedPages = new Set(file.pagesRead)
       if (allowedPages.size === 0) return []
-      const seed = hashString(id) + file.pagesRead.length
-      return generateQuestions(file.pagesText, allowedPages, seed, count)
+      try {
+        const generated = await aiApi.quiz({
+          fileId: id,
+          count,
+          kind: 'practice',
+          allowedPages: [...allowedPages],
+        })
+        return generated.questions
+      } catch {
+        const seed = hashString(id) + file.pagesRead.length
+        return generateQuestions(file.pagesText, allowedPages, seed, count)
+      }
     },
     [files]
   )
 
   const generateExam = useCallback(
-    (id: string, count: number, types: VaultQuestionType[]): VaultQuizQuestion[] => {
+    async (
+      id: string,
+      count: number,
+      types: VaultQuestionType[]
+    ): Promise<VaultQuizQuestion[]> => {
       const file = files.find((f) => f.id === id)
-      if (!file || !file.analysis) return []
-      if (!isFullyRead(file)) return []
-      const allowedPages = new Set(Array.from({ length: file.pageCount }, (_, i) => i + 1))
-      const seed = hashString(id) + 7
-      const all = generateQuestions(file.pagesText, allowedPages, seed, count * 2)
-      const filtered = types.length > 0 ? all.filter((q) => types.includes(q.type)) : all
-      return filtered.slice(0, count)
+      if (!file || !file.analysis || !isFullyRead(file)) return []
+      const pageNumbers = Array.from({ length: file.pageCount }, (_, i) => i + 1)
+      const allowedPages = new Set(pageNumbers)
+      try {
+        const generated = await aiApi.quiz({
+          fileId: id,
+          count,
+          questionTypes: types,
+          kind: 'exam',
+          allowedPages: pageNumbers,
+        })
+        return generated.questions
+      } catch {
+        const seed = hashString(id) + 7
+        const all = generateQuestions(file.pagesText, allowedPages, seed, count * 2)
+        const filtered = types.length > 0 ? all.filter((q) => types.includes(q.type)) : all
+        return filtered.slice(0, count)
+      }
     },
     [files]
   )

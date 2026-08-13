@@ -28,6 +28,17 @@ class Settings(BaseSettings):
     storage_secret_key: str = os.getenv("STORAGE_SECRET_KEY", "")
     signed_url_ttl_seconds: int = 900
 
+    # --- Online AI (backend-only secrets; never VITE_ variables) ---
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    groq_api_key: str = os.getenv("GROQ_API_KEY", "")
+    groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    ai_provider: str = os.getenv("AI_PROVIDER", "gemini")
+    ai_fallback_provider: str = os.getenv("AI_FALLBACK_PROVIDER", "groq")
+    ai_timeout_seconds: float = float(os.getenv("AI_TIMEOUT_SECONDS", "25"))
+    ai_max_document_bytes: int = int(os.getenv("AI_MAX_DOCUMENT_BYTES", str(15 * 1024 * 1024)))
+    ai_max_document_characters: int = int(os.getenv("AI_MAX_DOCUMENT_CHARACTERS", "100000"))
+
     # --- Auth: JWT ---
     jwt_secret: str = os.getenv("JWT_SECRET", "changeme-generate-a-real-secret")
     jwt_algorithm: str = "HS256"
@@ -44,7 +55,23 @@ class Settings(BaseSettings):
 
     # --- App URLs / cookies ---
     cookie_secure: bool = True
+    cookie_domain: str | None = None
+    refresh_cookie_name: str = "learnx_refresh_token"
     require_email_verification: bool = False
+
+    # --- Existing video/worker pipeline defaults ---
+    redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
+    celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
+    max_upload_size_bytes: int = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(2 * 1024**3)))
+    silence_min_removable_seconds: float = float(os.getenv("SILENCE_MIN_REMOVABLE_SECONDS", "3"))
+    meaningful_pause_max_seconds: float = float(os.getenv("MEANINGFUL_PAUSE_MAX_SECONDS", "8"))
+    whisper_model_size: str = os.getenv("WHISPER_MODEL_SIZE", "large-v3")
+    whisper_device: str = os.getenv("WHISPER_DEVICE", "cuda")
+    diarization_model: str = os.getenv(
+        "DIARIZATION_MODEL", "pyannote/speaker-diarization-3.1"
+    )
+    embeddings_model: str = os.getenv("EMBEDDINGS_MODEL", "text-embedding-004")
 
     @property
     def cors_origins(self) -> list[str]:

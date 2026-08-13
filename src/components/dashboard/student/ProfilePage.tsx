@@ -41,10 +41,10 @@ export default function ProfilePage() {
   const realFullName = user?.fullName || profile?.fullName || 'Scholar'
   const realEmail = user?.email || profile?.email || ''
   const realRole = user?.role || 'student'
-  const realUniversityId = user?.universityId || profile?.universityId
-  const realFacultyId = user?.facultyId || profile?.facultyId
-  const realDepartmentId = user?.departmentId || profile?.departmentId
-  const realYearId = user?.academicYear || profile?.academicYearId
+  const realUniversityId = user?.universityId || profile?.universityId || null
+  const realFacultyId = user?.facultyId || profile?.facultyId || null
+  const realDepartmentId = user?.departmentId || profile?.departmentId || null
+  const realYearId = user?.academicYear || profile?.academicYearId || null
 
   const [editing, setEditing] = useState(false)
   const [showUnlockModal, setShowUnlockModal] = useState(false)
@@ -123,6 +123,34 @@ export default function ProfilePage() {
       semesterId: draftSemesterId,
     })
   }
+
+  // These bindings support the existing academic-profile editor flow. The
+  // current compact profile surface does not render that modal yet, but keep
+  // the implementation intact and type-checked rather than removing it.
+  void [
+    AnimatePresence,
+    SearchableSelect,
+    UNIVERSITIES,
+    ACADEMIC_YEARS,
+    SEMESTERS,
+    STUDY_GOAL_OPTIONS,
+    LANGUAGES,
+    getFacultiesForUniversity,
+    getDepartmentsForFaculty,
+    requestAcademicChange,
+    showUnlockModal,
+    setShowUnlockModal,
+    setDraftUniversityId,
+    setDraftFacultyId,
+    setDraftDepartmentId,
+    setDraftYearId,
+    setDraftSemesterId,
+    semester,
+    favoriteSubjects,
+    recentAchievements,
+    toggleGoal,
+    saveAcademicIdentity,
+  ]
 
   return (
     <div className="space-y-5">
@@ -244,7 +272,7 @@ export default function ProfilePage() {
 
         <div className="flex items-center justify-between mt-6 pt-4 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-            🔥 Current Streak: <strong className="text-white">{stats.streakDays} days</strong>
+            🔥 Current Streak: <strong className="text-white">{profile?.streakDays ?? 0} days</strong>
           </p>
           {editing ? (
             <div className="flex gap-2">

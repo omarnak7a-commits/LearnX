@@ -185,6 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       localStorage.removeItem('learnx_user')
       localStorage.removeItem('learnx_access_token')
+      localStorage.removeItem('learnx_token')
       setUser(null)
       window.location.href = '/'
     }
@@ -201,6 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       localStorage.removeItem('learnx_user')
       localStorage.removeItem('learnx_access_token')
+      localStorage.removeItem('learnx_token')
       setUser(null)
       window.location.href = '/'
     }

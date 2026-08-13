@@ -149,8 +149,7 @@ export default function DoctorCoursesPage({ initialCourseId = null }: DoctorCour
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreate={(input) => {
-          const created = createCourse(input)
-          openDetail(created, 'Content')
+          void createCourse(input).then((created) => openDetail(created, 'Content'))
         }}
       />
 
