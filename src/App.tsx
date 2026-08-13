@@ -8,6 +8,7 @@ import GoogleCallbackPage from './components/auth/GoogleCallbackPage'
 import DashboardPage from './components/dashboard/DashboardPage'
 import { ProfileProvider, useProfile } from './context/ProfileContext'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { setToken } from './lib/apiClient'
 import { NotificationsProvider } from './context/NotificationsContext'
 import type { AuthUser } from './types/auth'
 

@@ -11,9 +11,8 @@ import PdfViewer from './PdfViewer'
 import QuizRunner from './QuizRunner'
 import { answerAboutFile } from './fileChatEngine'
 import { aiApi } from '../../../../lib/ai/apiClient'
-import { aiWelcomeMessage, isMostlyArabic } from '../../../../lib/ai/language'
+import { aiWelcomeMessage } from '../../../../lib/ai/language'
 import { useAiLanguage } from '../../../../hooks/useAiLanguage'
-import AiLanguageToggle from '../../shared/AiLanguageToggle'
 import { formatRelativeTime, formatStudyTime, pagesRemaining } from './fileVaultFormat'
 import Badge from '../../../ui/Badge'
 
@@ -340,7 +339,7 @@ function PracticeQuizPanel({
 }
 
 function FileChatPanel({ file }: { file: VaultFile }) {
-  const { language, setLanguage } = useAiLanguage()
+  const { language } = useAiLanguage()
   const welcome = aiWelcomeMessage('file', language, file.title)
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([
     { role: 'assistant', text: welcome },
