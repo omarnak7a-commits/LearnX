@@ -33,8 +33,6 @@ const doctorNav: NavItem[] = [
   { id: 'course-builder', icon: '🧩', label: 'Course Builder', badge: 'NEW' },
   { id: 'materials', icon: '🗂️', label: 'Materials' },
   { id: 'students', icon: '👥', label: 'Students' },
-  { id: 'assignments', icon: '📝', label: 'Assignments' },
-  { id: 'exams', icon: '🧾', label: 'Exams' },
   { id: 'analytics', icon: '📊', label: 'Analytics' },
   { id: 'revenue', icon: '💰', label: 'Revenue' },
   { id: 'messages', icon: '💬', label: 'Messages', badge: '2' },

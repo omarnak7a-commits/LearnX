@@ -31,7 +31,6 @@ import CourseBuilderPage from './doctor/CourseBuilderPage'
 import RevenuePage from './doctor/RevenuePage'
 import MaterialsPage from './doctor/MaterialsPage'
 import StudentsPage from './doctor/StudentsPage'
-import WorkItemsPage from './doctor/WorkItemsPage'
 import StudentAnalyticsPanel from './doctor/StudentAnalyticsPanel'
 import AITeachingAssistant from './doctor/AITeachingAssistant'
 
@@ -82,8 +81,6 @@ const doctorTitles: Record<string, { title: string; subtitle: string }> = {
   'course-builder': { title: 'Course Builder', subtitle: 'Structure modules, lessons, and resources with drag-and-drop' },
   materials: { title: 'Materials', subtitle: 'Upload and organize lecture content' },
   students: { title: 'Students', subtitle: 'Roster, performance, and engagement across all classes' },
-  assignments: { title: 'Assignments', subtitle: 'Create and track student assignments' },
-  exams: { title: 'Exams', subtitle: 'Build and schedule exams with AI assistance' },
   analytics: { title: 'Analytics', subtitle: 'Student performance and lecture completion insights' },
   revenue: { title: 'Revenue', subtitle: 'Course earnings and enrollment analytics' },
   messages: { title: 'Messages', subtitle: 'Conversations with your students' },
@@ -114,6 +111,14 @@ export default function DashboardPage({
   const [activeItem, setActiveItem] = useState('dashboard')
   const [pendingCourseId, setPendingCourseId] = useState<string | null>(null)
 
+  // Redirect from removed assignments/exams pages
+  useEffect(() => {
+    const path = window.location.pathname.toLowerCase()
+    if (path.includes('/assignments') || path.includes('/exams')) {
+      window.history.replaceState({}, '', '/doctor/dashboard')
+    }
+  }, [])
+
   function navigateToCourse(courseId: string) {
     setPendingCourseId(courseId)
     setActiveItem('courses')
@@ -142,10 +147,6 @@ export default function DashboardPage({
           return <MaterialsPage />
         case 'students':
           return <StudentsPage />
-        case 'assignments':
-          return <WorkItemsPage kind="assignments" />
-        case 'exams':
-          return <WorkItemsPage kind="exams" />
         case 'analytics':
           return <StudentAnalyticsPanel />
         case 'revenue':
