@@ -63,9 +63,9 @@ export default function TopBar({
   const doctorNotifications = [
     {
       id: 1,
-      text: '12 new submissions for Assignment 3',
+      text: '5 new students enrolled in CS201',
       time: '5m ago',
-      icon: '📝',
+      icon: '👥',
       unread: true,
     },
     {
@@ -77,9 +77,9 @@ export default function TopBar({
     },
     {
       id: 3,
-      text: 'Exam draft ready for review — Midterm CS201',
+      text: 'New course material uploaded',
       time: '4h ago',
-      icon: '🧾',
+      icon: '📚',
       unread: true,
     },
     {
@@ -102,7 +102,7 @@ export default function TopBar({
 
   const doctorResults = [
     { label: 'CS201 — Data Structures', type: 'Course', icon: '📚' },
-    { label: 'Midterm Exam Draft', type: 'Exam', icon: '🧾' },
+    { label: 'CS310 — Database Systems', type: 'Course', icon: '📚' },
     { label: 'Amelia Torres', type: 'Student', icon: '👤' },
   ]
 

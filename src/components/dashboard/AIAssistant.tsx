@@ -13,7 +13,7 @@ const doctorSuggestions = [
   'Generate a quiz on recursion',
   'Summarize last lecture',
   'Which topics are students struggling with?',
-  'Draft an assignment on graph traversal',
+  'Create a course outline for CS201',
 ]
 
 interface AIAssistantProps {
