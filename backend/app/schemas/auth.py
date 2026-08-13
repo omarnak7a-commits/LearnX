@@ -25,6 +25,7 @@ class UserOut(BaseModel):
     is_verified: bool
     avatar_url: str | None = None
     onboarding_complete: bool = False
+    preferred_language: str = "ar"
 
 
 class AuthResponse(BaseModel):

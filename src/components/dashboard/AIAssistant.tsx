@@ -1,20 +1,37 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Role } from './Sidebar'
 import { aiApi } from '../../lib/ai/apiClient'
+import { aiUiCopy, aiWelcomeMessage, isMostlyArabic } from '../../lib/ai/language'
+import { useAiLanguage } from '../../hooks/useAiLanguage'
+import AiLanguageToggle from './shared/AiLanguageToggle'
 
-const studentSuggestions = [
+const studentSuggestionsEn = [
   "Explain Newton's Second Law simply",
   'Quiz me on Cell Division',
   'Summarize Chapter 7 Calculus',
   'Make a study plan for tomorrow',
 ]
 
-const doctorSuggestions = [
+const studentSuggestionsAr = [
+  'اشرح قانون نيوتن الثاني ببساطة',
+  'اختبرني في الانقسام الخلوي',
+  'لخّص الفصل السابع من التفاضل',
+  'ضع خطة مذاكرة للغد',
+]
+
+const doctorSuggestionsEn = [
   'Generate a quiz on recursion',
   'Summarize last lecture',
   'Which topics are students struggling with?',
   'Create a course outline for CS201',
+]
+
+const doctorSuggestionsAr = [
+  'أنشئ اختباراً عن الاستدعاء الذاتي',
+  'لخّص المحاضرة الأخيرة',
+  'ما المواضيع التي يواجه الطلاب صعوبة فيها؟',
+  'أنشئ مخطط مقرر لـ CS201',
 ]
 
 interface AIAssistantProps {
@@ -28,21 +45,31 @@ interface AssistantMessage {
 
 export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
   const isDoctor = role === 'doctor'
-  const suggestMessages = isDoctor ? doctorSuggestions : studentSuggestions
-  const chatHistory: AssistantMessage[] = [
-    {
-      role: 'assistant',
-      text: isDoctor
-        ? "Hi Dr. Novak 👋 I'm your AI Teaching Assistant. Ask me to generate quizzes, summarize lectures, or outline a course."
-        : "Hi Alex! 👋 I'm your AI Tutor. Ready to help you crush today's goals. What would you like to work on?",
-    },
-  ]
+  const { language, setLanguage } = useAiLanguage()
+  const copy = aiUiCopy(language)
+  const suggestMessages = isDoctor
+    ? language === 'ar'
+      ? doctorSuggestionsAr
+      : doctorSuggestionsEn
+    : language === 'ar'
+      ? studentSuggestionsAr
+      : studentSuggestionsEn
+  const welcome = aiWelcomeMessage(isDoctor ? 'doctor' : 'student', language)
 
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState(chatHistory)
+  const [messages, setMessages] = useState<AssistantMessage[]>([{ role: 'assistant', text: welcome }])
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<'Socratic' | 'Direct' | 'Mentor'>('Direct')
   const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0]?.role === 'assistant') {
+        return [{ role: 'assistant', text: welcome }]
+      }
+      return prev
+    })
+  }, [welcome])
 
   async function send(text: string) {
     const message = text.trim()
@@ -59,6 +86,7 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
         message,
         mode: mode.toLowerCase() as 'socratic' | 'direct' | 'mentor',
         history,
+        language,
       })
       setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
     } catch (error) {
@@ -135,16 +163,16 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
                 <span className="text-lg">🤖</span>
                 <div>
                   <p className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
-                    {isDoctor ? 'AI Teaching Assistant' : 'AI Tutor'}
+                    {isDoctor ? copy.teachingAssistant : copy.tutor}
                   </p>
                   <p className="text-xs" style={{ color: 'var(--primary)' }}>
-                    ● Online
+                    {copy.online}
                   </p>
                 </div>
               </div>
 
-              {/* Mode switcher */}
-              <div className="flex gap-1">
+              <div className="flex items-center gap-1">
+                <AiLanguageToggle value={language} onChange={setLanguage} />
                 {(['Socratic', 'Direct', 'Mentor'] as const).map((m) => (
                   <button
                     key={m}
@@ -218,7 +246,8 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask your tutor anything..."
+                placeholder={copy.placeholder}
+                dir={language === 'ar' ? 'rtl' : 'ltr'}
                 className="flex-1 bg-transparent outline-none text-sm"
                 style={{ color: 'var(--foreground)' }}
               />

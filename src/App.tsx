@@ -178,8 +178,7 @@ function AppShell() {
                 onLogout={() => {
                   try {
                     localStorage.removeItem('learnx_user')
-                    localStorage.removeItem('learnx_access_token')
-                    localStorage.removeItem('learnx_token')
+                    setToken(null)
                   } catch {}
                   window.history.replaceState({}, '', '/')
                   setView('landing')

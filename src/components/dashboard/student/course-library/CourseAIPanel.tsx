@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Course } from '../../../../types/course'
 import { aiApi } from '../../../../lib/ai/apiClient'
+import { aiWelcomeMessage, isMostlyArabic } from '../../../../lib/ai/language'
+import { useAiLanguage } from '../../../../hooks/useAiLanguage'
+import AiLanguageToggle from '../../shared/AiLanguageToggle'
 
 interface CourseAIPanelProps {
   course: Course
@@ -21,12 +24,14 @@ const TOOLS: Array<{ id: AITool; label: string; icon: string }> = [
   { id: 'plan', label: 'Study Plan', icon: '📅' },
 ]
 
-const suggestions = [
+const suggestionsEn = [
   'Explain this lecture',
   'Summarize this chapter',
   'Create exam questions',
   'Find important topics',
 ]
+
+const suggestionsAr = ['اشرح هذه المحاضرة', 'لخّص هذا الفصل', 'أنشئ أسئلة امتحان', 'استخرج المواضيع المهمة']
 
 function allLessonTitles(course: Course): string[] {
   return course.modules.flatMap((m) => m.lessons.map((l) => l.title))
@@ -181,15 +186,24 @@ function buildStudyPlan(course: Course): StudyPlanDay[] {
  * reference real course materials rather than generic placeholder text.
  */
 export default function CourseAIPanel({ course, initialTool, onClose }: CourseAIPanelProps) {
+  const { language, setLanguage } = useAiLanguage()
+  const welcome = aiWelcomeMessage('course', language, course.title)
+  const suggestions = language === 'ar' ? suggestionsAr : suggestionsEn
   const [tool, setTool] = useState<AITool>(initialTool)
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([
-    {
-      role: 'assistant',
-      text: `Hi! I'm your AI tutor for ${course.title}. I've indexed all ${course.modules.length} modules — ask me anything about the material.`,
-    },
+    { role: 'assistant', text: welcome },
   ])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0]?.role === 'assistant') {
+        return [{ role: 'assistant', text: welcome }]
+      }
+      return prev
+    })
+  }, [welcome])
 
   const summary = useMemo(() => buildSummary(course), [course])
   const flashcards = useMemo(() => buildFlashcards(course), [course])
@@ -216,6 +230,7 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
         history,
         sourceText: courseSourceText(course),
         sourceTitle: course.title,
+        language,
       })
       setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
     } catch {
@@ -267,29 +282,32 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
         >
           <div>
             <p className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
-              AI Learning Tools
+              {language === 'ar' ? 'أدوات التعلم الذكية' : 'AI Learning Tools'}
             </p>
             <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
               {course.title}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ color: 'var(--muted-foreground)' }}
-            aria-label="Close"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
+          <div className="flex items-center gap-2">
+            <AiLanguageToggle value={language} onChange={setLanguage} />
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ color: 'var(--muted-foreground)' }}
+              aria-label="Close"
             >
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Tool tabs */}
@@ -328,6 +346,7 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
                     >
                       <div
                         className="max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed"
+                        dir={isMostlyArabic(m.text) ? 'rtl' : 'ltr'}
                         style={{
                           background: m.role === 'user' ? 'rgba(45,212,191,0.15)' : 'var(--tint-3)',
                           color: 'var(--foreground)',
@@ -366,7 +385,10 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
                   <input
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder={`Ask about ${course.title}...`}
+                    placeholder={
+                      language === 'ar' ? `اسأل عن ${course.title}...` : `Ask about ${course.title}...`
+                    }
+                    dir={language === 'ar' ? 'rtl' : 'ltr'}
                     className="input-field flex-1 px-3.5 py-2.5 rounded-lg text-sm"
                   />
                   <button

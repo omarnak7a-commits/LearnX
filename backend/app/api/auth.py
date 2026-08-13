@@ -111,6 +111,7 @@ class UserOut(BaseModel):
     avatar_url: str | None = None
     email_verified: bool = False
     onboarding_complete: bool = False
+    preferred_language: str = "ar"
     model_config = ConfigDict(from_attributes=True, extra="ignore")
 
 class AuthResponse(BaseModel):

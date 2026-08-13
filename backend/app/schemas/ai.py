@@ -30,6 +30,9 @@ class AIChatMessage(AIBaseModel):
     content: str = Field(min_length=1, max_length=8000)
 
 
+AiLanguage = Literal["ar", "en"]
+
+
 class AIChatRequest(AIBaseModel):
     message: str = Field(min_length=1, max_length=8000)
     mode: Literal["socratic", "direct", "mentor"] = "direct"
@@ -37,6 +40,7 @@ class AIChatRequest(AIBaseModel):
     file_id: str | None = Field(default=None, min_length=1, max_length=128)
     source_text: str | None = Field(default=None, min_length=1, max_length=60_000)
     source_title: str | None = Field(default=None, max_length=512)
+    language: AiLanguage | None = None
 
     @model_validator(mode="after")
     def one_optional_source(self) -> "AIChatRequest":
@@ -59,6 +63,7 @@ class AISourceRequest(AIBaseModel):
     file_id: str | None = Field(default=None, min_length=1, max_length=128)
     source_text: str | None = Field(default=None, min_length=20, max_length=60_000)
     source_title: str | None = Field(default=None, max_length=512)
+    language: AiLanguage | None = None
 
     @model_validator(mode="after")
     def exactly_one_source(self) -> "AISourceRequest":

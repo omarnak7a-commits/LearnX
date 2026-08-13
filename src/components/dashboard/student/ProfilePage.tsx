@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../../../context/AuthContext'
+import { setAiLanguage, normalizeAiLanguage } from '../../../lib/ai/language'
 import { useProfile } from '../../../context/ProfileContext'
 import { useCourseCatalog } from '../../../context/CourseCatalogContext'
 import { useProfileStats } from '../../../hooks/useProfileStats'
@@ -97,6 +98,8 @@ export default function ProfilePage() {
       studyGoals: draftGoals,
       avatarDataUrl: draftAvatar,
     })
+    const nextLanguage = normalizeAiLanguage(draftLanguage)
+    if (nextLanguage) setAiLanguage(nextLanguage)
     setEditing(false)
   }
 
