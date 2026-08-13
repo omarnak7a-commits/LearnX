@@ -27,7 +27,7 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
     {
       role: 'assistant',
       text: isDoctor
-        ? "Hi Dr. Novak 👋 I'm your AI Teaching Assistant. Ask me to generate quizzes, exams, or summarize lectures."
+        ? "Hi Dr. Novak 👋 I'm your AI Teaching Assistant. Ask me to generate quizzes, summarize lectures, or outline a course."
         : "Hi Alex! 👋 I'm your AI Tutor. Ready to help you crush today's goals. What would you like to work on?",
     },
   ]

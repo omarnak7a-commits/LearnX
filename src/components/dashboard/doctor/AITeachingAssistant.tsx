@@ -17,16 +17,10 @@ const capabilities: Capability[] = [
     color: '#2DD4BF',
   },
   {
-    icon: '📝',
-    title: 'Create Assignments',
-    desc: 'Draft assignments aligned to learning goals',
+    icon: '📚',
+    title: 'Draft a Syllabus',
+    desc: 'Outline modules and learning outcomes',
     color: '#a855f7',
-  },
-  {
-    icon: '🧾',
-    title: 'Generate Exams',
-    desc: 'Build exams with difficulty balancing',
-    color: '#f59e0b',
   },
   {
     icon: '📄',
@@ -51,7 +45,7 @@ const capabilities: Capability[] = [
 const history = [
   {
     role: 'assistant',
-    text: "Hi Dr. Novak 👋 I'm your AI Teaching Assistant. I can generate quizzes, exams, and summarize lectures — what would you like to work on?",
+    text: "Hi Dr. Novak 👋 I'm your AI Teaching Assistant. I can generate quizzes, summarize lectures, and outline a syllabus — what would you like to work on?",
   },
 ]
 
