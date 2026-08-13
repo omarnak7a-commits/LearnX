@@ -10,7 +10,7 @@ import {
 } from 'react'
 import type { AuthUser } from '../types/auth'
 import { apiUrl, authHeaders, getToken, setToken } from '../lib/apiClient'
-import { setAiLanguage, normalizeAiLanguage } from '../lib/ai/language'
+import { setAiLanguage, normalizeAiLanguage, hasExplicitAiLanguage } from '../lib/ai/language'
 
 function normalizeUser(raw: any): AuthUser | null {
   if (!raw) return null

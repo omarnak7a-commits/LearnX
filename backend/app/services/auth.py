@@ -263,13 +263,31 @@ def register_user(db: Session, full_name: str, email: str, password: str, role: 
         "hashed_password": hash_password(password),
         "full_name": full_name,
         "role": role,
+        # The real `User` model exposes `auth_provider`/`is_verified`;
+        # keep the legacy names too so the defensive column filter below
+        # keeps whichever one the active model actually defines.
+        "auth_provider": "email",
         "provider": "email",
+        "is_verified": False,
         "email_verified": False,
         "onboarding_complete": False,
     }
+
+    try:
+        from sqlalchemy import inspect
+        valid_cols = set(inspect(User).columns.keys())
+        user_kwargs = {k: v for k, v in user_kwargs.items() if k in valid_cols}
+    except Exception:
+        pass
+
     user = User(**user_kwargs)
     db.add(user)
     db.flush()
+
+    if hasattr(user, "last_login"):
+        user.last_login = datetime.utcnow()
+    if hasattr(user, "last_login_at"):
+        user.last_login_at = datetime.utcnow()
 
     raw_token = _issue_verification_token(db, user)
     _log(db, AuditEventType.register, user.id, detail=f"role={role}", ip=ip, user_agent=user_agent)
@@ -317,7 +335,12 @@ def verify_email(db: Session, raw_token: str) -> User:
     if user is None:
         raise InvalidOrExpiredToken("verification link")
 
-    user.email_verified = True
+    # The real `User` model names this field `is_verified`; the fallback
+    # legacy model uses `email_verified`. Set whichever exists.
+    if hasattr(user, "is_verified"):
+        user.is_verified = True
+    elif hasattr(user, "email_verified"):
+        user.email_verified = True
     record.used_at = datetime.utcnow()
     _log(db, AuditEventType.email_verified, user.id)
     db.commit()
@@ -347,6 +370,8 @@ def authenticate_with_password(db: Session, email: str, password: str,
 
     if hasattr(user, "last_login"):
         user.last_login = datetime.utcnow()
+    if hasattr(user, "last_login_at"):
+        user.last_login_at = datetime.utcnow()
     _log(db, AuditEventType.login_success, user.id, ip=ip, user_agent=user_agent)
     db.commit()
     db.refresh(user)
@@ -375,6 +400,8 @@ def login_or_register_with_google(db: Session, info: GoogleUserInfo,
             if existing_by_sub is not None:
                 if hasattr(existing_by_sub, "last_login"):
                     existing_by_sub.last_login = datetime.utcnow()
+                if hasattr(existing_by_sub, "last_login_at"):
+                    existing_by_sub.last_login_at = datetime.utcnow()
                 _log(db, AuditEventType.google_login, existing_by_sub.id, ip=ip, user_agent=user_agent)
                 db.commit()
                 db.refresh(existing_by_sub)
@@ -391,6 +418,8 @@ def login_or_register_with_google(db: Session, info: GoogleUserInfo,
                 pass
         if hasattr(existing_by_email, "last_login"):
             existing_by_email.last_login = datetime.utcnow()
+        if hasattr(existing_by_email, "last_login_at"):
+            existing_by_email.last_login_at = datetime.utcnow()
         _log(db, AuditEventType.google_login, existing_by_email.id, ip=ip, user_agent=user_agent)
         db.commit()
         db.refresh(existing_by_email)
@@ -434,8 +463,10 @@ def complete_google_signup(db: Session, raw_pending_token: str, role: str,
         "hashed_password": UNUSABLE_PASSWORD_HASH,
         "full_name": record.full_name,
         "role": role,
+        "auth_provider": "google",
         "provider": "google",
         "avatar_url": record.avatar_url,
+        "is_verified": record.email_verified,
         "email_verified": record.email_verified,
         "onboarding_complete": True,
         "google_sub": record.google_sub,
@@ -453,6 +484,8 @@ def complete_google_signup(db: Session, raw_pending_token: str, role: str,
     db.flush()
     if hasattr(user, "last_login"):
         user.last_login = datetime.utcnow()
+    if hasattr(user, "last_login_at"):
+        user.last_login_at = datetime.utcnow()
     record.used_at = datetime.utcnow()
     _log(db, AuditEventType.google_login, user.id, detail="new_account", ip=ip, user_agent=user_agent)
     db.commit()

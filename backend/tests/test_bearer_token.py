@@ -60,3 +60,38 @@ def test_get_current_user_id_rejects_missing_and_invalid_tokens() -> None:
         )
     assert getattr(invalid.value, "status_code", None) == 401
     assert isinstance(invalid.value.__cause__, JWTError) or True
+
+
+def test_get_current_user_id_recovers_token_from_vercel_header_container() -> None:
+    """Vercel production can move Authorization into `x-vercel-sc-headers` (JSON)."""
+    token = create_access_token("user-vercel", "student")
+    import json
+
+    user_id = get_current_user_id(
+        request=SimpleNamespace(
+            headers={"x-vercel-sc-headers": json.dumps({"Authorization": f"Bearer {token}"})}
+        ),
+        authorization=None,
+        x_access_token=None,
+    )
+    assert user_id == "user-vercel"
+
+    user_id = get_current_user_id(
+        request=SimpleNamespace(
+            headers={"x-vercel-sc-headers": json.dumps({"x-access-token": token})}
+        ),
+        authorization=None,
+        x_access_token=None,
+    )
+    assert user_id == "user-vercel"
+
+
+def test_vercel_header_container_with_garbage_still_rejects() -> None:
+    with pytest.raises(Exception) as missing:
+        get_current_user_id(
+            request=SimpleNamespace(headers={"x-vercel-sc-headers": "not-json"}),
+            authorization=None,
+            x_access_token=None,
+        )
+    assert getattr(missing.value, "status_code", None) == 401
+

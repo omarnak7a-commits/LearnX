@@ -78,7 +78,12 @@ export const aiApi = {
     fileId?: string
     sourceText?: string
     sourceTitle?: string
-  }) => apiFetch<AIChatResponse>('/api/v1/ai/chat', { method: 'POST', body: input }),
+    language?: AiLanguage
+  }) =>
+    apiFetch<AIChatResponse>('/api/v1/ai/chat', {
+      method: 'POST',
+      body: withLanguage(input),
+    }),
 
   summarize: (input: AISourceInput & { detail?: 'short' | 'detailed' | 'exam' }) =>
     apiFetch<AISummaryResponse>('/api/v1/ai/summarize', { method: 'POST', body: input }),

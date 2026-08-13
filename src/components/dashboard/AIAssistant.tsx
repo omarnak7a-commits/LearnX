@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Role } from './Sidebar'
 import { aiApi } from '../../lib/ai/apiClient'
-import { aiUiCopy, aiWelcomeMessage, isMostlyArabic } from '../../lib/ai/language'
+import { aiUiCopy, aiWelcomeMessage } from '../../lib/ai/language'
 import { useAiLanguage } from '../../hooks/useAiLanguage'
 import AiLanguageToggle from './shared/AiLanguageToggle'
 

@@ -31,6 +31,12 @@ const NO_REFRESH_PATHS = new Set([
 
 let refreshInFlight: Promise<boolean> | null = null
 
+// In-memory copy of the access token. Guarantees authenticated calls keep
+// working even when localStorage is unavailable (private browsing, blocked
+// storage, etc.) — without it, a cookie-based refresh succeeds but the
+// retried request still goes out without a bearer token.
+let memoryToken: string | null = null
+
 export function normalizeAccessToken(raw: string | null | undefined): string | null {
   if (!raw) return null
   let token = raw.trim().replace(/^["']+|["']+$/g, '')
@@ -42,17 +48,20 @@ export function normalizeAccessToken(raw: string | null | undefined): string | n
 
 export function getToken(): string | null {
   try {
-    return normalizeAccessToken(
+    const stored = normalizeAccessToken(
       localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(LEGACY_TOKEN_KEY),
     )
+    if (stored) return stored
   } catch {
-    return null
+    // storage unavailable — fall through to the in-memory token
   }
+  return memoryToken
 }
 
 export function setToken(token: string | null): void {
+  const cleaned = normalizeAccessToken(token)
+  memoryToken = cleaned
   try {
-    const cleaned = normalizeAccessToken(token)
     if (cleaned) {
       localStorage.setItem(TOKEN_KEY, cleaned)
       localStorage.setItem(LEGACY_TOKEN_KEY, cleaned)
@@ -61,7 +70,7 @@ export function setToken(token: string | null): void {
       localStorage.removeItem(LEGACY_TOKEN_KEY)
     }
   } catch {
-    // storage unavailable — session only
+    // storage unavailable — session only (memoryToken still holds it)
   }
 }
 

@@ -7,11 +7,20 @@ endpoints that only need the id.
 
 Token extraction is intentionally defensive: some browsers, proxies, and
 serverless platforms rewrite the Authorization header (lowercase scheme,
-extra quotes/whitespace, or drop it entirely). We also accept
-`X-Access-Token` as a fallback so AI/API calls keep working.
+extra quotes/whitespace, or drop it entirely). We accept, in order:
+
+1. `Authorization` (any casing, repeated "Bearer " prefixes, stray quotes)
+2. `X-Access-Token` (sent by the frontend on every authenticated call)
+3. Vercel's `x-vercel-sc-headers` container — when Vercel's edge network
+   moves the original headers (e.g. Authorization) out of the request it
+   stores them there as a JSON object.
+
+Any single one is enough for AI/API calls to keep working.
 """
 
 from __future__ import annotations
+
+import json
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from jose import JWTError
@@ -54,6 +63,30 @@ def extract_bearer_token(
     return None
 
 
+def _vercel_header_container_token(request: Request) -> str | None:
+    """Recover a token Vercel moved into `x-vercel-sc-headers` (JSON object)."""
+    raw = request.headers.get("x-vercel-sc-headers")
+    if not raw:
+        return None
+    try:
+        container = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(container, dict):
+        return None
+    for key in ("Authorization", "authorization"):
+        value = container.get(key)
+        token = extract_bearer_token(value)
+        if token:
+            return token
+    token = extract_bearer_token(
+        container.get("X-Access-Token") or container.get("x-access-token")
+    )
+    if token:
+        return token
+    return None
+
+
 def _token_from_request(
     request: Request,
     authorization: str | None,
@@ -64,10 +97,15 @@ def _token_from_request(
         return token
 
     headers = request.headers
-    return extract_bearer_token(
+    token = extract_bearer_token(
         headers.get("authorization") or headers.get("Authorization"),
         x_access_token=headers.get("x-access-token") or headers.get("X-Access-Token"),
     )
+    if token:
+        return token
+
+    # Vercel production can relocate the Authorization header entirely.
+    return _vercel_header_container_token(request)
 
 
 def get_current_user_id(
