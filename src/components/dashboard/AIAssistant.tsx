@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Role } from './Sidebar'
+import { aiApi } from '../../lib/ai/apiClient'
 
 const studentSuggestions = [
   "Explain Newton's Second Law simply",
@@ -20,10 +21,15 @@ interface AIAssistantProps {
   role?: Role
 }
 
+interface AssistantMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
 export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
   const isDoctor = role === 'doctor'
   const suggestMessages = isDoctor ? doctorSuggestions : studentSuggestions
-  const chatHistory = [
+  const chatHistory: AssistantMessage[] = [
     {
       role: 'assistant',
       text: isDoctor
@@ -36,18 +42,36 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
   const [messages, setMessages] = useState(chatHistory)
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<'Socratic' | 'Direct' | 'Mentor'>('Direct')
+  const [sending, setSending] = useState(false)
 
-  function send(text: string) {
-    if (!text.trim()) return
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: `Great question about "${text.slice(0, 40)}...". Let me break this down for you in ${mode} mode — I'll have a detailed answer ready shortly. 🎯`,
-      },
-    ])
+  async function send(text: string) {
+    const message = text.trim()
+    if (!message || sending) return
+    const history = messages.slice(-20).map((item) => ({
+      role: item.role,
+      content: item.text,
+    }))
+    setMessages((prev) => [...prev, { role: 'user', text: message }])
     setInput('')
+    setSending(true)
+    try {
+      const response = await aiApi.chat({
+        message,
+        mode: mode.toLowerCase() as 'socratic' | 'direct' | 'mentor',
+        history,
+      })
+      setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: error instanceof Error ? error.message : 'AI is temporarily unavailable. Please try again.',
+        },
+      ])
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -170,7 +194,7 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
               {suggestMessages.slice(0, 2).map((s) => (
                 <button
                   key={s}
-                  onClick={() => send(s)}
+                  onClick={() => void send(s)}
                   className="text-xs px-2.5 py-1 rounded-full transition-all hover:scale-105"
                   style={{
                     background: 'rgba(45,212,191,0.08)',
@@ -187,7 +211,7 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                send(input)
+                void send(input)
               }}
               className="flex items-center gap-2 px-4 py-3"
             >
@@ -200,6 +224,7 @@ export default function AIAssistant({ role = 'student' }: AIAssistantProps) {
               />
               <button
                 type="submit"
+                disabled={sending}
                 className="w-8 h-8 rounded-full flex items-center justify-center transition-all hover:scale-110"
                 style={{
                   background: input.trim() ? 'var(--primary)' : 'var(--tint-4)',

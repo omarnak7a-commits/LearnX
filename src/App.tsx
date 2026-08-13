@@ -42,7 +42,7 @@ function AppShell() {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
   }
 
-  const handleGoogleAuthenticated = useCallback((onboardingComplete: boolean = true) => {
+  const handleGoogleAuthenticated = useCallback(() => {
     setIsGoogleCallback(false)
     setIntroComplete(true)
     
@@ -140,7 +140,6 @@ function AppShell() {
             >
               <LoginPage
                 onLogin={handleLogin}
-                onAuthenticated={handleLogin}
                 onBackToLanding={() => setView('landing')}
                 theme={theme}
                 onToggleTheme={toggleTheme}
@@ -180,6 +179,7 @@ function AppShell() {
                   try {
                     localStorage.removeItem('learnx_user')
                     localStorage.removeItem('learnx_access_token')
+                    localStorage.removeItem('learnx_token')
                   } catch {}
                   window.history.replaceState({}, '', '/')
                   setView('landing')

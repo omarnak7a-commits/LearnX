@@ -3,17 +3,21 @@
  *
  * - Base URL comes from `VITE_API_BASE_URL` (set at build time on Vercel
  *   to the Render backend URL). Falls back to same-origin for dev.
- * - Attaches the JWT from localStorage (`learnx_token`) as Bearer.
+ * - Attaches the JWT from localStorage as Bearer.
  * - Normalizes errors into `ApiError` with status + message.
  */
 
 const BASE_URL: string = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
 
-const TOKEN_KEY = 'learnx_token'
+// `learnx_access_token` is the current AuthContext key. Keep the legacy key
+// synchronized so the existing feature API clients and both auth flows share
+// one authenticated session.
+const TOKEN_KEY = 'learnx_access_token'
+const LEGACY_TOKEN_KEY = 'learnx_token'
 
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY)
+    return localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(LEGACY_TOKEN_KEY)
   } catch {
     return null
   }
@@ -21,8 +25,13 @@ export function getToken(): string | null {
 
 export function setToken(token: string | null): void {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token)
-    else localStorage.removeItem(TOKEN_KEY)
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token)
+      localStorage.setItem(LEGACY_TOKEN_KEY, token)
+    } else {
+      localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem(LEGACY_TOKEN_KEY)
+    }
   } catch {
     // storage unavailable — session only
   }

@@ -1,19 +1,34 @@
 # LearnX AI Video Intelligence & Study Planner — Backend Reference Architecture
 
+## Online AI service (implemented)
+
+The general tutor and File Vault study tools are real FastAPI endpoints under
+`/api/v1/ai`: `chat`, `summarize`, `topics`, `quiz`, `flashcards`, `mind-map`,
+`explain`, and `analyze`. `app/services/ai_service.py` calls Gemini 2.5 Flash
+first and retries once through Groq when Gemini is unavailable, rate-limited,
+times out, or returns an invalid/recoverable response. Provider JSON is
+validated with Pydantic before it reaches the frontend.
+
+For a `fileId`, the backend selects the `VaultFile` using both file ID and the
+authenticated user ID, verifies the `users/{user_id}/` storage namespace,
+downloads the private PDF server-side, and extracts bounded page-labelled text.
+Provider keys are backend-only (`GEMINI_API_KEY`, `GROQ_API_KEY`) and must never
+be exposed through `VITE_` variables.
+
 ## What this is
 
-This `backend/` folder is a **reference architecture**, not a deployed or
-tested service. It shows exactly how the LearnX AI Video Intelligence and
+The long-running GPU-backed video pipeline in this `backend/` folder remains a
+**reference architecture**. It shows exactly how the LearnX AI Video Intelligence and
 AI Study Planner features described in the product spec would be
 implemented as a real backend, and how the existing frontend
 (`src/data/videoIntelligenceMock.ts`, `src/data/plannerMock.ts`,
 `src/hooks/useStudyPlan.ts`) maps onto real services.
 
-**Nothing in this folder has been run.** There is no GPU, no Redis, no
-Postgres, and no model weights available in the environment this was
-written in. Treat every module as a well-typed interface + implementation
-sketch that a backend team can pick up, install real dependencies for, and
-run.
+The HTTP API and online AI unit tests run without local GPU/model weights.
+The separate video worker pipeline has not been exercised end-to-end here:
+there is no GPU, Redis, or local Postgres/model-weight stack in this checkout.
+Treat those pipeline modules as typed implementation sketches; the online AI
+service described above is ordinary HTTP I/O and is covered by backend tests.
 
 ## Why a skeleton instead of a "working" service
 

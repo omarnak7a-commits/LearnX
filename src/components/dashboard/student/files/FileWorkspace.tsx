@@ -10,6 +10,7 @@ import type { WorkspaceTab } from './FileCard'
 import PdfViewer from './PdfViewer'
 import QuizRunner from './QuizRunner'
 import { answerAboutFile } from './fileChatEngine'
+import { aiApi } from '../../../../lib/ai/apiClient'
 import { formatRelativeTime, formatStudyTime, pagesRemaining } from './fileVaultFormat'
 import Badge from '../../../ui/Badge'
 
@@ -187,10 +188,9 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
               {pct === 0 ? (
                 <EmptyMessage text="Read at least one page before generating a practice quiz." />
               ) : (
-                <QuizRunner
-                  title="Practice Quiz (Covered Topics Only)"
-                  questions={generatePracticeQuiz(file.id, 6)}
-                  accentColor={file.color}
+                <PracticeQuizPanel
+                  file={file}
+                  onGenerate={() => generatePracticeQuiz(file.id, 6)}
                   onExit={() => setTab('viewer')}
                   onComplete={({ scorePct, totalQuestions, correctCount }) => {
                     recordAttempt(
@@ -270,20 +270,103 @@ function EmptyMessage({ text }: { text: string }) {
   )
 }
 
+function PracticeQuizPanel({
+  file,
+  onGenerate,
+  onExit,
+  onComplete,
+}: {
+  file: VaultFile
+  onGenerate: () => Promise<VaultQuizQuestion[]>
+  onExit: () => void
+  onComplete: (result: {
+    scorePct: number
+    totalQuestions: number
+    correctCount: number
+  }) => void
+}) {
+  const [questions, setQuestions] = useState<VaultQuizQuestion[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    setQuestions(null)
+    setError(null)
+    onGenerate()
+      .then((generated) => {
+        if (!cancelled) setQuestions(generated)
+      })
+      .catch((reason) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : 'Could not generate this quiz.')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+    // Regenerate only when this file changes or the user explicitly retries.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file.id, attempt])
+
+  if (error) {
+    return (
+      <div className="text-center py-8">
+        <EmptyMessage text={error} />
+        <button
+          onClick={() => setAttempt((value) => value + 1)}
+          className="text-xs font-semibold"
+          style={{ color: 'var(--primary)' }}
+        >
+          Try again
+        </button>
+      </div>
+    )
+  }
+  if (questions === null) return <EmptyMessage text="AI is generating a grounded practice quiz…" />
+
+  return (
+    <QuizRunner
+      title="Practice Quiz (Covered Topics Only)"
+      questions={questions}
+      accentColor={file.color}
+      onExit={onExit}
+      onComplete={onComplete}
+    />
+  )
+}
+
 function FileChatPanel({ file }: { file: VaultFile }) {
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([
     { role: 'assistant', text: `I've indexed "${file.title}" — ask me anything about it.` },
   ])
   const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
 
-  function send(text: string) {
-    if (!text.trim()) return
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      { role: 'assistant', text: answerAboutFile(text, file) },
-    ])
+  async function send(text: string) {
+    const message = text.trim()
+    if (!message || sending) return
+    const history = messages.slice(-20).map((item) => ({ role: item.role, content: item.text }))
+    setMessages((prev) => [...prev, { role: 'user', text: message }])
     setInput('')
+    setSending(true)
+    try {
+      const response = await aiApi.chat({
+        message,
+        fileId: file.id,
+        history,
+      })
+      setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
+    } catch {
+      // Preserve the existing local, document-grounded engine for offline
+      // sessions while preferring Gemini/Groq whenever the backend is live.
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: answerAboutFile(message, file) },
+      ])
+    } finally {
+      setSending(false)
+    }
   }
 
   const suggestions = [
@@ -315,7 +398,7 @@ function FileChatPanel({ file }: { file: VaultFile }) {
         {suggestions.map((s) => (
           <button
             key={s}
-            onClick={() => send(s)}
+            onClick={() => void send(s)}
             className="text-xs px-2.5 py-1 rounded-full"
             style={{
               background: 'rgba(45,212,191,0.08)',
@@ -330,7 +413,7 @@ function FileChatPanel({ file }: { file: VaultFile }) {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          send(input)
+          void send(input)
         }}
         className="flex items-center gap-2"
       >
@@ -342,6 +425,7 @@ function FileChatPanel({ file }: { file: VaultFile }) {
         />
         <button
           type="submit"
+          disabled={sending}
           className="px-4 py-2.5 rounded-lg text-sm font-semibold flex-shrink-0"
           style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
         >
@@ -727,7 +811,11 @@ function ExamSetup({
 }: {
   file: VaultFile
   onExit: () => void
-  onGenerate: (id: string, count: number, types: VaultQuestionType[]) => VaultQuizQuestion[]
+  onGenerate: (
+    id: string,
+    count: number,
+    types: VaultQuestionType[]
+  ) => Promise<VaultQuizQuestion[]>
   onRecordAttempt: (
     id: string,
     kind: 'practice' | 'exam',
@@ -746,6 +834,8 @@ function ExamSetup({
     'short-answer',
   ])
   const [questions, setQuestions] = useState<VaultQuizQuestion[]>([])
+  const [generating, setGenerating] = useState(false)
+  const [generationError, setGenerationError] = useState<string | null>(null)
 
   const allTypes: Array<{ id: VaultQuestionType; label: string }> = [
     { id: 'mcq', label: 'Multiple Choice' },
@@ -826,21 +916,36 @@ function ExamSetup({
           />
         </div>
 
+        {generationError && (
+          <p className="text-xs" style={{ color: 'var(--danger)' }}>
+            {generationError}
+          </p>
+        )}
         <button
-          onClick={() => {
-            const q = onGenerate(file.id, count, types)
-            setQuestions(q)
-            setStarted(true)
+          onClick={async () => {
+            setGenerating(true)
+            setGenerationError(null)
+            try {
+              const generated = await onGenerate(file.id, count, types)
+              setQuestions(generated)
+              setStarted(true)
+            } catch (error) {
+              setGenerationError(
+                error instanceof Error ? error.message : 'Could not generate this exam.'
+              )
+            } finally {
+              setGenerating(false)
+            }
           }}
-          disabled={types.length === 0}
+          disabled={types.length === 0 || generating}
           className="text-sm font-semibold px-5 py-2.5 rounded-full"
           style={{
             background: 'var(--accent)',
             color: 'var(--accent-foreground)',
-            opacity: types.length === 0 ? 0.5 : 1,
+            opacity: types.length === 0 || generating ? 0.5 : 1,
           }}
         >
-          Generate & Start Exam
+          {generating ? 'Generating Exam…' : 'Generate & Start Exam'}
         </button>
       </div>
     </div>

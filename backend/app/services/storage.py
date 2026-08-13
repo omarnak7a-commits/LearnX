@@ -121,6 +121,34 @@ def get_presigned_download_url(key: str, expires_in: int | None = None) -> str:
     return url
 
 
+def download_user_object(user_id: str, key: str, max_bytes: int) -> bytes:
+    """Download a private object after enforcing its user namespace and size.
+
+    AI document analysis uses this server-side path so the frontend never
+    supplies a storage URL or storage key that could point at another user's
+    object. The database ownership check happens before this second namespace
+    check in ``app.services.ai_documents``.
+    """
+    expected_prefix = f"users/{user_id}/"
+    if not key.startswith(expected_prefix):
+        raise StorageError("Refusing to read an object outside the caller's namespace.")
+    try:
+        metadata = get_client().head_object(Bucket=_bucket(), Key=key)
+        content_length = int(metadata.get("ContentLength") or 0)
+        if content_length > max_bytes:
+            raise StorageError(f"File exceeds the {max_bytes}-byte AI analysis limit.")
+        body = get_client().get_object(Bucket=_bucket(), Key=key)["Body"]
+        data = body.read(max_bytes + 1)
+    except StorageError:
+        raise
+    except ClientError as exc:
+        logger.exception("storage download failed for a user-scoped object")
+        raise StorageError("Could not retrieve the private file.") from exc
+    if len(data) > max_bytes:
+        raise StorageError(f"File exceeds the {max_bytes}-byte AI analysis limit.")
+    return data
+
+
 def delete_object(user_id: str, key: str) -> None:
     """Deletes an object, refusing keys that are not scoped to `user_id`."""
     expected_prefix = f"users/{user_id}/"

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Course } from '../../../../types/course'
+import { aiApi } from '../../../../lib/ai/apiClient'
 
 interface CourseAIPanelProps {
   course: Course
@@ -29,6 +30,16 @@ const suggestions = [
 
 function allLessonTitles(course: Course): string[] {
   return course.modules.flatMap((m) => m.lessons.map((l) => l.title))
+}
+
+function courseSourceText(course: Course): string {
+  const modules = course.modules
+    .map(
+      (module) =>
+        `${module.title}: ${module.lessons.map((lesson) => lesson.title).join(', ') || 'No lessons yet'}`
+    )
+    .join('\n')
+  return `Course: ${course.title}\nDescription: ${course.description}\nModules and lessons:\n${modules}`
 }
 
 function generateAnswer(question: string, course: Course): string {
@@ -178,6 +189,7 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
     },
   ])
   const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
 
   const summary = useMemo(() => buildSummary(course), [course])
   const flashcards = useMemo(() => buildFlashcards(course), [course])
@@ -191,14 +203,29 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
   const [selected, setSelected] = useState<number | null>(null)
   const [score, setScore] = useState(0)
 
-  function send(text: string) {
-    if (!text.trim()) return
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      { role: 'assistant', text: generateAnswer(text, course) },
-    ])
+  async function send(text: string) {
+    const message = text.trim()
+    if (!message || sending) return
+    const history = messages.slice(-20).map((item) => ({ role: item.role, content: item.text }))
+    setMessages((prev) => [...prev, { role: 'user', text: message }])
     setInput('')
+    setSending(true)
+    try {
+      const response = await aiApi.chat({
+        message,
+        history,
+        sourceText: courseSourceText(course),
+        sourceTitle: course.title,
+      })
+      setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: generateAnswer(message, course) },
+      ])
+    } finally {
+      setSending(false)
+    }
   }
 
   function submitQuizAnswer(idx: number) {
@@ -317,7 +344,7 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
                   {suggestions.map((s) => (
                     <button
                       key={s}
-                      onClick={() => send(s)}
+                      onClick={() => void send(s)}
                       className="text-xs px-2.5 py-1 rounded-full"
                       style={{
                         background: 'rgba(45,212,191,0.08)',
@@ -332,7 +359,7 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
-                    send(input)
+                    void send(input)
                   }}
                   className="flex items-center gap-2"
                 >
@@ -344,6 +371,7 @@ export default function CourseAIPanel({ course, initialTool, onClose }: CourseAI
                   />
                   <button
                     type="submit"
+                    disabled={sending}
                     className="px-4 py-2.5 rounded-lg text-sm font-semibold flex-shrink-0"
                     style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
                   >
