@@ -160,7 +160,7 @@ export default function TopBar({
             <path d="m21 21-4.35-4.35" />
           </svg>
           <span className="hidden sm:inline">
-            {role === 'doctor' ? 'Search courses, students, exams...' : 'Search anything...'}
+            {role === 'doctor' ? 'Search courses, students...' : 'Search anything...'}
           </span>
           <span className="sm:hidden">Search...</span>
           <span
@@ -493,7 +493,7 @@ export default function TopBar({
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={
                     role === 'doctor'
-                      ? 'Search courses, students, exams...'
+                      ? 'Search courses, students...'
                       : 'Search files, quizzes, topics...'
                   }
                   className="flex-1 bg-transparent outline-none text-sm"

@@ -75,6 +75,26 @@ const studentTitles: Record<string, { title: string; subtitle: string }> = {
   settings: { title: 'Settings', subtitle: 'Manage your account and preferences' },
 }
 
+const REMOVED_DOCTOR_PATHS = ['/doctor/assignments', '/doctor/exams'] as const
+const REMOVED_DOCTOR_ITEMS = new Set(['assignments', 'exams'])
+
+function normalizePath(pathname: string): string {
+  const path = pathname.toLowerCase()
+  return path.length > 1 ? path.replace(/\/+$/, '') : path
+}
+
+function isRemovedDoctorPath(pathname: string): boolean {
+  const path = normalizePath(pathname)
+  return REMOVED_DOCTOR_PATHS.some((removed) => path === removed || path.startsWith(`${removed}/`))
+}
+
+function redirectRemovedDoctorRoutes(): boolean {
+  if (typeof window === 'undefined') return false
+  if (!isRemovedDoctorPath(window.location.pathname)) return false
+  window.history.replaceState({}, '', '/doctor/dashboard')
+  return true
+}
+
 const doctorTitles: Record<string, { title: string; subtitle: string }> = {
   dashboard: { title: 'Doctor Dashboard', subtitle: 'Overview of courses, active student rosters, and teaching metrics' },
   courses: { title: 'Courses', subtitle: 'Create, publish, and manage every course you teach' },
@@ -108,16 +128,21 @@ export default function DashboardPage({
         : null
 
   const role: Role = (user?.role as Role) || pathRole || 'student'
-  const [activeItem, setActiveItem] = useState('dashboard')
+  const [activeItem, setActiveItem] = useState(() => {
+    redirectRemovedDoctorRoutes()
+    return 'dashboard'
+  })
   const [pendingCourseId, setPendingCourseId] = useState<string | null>(null)
 
-  // Redirect from removed assignments/exams pages
+  // Redirect guard: any doctor hitting /doctor/assignments or /doctor/exams
+  // is sent immediately to /doctor/dashboard. Student routes are untouched.
   useEffect(() => {
-    const path = window.location.pathname.toLowerCase()
-    if (path.includes('/assignments') || path.includes('/exams')) {
-      window.history.replaceState({}, '', '/doctor/dashboard')
+    if (role !== 'doctor') return
+    if (redirectRemovedDoctorRoutes() || REMOVED_DOCTOR_ITEMS.has(activeItem)) {
+      setPendingCourseId(null)
+      setActiveItem('dashboard')
     }
-  }, [])
+  }, [role, activeItem])
 
   function navigateToCourse(courseId: string) {
     setPendingCourseId(courseId)
@@ -125,6 +150,12 @@ export default function DashboardPage({
   }
 
   function handleSidebarNavigate(item: string) {
+    if (role === 'doctor' && REMOVED_DOCTOR_ITEMS.has(item)) {
+      window.history.replaceState({}, '', '/doctor/dashboard')
+      setPendingCourseId(null)
+      setActiveItem('dashboard')
+      return
+    }
     setPendingCourseId(null)
     setActiveItem(item)
   }
@@ -138,7 +169,7 @@ export default function DashboardPage({
     if (role === 'doctor') {
       switch (activeItem) {
         case 'dashboard':
-          return <DoctorDashboardHome onNavigate={setActiveItem} onOpenCourse={navigateToCourse} />
+          return <DoctorDashboardHome onNavigate={handleSidebarNavigate} onOpenCourse={navigateToCourse} />
         case 'courses':
           return <DoctorCoursesPage initialCourseId={pendingCourseId} />
         case 'course-builder':
@@ -161,6 +192,9 @@ export default function DashboardPage({
           return <AITeachingAssistant />
         case 'settings':
           return <SettingsPage role={role} theme={theme} onToggleTheme={onToggleTheme} />
+        case 'assignments':
+        case 'exams':
+          return <DoctorDashboardHome onNavigate={handleSidebarNavigate} onOpenCourse={navigateToCourse} />
         default:
           return (
             <EmptyState icon="👨‍🏫" title="Doctor Workspace" body="This section is active for your account." />

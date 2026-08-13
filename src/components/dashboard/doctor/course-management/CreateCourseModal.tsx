@@ -436,11 +436,11 @@ export default function CreateCourseModal({ open, onClose, onCreate }: CreateCou
                         className="text-xs font-semibold mb-2"
                         style={{ color: 'var(--muted-foreground)' }}
                       >
-                        Lecture Videos, PDFs, PPTs, DOCX, Assignments, Exams & Resources
+                        Lecture Videos, PDFs, PPTs, DOCX & Resources
                       </p>
                       <DropZone
                         title="Drag & drop course materials"
-                        subtitle="Video, PDF, PPT, DOCX, assignment, or exam files"
+                        subtitle="Video, PDF, PPT, or DOCX files"
                         accept=".pdf,.ppt,.pptx,.doc,.docx,.mp4,.mov"
                       />
                     </div>
