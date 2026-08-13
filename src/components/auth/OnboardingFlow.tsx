@@ -10,6 +10,7 @@ import {
 import { useAuth } from '../../context/AuthContext'
 import { useProfile } from '../../context/ProfileContext'
 import type { AuthUser, UserRole } from '../../types/auth'
+import { authHeaders } from '../../lib/apiClient'
 
 interface OnboardingFlowProps {
   email?: string
@@ -146,7 +147,6 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
     }
 
     try {
-      const token = localStorage.getItem('learnx_access_token')
       const endpoint =
         chosenRole === 'doctor' ? '/api/v1/auth/onboarding/doctor' : '/api/v1/auth/onboarding/student'
 
@@ -154,7 +154,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...authHeaders(),
         },
         credentials: 'include',
         body: JSON.stringify({
@@ -175,7 +175,7 @@ export default function OnboardingFlow({ email, onComplete }: OnboardingFlowProp
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...authHeaders(),
           },
           credentials: 'include',
           body: JSON.stringify(finalPayload),

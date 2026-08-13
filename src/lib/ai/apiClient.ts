@@ -1,6 +1,7 @@
 /** Authenticated client for LearnX's backend-only Gemini/Groq AI layer. */
 
 import { apiFetch } from '../apiClient'
+import { getAiLanguage, type AiLanguage } from './language'
 import type {
   FileAiAnalysis,
   VaultFlashcard,
@@ -29,6 +30,11 @@ interface AISourceInput {
   fileId?: string
   sourceText?: string
   sourceTitle?: string
+  language?: AiLanguage
+}
+
+function withLanguage<T extends { language?: AiLanguage }>(input: T): T & { language: AiLanguage } {
+  return { ...input, language: input.language ?? getAiLanguage() }
 }
 
 export interface AISummaryResponse extends AIProviderMetadata {

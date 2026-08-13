@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { aiApi } from '../../../lib/ai/apiClient'
+import { aiUiCopy, aiWelcomeMessage, isMostlyArabic } from '../../../lib/ai/language'
+import { useAiLanguage } from '../../../hooks/useAiLanguage'
+import AiLanguageToggle from '../shared/AiLanguageToggle'
 
-const suggestions = [
+const suggestionsEn = [
   "Explain Newton's Second Law simply",
   'Quiz me on Cell Division',
   'Summarize Chapter 7 Calculus',
@@ -10,24 +13,38 @@ const suggestions = [
   'What are my weakest topics?',
 ]
 
+const suggestionsAr = [
+  'اشرح قانون نيوتن الثاني ببساطة',
+  'اختبرني في الانقسام الخلوي',
+  'لخّص الفصل السابع من التفاضل',
+  'ضع خطة مذاكرة للغد',
+  'ما أضعف مواضيعي؟',
+]
+
 interface TutorMessage {
   role: 'user' | 'assistant'
   text: string
 }
 
-const initialHistory: TutorMessage[] = [
-  {
-    role: 'assistant',
-    text: "Hi Alex! 👋 I'm your AI Tutor. Ready to help you crush today's goals. What would you like to work on?",
-  },
-]
-
 /** Full-page AI Tutor workspace (larger surface than the floating FAB panel). */
 export default function AITutorPage() {
-  const [messages, setMessages] = useState(initialHistory)
+  const { language, setLanguage } = useAiLanguage()
+  const copy = aiUiCopy(language)
+  const welcome = aiWelcomeMessage('student', language)
+  const suggestions = language === 'ar' ? suggestionsAr : suggestionsEn
+  const [messages, setMessages] = useState<TutorMessage[]>([{ role: 'assistant', text: welcome }])
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<'Socratic' | 'Direct' | 'Mentor'>('Direct')
   const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0]?.role === 'assistant') {
+        return [{ role: 'assistant', text: welcome }]
+      }
+      return prev
+    })
+  }, [welcome])
 
   async function send(text: string) {
     const message = text.trim()
@@ -44,6 +61,7 @@ export default function AITutorPage() {
         message,
         mode: mode.toLowerCase() as 'socratic' | 'direct' | 'mentor',
         history,
+        language,
       })
       setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
     } catch (error) {
@@ -76,13 +94,15 @@ export default function AITutorPage() {
             <span className="text-xl">🤖</span>
             <div>
               <p className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
-                AI Tutor
+                {copy.tutor}
               </p>
               <p className="text-xs" style={{ color: 'var(--primary)' }}>
-                ● Online · adapts to your learning style
+                {copy.online} · {language === 'ar' ? 'يتكيّف مع أسلوبك' : 'adapts to your learning style'}
               </p>
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <AiLanguageToggle value={language} onChange={setLanguage} />
           <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--muted)' }}>
             {(['Socratic', 'Direct', 'Mentor'] as const).map((m) => (
               <button
@@ -98,6 +118,7 @@ export default function AITutorPage() {
               </button>
             ))}
           </div>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-3 scrollbar-thin">
@@ -109,6 +130,7 @@ export default function AITutorPage() {
               animate={{ opacity: 1, y: 0 }}
             >
               <div
+                dir={isMostlyArabic(msg.text) ? 'rtl' : 'ltr'}
                 className="max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed"
                 style={{
                   background: msg.role === 'user' ? 'var(--primary)' : 'var(--tint-2)',
@@ -133,7 +155,8 @@ export default function AITutorPage() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask your tutor anything..."
+            placeholder={copy.placeholder}
+            dir={language === 'ar' ? 'rtl' : 'ltr'}
             className="input-field flex-1 px-4 py-2.5 rounded-xl text-sm"
           />
           <button

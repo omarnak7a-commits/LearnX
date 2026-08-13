@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react'
 import type { AuthUser } from '../types/auth'
+import { apiUrl, authHeaders, getToken, setToken } from '../lib/apiClient'
+import { setAiLanguage, normalizeAiLanguage } from '../lib/ai/language'
 
 function normalizeUser(raw: any): AuthUser | null {
   if (!raw) return null
@@ -76,17 +78,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshUser = useCallback(async () => {
     try {
-      const token = localStorage.getItem('learnx_access_token')
+      const token = getToken()
       if (!token) return
-      const res = await fetch('/api/v1/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetch(apiUrl('/api/v1/auth/me'), {
+        headers: authHeaders(),
         credentials: 'include',
       })
       if (res.ok) {
         const raw = await res.json()
         const normalized = normalizeUser(raw)
         setUser(normalized)
-        if (normalized) localStorage.setItem('learnx_user', JSON.stringify(normalized))
+        if (normalized) {
+          localStorage.setItem('learnx_user', JSON.stringify(normalized))
+          if (!hasExplicitAiLanguage()) {
+            const preferred = normalizeAiLanguage(normalized.preferredLanguage)
+            if (preferred) setAiLanguage(preferred)
+          }
+        }
       }
     } catch {}
   }, [])
@@ -96,10 +104,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     bootstrapped.current = true
     ;(async () => {
       try {
-        const token = localStorage.getItem('learnx_access_token')
-        const refreshRes = await fetch('/api/v1/auth/refresh', {
+        const refreshRes = await fetch(apiUrl('/api/v1/auth/refresh'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           credentials: 'include',
         })
         if (refreshRes.ok) {
@@ -107,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const normalized = normalizeUser(data.user || data)
           setUser(normalized)
           if (normalized) localStorage.setItem('learnx_user', JSON.stringify(normalized))
-          if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
+          if (data.access_token) setToken(data.access_token)
         } else {
           await refreshUser()
         }
@@ -124,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string
       role: 'student' | 'doctor'
     }) => {
-      const res = await fetch('/api/v1/auth/register', {
+      const res = await fetch(apiUrl('/api/v1/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -140,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const normalized = normalizeUser(data.user || data)!
       setUser(normalized)
       localStorage.setItem('learnx_user', JSON.stringify(normalized))
-      if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
+      if (data.access_token) setToken(data.access_token)
       return normalized
     },
     []
@@ -148,7 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (input: { email: string; password: string; rememberMe: boolean }) => {
-      const res = await fetch('/api/v1/auth/login', {
+      const res = await fetch(apiUrl('/api/v1/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -163,7 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const normalized = normalizeUser(data.user || data)!
       setUser(normalized)
       localStorage.setItem('learnx_user', JSON.stringify(normalized))
-      if (data.access_token) localStorage.setItem('learnx_access_token', data.access_token)
+      if (data.access_token) setToken(data.access_token)
       return normalized
     },
     []
@@ -181,11 +188,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' })
+      await fetch(apiUrl('/api/v1/auth/logout'), { method: 'POST', credentials: 'include' })
     } finally {
       localStorage.removeItem('learnx_user')
-      localStorage.removeItem('learnx_access_token')
-      localStorage.removeItem('learnx_token')
+      setToken(null)
       setUser(null)
       window.location.href = '/'
     }
@@ -193,16 +199,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logoutAllDevices = useCallback(async () => {
     try {
-      const token = localStorage.getItem('learnx_access_token')
-      await fetch('/api/v1/auth/logout-all', {
+      await fetch(apiUrl('/api/v1/auth/logout-all'), {
         method: 'POST',
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: authHeaders(),
         credentials: 'include',
       })
     } finally {
       localStorage.removeItem('learnx_user')
-      localStorage.removeItem('learnx_access_token')
-      localStorage.removeItem('learnx_token')
+      setToken(null)
       setUser(null)
       window.location.href = '/'
     }

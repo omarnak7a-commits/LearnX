@@ -11,6 +11,9 @@ import PdfViewer from './PdfViewer'
 import QuizRunner from './QuizRunner'
 import { answerAboutFile } from './fileChatEngine'
 import { aiApi } from '../../../../lib/ai/apiClient'
+import { aiWelcomeMessage, isMostlyArabic } from '../../../../lib/ai/language'
+import { useAiLanguage } from '../../../../hooks/useAiLanguage'
+import AiLanguageToggle from '../../shared/AiLanguageToggle'
 import { formatRelativeTime, formatStudyTime, pagesRemaining } from './fileVaultFormat'
 import Badge from '../../../ui/Badge'
 
@@ -337,11 +340,22 @@ function PracticeQuizPanel({
 }
 
 function FileChatPanel({ file }: { file: VaultFile }) {
+  const { language, setLanguage } = useAiLanguage()
+  const welcome = aiWelcomeMessage('file', language, file.title)
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([
-    { role: 'assistant', text: `I've indexed "${file.title}" — ask me anything about it.` },
+    { role: 'assistant', text: welcome },
   ])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0]?.role === 'assistant') {
+        return [{ role: 'assistant', text: welcome }]
+      }
+      return prev
+    })
+  }, [welcome])
 
   async function send(text: string) {
     const message = text.trim()
@@ -355,6 +369,7 @@ function FileChatPanel({ file }: { file: VaultFile }) {
         message,
         fileId: file.id,
         history,
+        language,
       })
       setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
     } catch {
@@ -420,7 +435,8 @@ function FileChatPanel({ file }: { file: VaultFile }) {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={`Ask about ${file.title}...`}
+          placeholder={language === 'ar' ? `اسأل عن ${file.title}...` : `Ask about ${file.title}...`}
+          dir={language === 'ar' ? 'rtl' : 'ltr'}
           className="input-field flex-1 px-3.5 py-2.5 rounded-lg text-sm"
         />
         <button

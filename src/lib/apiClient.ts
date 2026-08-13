@@ -3,7 +3,8 @@
  *
  * - Base URL comes from `VITE_API_BASE_URL` (set at build time on Vercel
  *   to the Render backend URL). Falls back to same-origin for dev.
- * - Attaches the JWT from localStorage as Bearer.
+ * - Attaches the JWT from localStorage as Bearer + X-Access-Token.
+ * - Silently refreshes an expired access token via the HttpOnly cookie.
  * - Normalizes errors into `ApiError` with status + message.
  */
 
@@ -15,9 +16,35 @@ const BASE_URL: string = (import.meta.env.VITE_API_BASE_URL as string | undefine
 const TOKEN_KEY = 'learnx_access_token'
 const LEGACY_TOKEN_KEY = 'learnx_token'
 
+const NO_REFRESH_PATHS = new Set([
+  '/api/v1/auth/refresh',
+  '/api/v1/auth/login',
+  '/api/v1/auth/register',
+  '/api/v1/auth/logout',
+  '/api/v1/auth/logout-all',
+  '/api/v1/auth/forgot-password',
+  '/api/v1/auth/reset-password',
+  '/api/v1/auth/google',
+  '/api/v1/auth/google/callback',
+  '/api/v1/auth/google/complete-signup',
+])
+
+let refreshInFlight: Promise<boolean> | null = null
+
+export function normalizeAccessToken(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let token = raw.trim().replace(/^["']+|["']+$/g, '')
+  while (/^bearer\s+/i.test(token)) {
+    token = token.replace(/^bearer\s+/i, '').trim().replace(/^["']+|["']+$/g, '')
+  }
+  return token || null
+}
+
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(LEGACY_TOKEN_KEY)
+    return normalizeAccessToken(
+      localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(LEGACY_TOKEN_KEY),
+    )
   } catch {
     return null
   }
@@ -25,15 +52,26 @@ export function getToken(): string | null {
 
 export function setToken(token: string | null): void {
   try {
-    if (token) {
-      localStorage.setItem(TOKEN_KEY, token)
-      localStorage.setItem(LEGACY_TOKEN_KEY, token)
+    const cleaned = normalizeAccessToken(token)
+    if (cleaned) {
+      localStorage.setItem(TOKEN_KEY, cleaned)
+      localStorage.setItem(LEGACY_TOKEN_KEY, cleaned)
     } else {
       localStorage.removeItem(TOKEN_KEY)
       localStorage.removeItem(LEGACY_TOKEN_KEY)
     }
   } catch {
     // storage unavailable — session only
+  }
+}
+
+export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = getToken()
+  if (!token) return { ...extra }
+  return {
+    Authorization: `Bearer ${token}`,
+    'X-Access-Token': token,
+    ...extra,
   }
 }
 
@@ -62,13 +100,49 @@ export interface RequestOptions {
   headers?: Record<string, string>
 }
 
+function shouldAttemptRefresh(path: string): boolean {
+  const normalized = path.split('?')[0] ?? path
+  return !NO_REFRESH_PATHS.has(normalized)
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch(apiUrl('/api/v1/auth/refresh'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      })
+      if (!response.ok) return false
+      const data = (await response.json()) as { access_token?: string }
+      if (!data.access_token) return false
+      setToken(data.access_token)
+      return true
+    } catch {
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+  return refreshInFlight
+}
+
 export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  return requestJson<T>(path, opts, true)
+}
+
+async function requestJson<T>(
+  path: string,
+  opts: RequestOptions,
+  allowRefresh: boolean,
+): Promise<T> {
   const { method = 'GET', body, rawBody, headers = {} } = opts
-  const token = getToken()
 
   const h: Record<string, string> = {
     ...(rawBody ? {} : { 'Content-Type': 'application/json' }),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...authHeaders(),
     ...headers,
   }
 
@@ -77,14 +151,18 @@ export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Prom
     response = await fetch(apiUrl(path), {
       method,
       headers: h,
+      credentials: 'include',
       body: rawBody ?? (body !== undefined ? JSON.stringify(body) : undefined),
     })
   } catch {
     throw new ApiError(0, 'Network error — backend unreachable.')
   }
 
-  if (response.status === 401) {
-    // Token invalid/expired — clear it so the app can re-authenticate.
+  if (response.status === 401 && allowRefresh && shouldAttemptRefresh(path)) {
+    const refreshed = await refreshAccessToken()
+    if (refreshed) {
+      return requestJson<T>(path, opts, false)
+    }
     setToken(null)
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { UserRole } from '../../types/auth'
+import { apiUrl, setToken } from '../../lib/apiClient'
 
 interface GoogleCallbackPageProps {
   code?: string | null
@@ -35,7 +36,7 @@ export default function GoogleCallbackPage({
 
       try {
         localStorage.setItem('learnx_user', JSON.stringify(userToSave))
-        if (tokenStr) localStorage.setItem('learnx_access_token', tokenStr)
+        if (tokenStr) setToken(tokenStr)
       } catch {}
 
       if (typeof onAuthenticated === 'function') {
@@ -66,7 +67,7 @@ export default function GoogleCallbackPage({
 
     ;(async () => {
       try {
-        let res = await fetch('/api/v1/auth/google/callback', {
+        let res = await fetch(apiUrl('/api/v1/auth/google/callback'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -74,7 +75,7 @@ export default function GoogleCallbackPage({
         })
 
         if (res.status === 404 || res.status === 405) {
-          res = await fetch('/api/v1/auth/google', {
+          res = await fetch(apiUrl('/api/v1/auth/google'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -112,7 +113,7 @@ export default function GoogleCallbackPage({
     if (!role || !pendingToken) return
     setSubmitting(true)
     try {
-      const res = await fetch('/api/v1/auth/google/complete-signup', {
+      const res = await fetch(apiUrl('/api/v1/auth/google/complete-signup'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

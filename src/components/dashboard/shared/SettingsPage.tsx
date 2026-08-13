@@ -3,6 +3,8 @@ import { motion } from 'framer-motion'
 import type { Role } from '../Sidebar'
 import { useProfile } from '../../../context/ProfileContext'
 import { getDepartment, getAcademicYear } from '../../../data/academicCatalog'
+import { useAiLanguage } from '../../../hooks/useAiLanguage'
+import AiLanguageToggle from './AiLanguageToggle'
 
 interface SettingsPageProps {
   role: Role
@@ -54,6 +56,7 @@ export default function SettingsPage({ role, theme, onToggleTheme }: SettingsPag
   const [emailDigest, setEmailDigest] = useState(true)
   const [soundFx, setSoundFx] = useState(false)
   const { profile, updateProfile } = useProfile()
+  const { language, setLanguage } = useAiLanguage()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const studentDisplayName = profile?.fullName || 'Student'
   const studentInitials =
@@ -171,6 +174,25 @@ export default function SettingsPage({ role, theme, onToggleTheme }: SettingsPag
                 </button>
               ))}
             </div>
+          </div>
+          <div className="flex items-center justify-between py-3.5 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+            <div>
+              <p className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                AI language
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
+                {language === 'ar'
+                  ? 'المساعد الذكي يجيب بالعربية الفصحى'
+                  : 'The AI assistant replies in English'}
+              </p>
+            </div>
+            <AiLanguageToggle
+              value={language}
+              onChange={(next) => {
+                setLanguage(next)
+                updateProfile({ preferredLanguage: next })
+              }}
+            />
           </div>
         </motion.div>
 

@@ -1,7 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import Badge from '../../ui/Badge'
 import { aiApi } from '../../../lib/ai/apiClient'
+import { aiUiCopy, aiWelcomeMessage, isMostlyArabic } from '../../../lib/ai/language'
+import { useAiLanguage } from '../../../hooks/useAiLanguage'
+import AiLanguageToggle from '../shared/AiLanguageToggle'
 
 interface Capability {
   icon: string
@@ -48,17 +51,22 @@ interface TeachingMessage {
   text: string
 }
 
-const history: TeachingMessage[] = [
-  {
-    role: 'assistant',
-    text: "Hi Dr. Novak 👋 I'm your AI Teaching Assistant. I can generate quizzes, summarize lectures, and outline a syllabus — what would you like to work on?",
-  },
-]
-
 export default function AITeachingAssistant() {
-  const [messages, setMessages] = useState(history)
+  const { language, setLanguage } = useAiLanguage()
+  const copy = aiUiCopy(language)
+  const welcome = aiWelcomeMessage('doctor', language)
+  const [messages, setMessages] = useState<TeachingMessage[]>([{ role: 'assistant', text: welcome }])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0]?.role === 'assistant') {
+        return [{ role: 'assistant', text: welcome }]
+      }
+      return prev
+    })
+  }, [welcome])
 
   async function send(text: string) {
     const message = text.trim()
@@ -75,6 +83,7 @@ export default function AITeachingAssistant() {
         message,
         mode: 'direct',
         history: chatHistory,
+        language,
       })
       setMessages((prev) => [...prev, { role: 'assistant', text: response.answer }])
     } catch (error) {
@@ -106,16 +115,19 @@ export default function AITeachingAssistant() {
             <span className="text-xl">✨</span>
             <div>
               <p className="text-sm font-bold" style={{ color: 'var(--foreground)' }}>
-                AI Teaching Assistant
+                {copy.teachingAssistant}
               </p>
               <p className="text-xs" style={{ color: 'var(--primary)' }}>
-                ● Online · CS201, MATH210, CS310, CS420
+                {copy.online}
               </p>
             </div>
           </div>
-          <Badge tone="primary" size="xs" pulse>
-            Active
-          </Badge>
+          <div className="flex items-center gap-2">
+            <AiLanguageToggle value={language} onChange={setLanguage} />
+            <Badge tone="primary" size="xs" pulse>
+              Active
+            </Badge>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-3 scrollbar-thin">
@@ -127,6 +139,7 @@ export default function AITeachingAssistant() {
               animate={{ opacity: 1, y: 0 }}
             >
               <div
+                dir={isMostlyArabic(msg.text) ? 'rtl' : 'ltr'}
                 className="max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed"
                 style={{
                   background: msg.role === 'user' ? 'var(--primary)' : 'var(--tint-2)',
@@ -151,7 +164,12 @@ export default function AITeachingAssistant() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="e.g. Generate a 10-question quiz on recursion"
+            placeholder={
+              language === 'ar'
+                ? 'مثال: أنشئ اختباراً من 10 أسئلة عن الاستدعاء الذاتي'
+                : 'e.g. Generate a 10-question quiz on recursion'
+            }
+            dir={language === 'ar' ? 'rtl' : 'ltr'}
             className="input-field flex-1 px-4 py-2.5 rounded-xl text-sm"
           />
           <button
