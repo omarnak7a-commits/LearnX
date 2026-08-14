@@ -1,11 +1,16 @@
 /**
- * LearnX API client — the single real fetch wrapper for the backend.
+ * LearnX API client — the single real fetch wrapper for the backend, plus the
+ * central access-token manager.
  *
- * - Base URL comes from `VITE_API_BASE_URL` (set at build time on Vercel
- *   to the Render backend URL). Falls back to same-origin for dev.
- * - Attaches the JWT from localStorage as Bearer + X-Access-Token.
- * - Silently refreshes an expired access token via the HttpOnly cookie.
- * - Normalizes errors into `ApiError` with status + message.
+ * - Base URL comes from `VITE_API_BASE_URL` (set at build time on Vercel to the
+ *   Render backend URL). Falls back to same-origin for dev.
+ * - `memoryToken` below is the ONE source of truth for the access token.
+ *   `localStorage` is used only as persistent hydration (page refresh) and as a
+ *   mirror; every read of the current token goes through `getAccessToken()` and
+ *   every write goes through `setAccessToken()` / `clearAccessToken()`.
+ * - Protected requests wait for the auth bootstrap to complete, refuse to send
+ *   when no valid token exists, and share a single refresh promise so that N
+ *   concurrent 401s trigger exactly ONE `/auth/refresh` call.
  */
 
 const BASE_URL: string = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
@@ -16,7 +21,9 @@ const BASE_URL: string = (import.meta.env.VITE_API_BASE_URL as string | undefine
 const TOKEN_KEY = 'learnx_access_token'
 const LEGACY_TOKEN_KEY = 'learnx_token'
 
-const NO_REFRESH_PATHS = new Set([
+// Endpoints that are unauthenticated by design. These neither require a token,
+// wait for the auth bootstrap, nor trigger a refresh on 401.
+const NO_AUTH_PATHS = new Set([
   '/api/v1/auth/refresh',
   '/api/v1/auth/login',
   '/api/v1/auth/register',
@@ -24,18 +31,61 @@ const NO_REFRESH_PATHS = new Set([
   '/api/v1/auth/logout-all',
   '/api/v1/auth/forgot-password',
   '/api/v1/auth/reset-password',
+  '/api/v1/auth/verify-email',
+  '/api/v1/auth/resend-verification',
   '/api/v1/auth/google',
   '/api/v1/auth/google/callback',
   '/api/v1/auth/google/complete-signup',
 ])
 
-let refreshInFlight: Promise<boolean> | null = null
+// ────────────────────────────────────────────────────────────────────────────
+// Single source of truth: in-memory access token.
+// ────────────────────────────────────────────────────────────────────────────
 
-// In-memory copy of the access token. Guarantees authenticated calls keep
-// working even when localStorage is unavailable (private browsing, blocked
-// storage, etc.) — without it, a cookie-based refresh succeeds but the
-// retried request still goes out without a bearer token.
+// Authoritative in-memory copy. Authenticated calls never depend on React
+// state or on a synchronous localStorage read alone.
 let memoryToken: string | null = null
+
+// Set to true once we have either hydrated from storage or performed an
+// explicit set/clear. Prevents a stale localStorage value from being
+// resurrected after `clearAccessToken()`.
+let storageHydrated = false
+
+// Monotonic counter bumped on every set/clear. A refresh that began against an
+// older generation must not clobber a token that was set while it was running.
+let tokenGeneration = 0
+
+// Shared refresh lock: exactly one refresh runs at a time; every concurrent
+// caller awaits this same promise instead of starting its own refresh.
+let refreshPromise: Promise<string | null> | null = null
+
+// ────────────────────────────────────────────────────────────────────────────
+// Auth bootstrap gate.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Set by AuthProvider once the initial hydration/validation pass has finished.
+// Protected requests wait for this before being sent, so a request can never
+// fire in the window where the session is still being restored.
+let authReady = false
+let authReadyWaiters: Array<() => void> = []
+
+// Development-only auth diagnostics. NEVER logs the JWT or any header value.
+const DEBUG_AUTH =
+  typeof import.meta !== 'undefined' && (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true
+
+function authDebug(info: Record<string, unknown>): void {
+  if (!DEBUG_AUTH) return
+  try {
+    // eslint-disable-next-line no-console
+    console.debug('[AUTH DEBUG]', JSON.stringify(info))
+  } catch {
+    // Debug output must never break the request path.
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Token normalization + validation.
+// ────────────────────────────────────────────────────────────────────────────
 
 export function normalizeAccessToken(raw: string | null | undefined): string | null {
   if (!raw) return null
@@ -46,36 +96,120 @@ export function normalizeAccessToken(raw: string | null | undefined): string | n
   return token || null
 }
 
-export function getToken(): string | null {
-  try {
-    const stored = normalizeAccessToken(
-      localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(LEGACY_TOKEN_KEY),
-    )
-    if (stored) return stored
-  } catch {
-    // storage unavailable — fall through to the in-memory token
-  }
-  return memoryToken
+function isWellFormedJwt(token: string): boolean {
+  if (!token || typeof token !== 'string') return false
+  const parts = token.split('.')
+  if (parts.length !== 3) return false
+  const base64url = /^[A-Za-z0-9_-]+$/
+  return parts.every((part) => part.length > 0 && base64url.test(part))
 }
 
-export function setToken(token: string | null): void {
+/** Returns true for a non-empty, structurally valid JWT (never for "null", "", whitespace, etc.). */
+export function isValidAccessToken(token: string | null | undefined): boolean {
+  if (!token) return false
   const cleaned = normalizeAccessToken(token)
-  memoryToken = cleaned
+  return cleaned !== null && cleaned !== '' && isWellFormedJwt(cleaned)
+}
+
+function base64UrlDecode(segment: string): string {
+  const base64 = segment.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
+  if (typeof atob === 'function') return atob(padded)
+  if (typeof Buffer !== 'undefined') return Buffer.from(base64, 'base64').toString('utf8')
+  throw new Error('No base64url decoder available')
+}
+
+function jwtPayload(token: string): Record<string, unknown> | null {
   try {
-    if (cleaned) {
-      localStorage.setItem(TOKEN_KEY, cleaned)
-      localStorage.setItem(LEGACY_TOKEN_KEY, cleaned)
+    const part = token.split('.')[1]
+    if (!part) return null
+    return JSON.parse(base64UrlDecode(part)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Structural expiry check used only to avoid a needless (and concurrency-
+ * unsafe) refresh rotation on boot. `skewSeconds` guards against clock skew.
+ * A token we cannot decode is treated as not-expired and left to the backend.
+ */
+export function isAccessTokenExpired(token: string, skewSeconds = 30): boolean {
+  const payload = jwtPayload(token)
+  if (!payload || typeof payload.exp !== 'number') return false
+  return payload.exp <= Math.floor(Date.now() / 1000) + skewSeconds
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public token-manager API (single source of truth).
+// ────────────────────────────────────────────────────────────────────────────
+
+export function getAccessToken(): string | null {
+  if (memoryToken && isValidAccessToken(memoryToken)) return memoryToken
+
+  if (!storageHydrated) {
+    storageHydrated = true
+    try {
+      const stored = normalizeAccessToken(
+        localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(LEGACY_TOKEN_KEY),
+      )
+      if (stored && isValidAccessToken(stored)) {
+        memoryToken = stored
+        return stored
+      }
+    } catch {
+      // storage unavailable — fall through, memory remains authoritative
+    }
+  }
+
+  return memoryToken && isValidAccessToken(memoryToken) ? memoryToken : null
+}
+
+/** Atomically update the in-memory token AND localStorage. */
+export function setAccessToken(token: string | null): void {
+  const cleaned = normalizeAccessToken(token)
+  memoryToken = cleaned && isValidAccessToken(cleaned) ? cleaned : null
+  storageHydrated = true
+  tokenGeneration++
+
+  try {
+    if (memoryToken) {
+      localStorage.setItem(TOKEN_KEY, memoryToken)
+      localStorage.setItem(LEGACY_TOKEN_KEY, memoryToken)
     } else {
       localStorage.removeItem(TOKEN_KEY)
       localStorage.removeItem(LEGACY_TOKEN_KEY)
     }
   } catch {
-    // storage unavailable — session only (memoryToken still holds it)
+    // storage unavailable — session only (memoryToken is still authoritative)
   }
 }
 
+/** Atomically clear the in-memory token AND localStorage. */
+export function clearAccessToken(): void {
+  memoryToken = null
+  storageHydrated = true
+  tokenGeneration++
+
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(LEGACY_TOKEN_KEY)
+  } catch {
+    // storage unavailable
+  }
+}
+
+// Backward-compatible aliases used by AuthContext / Google callback / App.
+export function getToken(): string | null {
+  return getAccessToken()
+}
+
+export function setToken(token: string | null): void {
+  setAccessToken(token)
+}
+
 export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  const token = getToken()
+  const token = getAccessToken()
   if (!token) return { ...extra }
   return {
     Authorization: `Bearer ${token}`,
@@ -83,6 +217,44 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
     ...extra,
   }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Auth bootstrap gate (public).
+// ────────────────────────────────────────────────────────────────────────────
+
+export function isAuthReady(): boolean {
+  return authReady
+}
+
+export function markAuthReady(): void {
+  if (authReady) return
+  authReady = true
+  const waiters = authReadyWaiters
+  authReadyWaiters = []
+  for (const resolve of waiters) resolve()
+}
+
+/**
+ * Resolve once the auth bootstrap completes. Protected requests await this so
+ * they are never sent while the session is still being restored. Falls back to
+ * a controlled timeout rather than hanging forever if bootstrap stalls.
+ */
+export function waitForAuthReady(timeoutMs = 20000): Promise<void> {
+  if (authReady) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new ApiError(0, 'Authentication initialization timed out.'))
+    }, timeoutMs)
+    authReadyWaiters.push(() => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Errors + helpers.
+// ────────────────────────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
   status: number
@@ -109,14 +281,22 @@ export interface RequestOptions {
   headers?: Record<string, string>
 }
 
-function shouldAttemptRefresh(path: string): boolean {
+function isPublicPath(path: string): boolean {
   const normalized = path.split('?')[0] ?? path
-  return !NO_REFRESH_PATHS.has(normalized)
+  return NO_AUTH_PATHS.has(normalized)
 }
 
-async function refreshAccessToken(): Promise<boolean> {
-  if (refreshInFlight) return refreshInFlight
-  refreshInFlight = (async () => {
+// ────────────────────────────────────────────────────────────────────────────
+// Concurrency-safe refresh.
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise
+
+  const generationAtStart = tokenGeneration
+  authDebug({ event: 'refresh_start', refreshInProgress: true })
+
+  refreshPromise = (async () => {
     try {
       const response = await fetch(apiUrl('/api/v1/auth/refresh'), {
         method: 'POST',
@@ -124,19 +304,30 @@ async function refreshAccessToken(): Promise<boolean> {
         credentials: 'include',
         body: JSON.stringify({}),
       })
-      if (!response.ok) return false
+      if (!response.ok) return null
       const data = (await response.json()) as { access_token?: string }
-      if (!data.access_token) return false
-      setToken(data.access_token)
-      return true
+      const next = normalizeAccessToken(data?.access_token)
+      if (!next || !isValidAccessToken(next)) return null
+
+      // Discard a stale refresh result: if a newer token was set while this
+      // refresh was in flight (e.g. a fresh login), keep the newer token.
+      if (tokenGeneration === generationAtStart) {
+        setAccessToken(next)
+      }
+      return getAccessToken()
     } catch {
-      return false
+      return null
     } finally {
-      refreshInFlight = null
+      refreshPromise = null
     }
   })()
-  return refreshInFlight
+
+  return refreshPromise
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Request layer.
+// ────────────────────────────────────────────────────────────────────────────
 
 export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return requestJson<T>(path, opts, true)
@@ -148,12 +339,45 @@ async function requestJson<T>(
   allowRefresh: boolean,
 ): Promise<T> {
   const { method = 'GET', body, rawBody, headers = {} } = opts
+  const isPublic = isPublicPath(path)
 
+  // Protected requests must not run until the auth bootstrap has completed.
+  if (!isPublic) {
+    await waitForAuthReady()
+  }
+
+  // Obtain the current token immediately before sending. Never capture a stale
+  // token when the request function is created, and never rely on React state.
+  const token = isPublic ? null : getAccessToken()
+
+  if (!isPublic && !token) {
+    authDebug({
+      event: 'blocked_missing_token',
+      request: path,
+      hasToken: false,
+      tokenValid: false,
+      authReady: authReady,
+      refreshInProgress: refreshPromise !== null,
+    })
+    // Do NOT send the request — return a controlled authentication error.
+    throw new ApiError(401, 'Authentication required — please sign in again.')
+  }
+
+  // Construct Authorization immediately before the request is sent, fresh per
+  // request. A previous request must never affect this one.
   const h: Record<string, string> = {
     ...(rawBody ? {} : { 'Content-Type': 'application/json' }),
-    ...authHeaders(),
+    ...(token ? { Authorization: `Bearer ${token}`, 'X-Access-Token': token } : {}),
     ...headers,
   }
+
+  authDebug({
+    request: path,
+    hasToken: token !== null,
+    tokenValid: token !== null,
+    authReady: authReady,
+    refreshInProgress: refreshPromise !== null,
+  })
 
   let response: Response
   try {
@@ -167,12 +391,22 @@ async function requestJson<T>(
     throw new ApiError(0, 'Network error — backend unreachable.')
   }
 
-  if (response.status === 401 && allowRefresh && shouldAttemptRefresh(path)) {
-    const refreshed = await refreshAccessToken()
-    if (refreshed) {
+  if (response.status === 401 && allowRefresh && !isPublic) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
       return requestJson<T>(path, opts, false)
     }
-    setToken(null)
+    // Refresh definitively failed — clear auth state once and let the 401
+    // surface as a clean error. Do not retry indefinitely.
+    clearAccessToken()
+    authDebug({
+      event: 'refresh_failed',
+      request: path,
+      hasToken: false,
+      tokenValid: false,
+      authReady: authReady,
+      refreshInProgress: false,
+    })
   }
 
   const text = await response.text()
