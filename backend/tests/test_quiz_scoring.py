@@ -305,3 +305,56 @@ def test_answer_position_randomization_is_seeded() -> None:
 def test_content_jaccard_bounds() -> None:
     assert content_jaccard("photosynthesis", "photosynthesis") == 1.0
     assert content_jaccard("photosynthesis", "mountain") == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Boilerplate scoring rejection (regression: "Copyright © 2020, _____ ...")
+# --------------------------------------------------------------------------- #
+
+def test_boilerplate_prompt_scores_zero() -> None:
+    q = make_question(
+        qtype="fill-blank",
+        prompt="Copyright © 2020, _____ and/or its affiliates.",
+        options=None,
+        correct="Oracle",
+        explanation="The footer of every page contains this copyright notice.",
+    )
+    score = score_candidate(q, **scoring_kwargs())
+    assert score.total == 0.0
+    assert "prompt" in score.boilerplate
+
+
+def test_boilerplate_answer_scores_zero() -> None:
+    q = make_question(
+        prompt="What does every page footer say?",
+        correct="All rights reserved.",
+        options=["All rights reserved.", "Photosynthesis", "Oxygen", "Glucose"],
+    )
+    score = score_candidate(q, **scoring_kwargs())
+    assert score.total == 0.0
+    assert "answer" in score.boilerplate
+
+
+def test_boilerplate_option_scores_zero() -> None:
+    q = make_question(
+        options=["Photosynthesis", "Visit https://example.com for details", "Oxygen", "Glucose"],
+        correct="Photosynthesis",
+    )
+    score = score_candidate(q, **scoring_kwargs())
+    assert score.total == 0.0
+    assert "options" in score.boilerplate
+
+
+def test_boilerplate_explanation_scores_zero() -> None:
+    q = make_question(
+        explanation="See page 3 of 12 for the copyright notice of the publisher.",
+    )
+    score = score_candidate(q, **scoring_kwargs())
+    assert score.total == 0.0
+    assert "explanation" in score.boilerplate
+
+
+def test_clean_question_keeps_positive_score() -> None:
+    score = score_candidate(make_question(), **scoring_kwargs())
+    assert score.total > 0.0
+    assert score.boilerplate == []

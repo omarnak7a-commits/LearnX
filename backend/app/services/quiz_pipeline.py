@@ -26,6 +26,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.ai import AIQuizQuestion
 from app.services.ai_documents import AIDocumentSource
 from app.services.ai_service import AIService, AIUnavailableError
+from app.services.quiz_boilerplate import (
+    clean_source_units,
+    cleaned_source_block,
+    is_boilerplate_text,
+    is_valid_fill_blank,
+)
 from app.services.quiz_concepts import (
     Concept,
     build_concept_map,
@@ -163,7 +169,10 @@ _WORDING_PATTERNS = (
 
 
 def build_quiz_context(source: AIDocumentSource) -> QuizContext:
-    units = split_source_units(source.text)
+    # Source cleaning runs FIRST: boilerplate lines (copyright notices, legal
+    # text, ISBNs/DOIs/URLs, page folios) and repeated headers/footers are
+    # removed before any concept extraction or scoring sees the text.
+    units = clean_source_units(split_source_units(source.text))
     concepts = build_concept_map(units)
     vocab: set[str] = set()
     for unit in units:
@@ -189,6 +198,7 @@ def build_candidate_prompt(
     kind: str,
     language: str,
     previous_questions: list[str],
+    source_block: str | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append(
@@ -224,6 +234,10 @@ def build_candidate_prompt(
     lines.append("- Every question needs: a unique id, a prompt, an explanation citing the source, "
                  "a difficulty (easy/medium/hard), and sourcePages (1-based page numbers where the answer is found).")
     lines.append("- NEVER ask about page numbers, ISBNs, headers, footers, metadata, word counts, or formatting.")
+    lines.append("- NEVER write questions about copyright notices, publisher/legal/licensing text, "
+                 "trademarks, DOIs, URLs, e-mail addresses, or any boilerplate repeated across pages. "
+                 "The source below has already been cleaned of such material — do not reintroduce it. "
+                 "If a page contains only such material, ignore that page entirely.")
     if previous_questions:
         lines.append("")
         lines.append("PREVIOUS QUESTIONS — do NOT repeat or paraphrase any of these:")
@@ -231,7 +245,7 @@ def build_candidate_prompt(
             lines.append(f"- {past}")
     lines.append("")
     lines.append("SOURCE:")
-    lines.append(source.prompt_block())
+    lines.append(source_block if source_block is not None else source.prompt_block())
     return "\n".join(lines)
 
 
@@ -315,6 +329,17 @@ def normalize_candidate(
         return None
     if is_trivial_question(prompt):
         return None
+    # Deterministic boilerplate rejection: a candidate built on copyright,
+    # legal, publisher, ISBN/DOI/URL, or page-folio text is unusable no matter
+    # what the LLM (or the scoring layer) would say about it.
+    if (
+        is_boilerplate_text(prompt)
+        or is_boilerplate_text(correct)
+        or is_boilerplate_text(explanation)
+    ):
+        return None
+    if qtype == "fill-blank" and not is_valid_fill_blank(prompt, correct):
+        return None
 
     difficulty = (raw.difficulty or "").strip().lower()
     if difficulty not in {"easy", "medium", "hard"}:
@@ -342,6 +367,8 @@ def normalize_candidate(
             return None
         if not any(option.casefold() == correct.casefold() for option in cleaned):
             cleaned.append(correct)
+        if any(is_boilerplate_text(option) for option in cleaned):
+            return None
         options = cleaned[:6]
 
     qid = (raw.id or "").strip()[:100] or f"q{index}"
@@ -382,6 +409,11 @@ def generate_quiz(
     context = build_quiz_context(source)
     allowed_types = set(question_types)
 
+    # A source whose text is ENTIRELY boilerplate (copyright pages, legal
+    # notices, headers/footers) has no educational content to test.
+    if not context.units:
+        raise AIUnavailableError("The source contains no educational content to build questions from.")
+
     candidate_count = min(32, max(count * 4, 20))
 
     user_prompt = build_candidate_prompt(
@@ -394,6 +426,9 @@ def generate_quiz(
         kind=kind,
         language=language,
         previous_questions=previous_questions,
+        source_block=cleaned_source_block(
+            context.units, title=source.title, page_count=source.page_count
+        ),
     )
     system_prompt = f"{system_prompt}\n\n{quiz_language_guidance(language)}"
 

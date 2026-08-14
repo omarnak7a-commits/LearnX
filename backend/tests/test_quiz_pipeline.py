@@ -389,3 +389,148 @@ def test_quiz_endpoint_preserves_frontend_contract() -> None:
             assert "Photosynthesis" in question["options"]
     finally:
         app.dependency_overrides.clear()
+
+
+# --------------------------------------------------------------------------- #
+# Boilerplate regression: candidates and source must never carry PDF chrome
+# --------------------------------------------------------------------------- #
+
+def test_normalize_candidate_rejects_copyright_candidate() -> None:
+    question = normalize_candidate(
+        raw(
+            type="fill-blank",
+            prompt="Copyright © 2020, _____ and/or its affiliates.",
+            correct_answer="Oracle",
+            options=None,
+            explanation="The footer of every page contains this notice.",
+        ),
+        index=0, allowed_types={"fill-blank"}, page_count=4, included_pages={1, 2, 3, 4},
+    )
+    assert question is None
+
+
+def test_normalize_candidate_rejects_boilerplate_options() -> None:
+    question = normalize_candidate(
+        raw(
+            prompt="What is photosynthesis?",
+            options=["Photosynthesis", "Visit https://example.com for details", "Oxygen", "Water"],
+            correct_answer="Photosynthesis",
+        ),
+        index=0, allowed_types={"mcq"}, page_count=4, included_pages={1, 2, 3, 4},
+    )
+    assert question is None
+
+
+def test_normalize_candidate_rejects_boilerplate_explanation() -> None:
+    question = normalize_candidate(
+        raw(
+            prompt="What is photosynthesis?",
+            explanation="See page 3 of 12 of the publisher's manual.",
+        ),
+        index=0, allowed_types={"mcq"}, page_count=4, included_pages={1, 2, 3, 4},
+    )
+    assert question is None
+
+
+def test_normalize_candidate_requires_fill_blank_marker() -> None:
+    question = normalize_candidate(
+        raw(type="fill-blank", prompt="What is photosynthesis?", correct_answer="Photosynthesis", options=None),
+        index=0, allowed_types={"fill-blank"}, page_count=4, included_pages={1, 2, 3, 4},
+    )
+    assert question is None
+
+
+def test_normalize_candidate_rejects_boilerplate_fill_blank_answer() -> None:
+    question = normalize_candidate(
+        raw(type="fill-blank", prompt="The notice on every page reads _____.", correct_answer="All rights reserved", options=None),
+        index=0, allowed_types={"fill-blank"}, page_count=4, included_pages={1, 2, 3, 4},
+    )
+    assert question is None
+
+
+def test_prompt_includes_explicit_anti_boilerplate_rules() -> None:
+    from app.services.quiz_concepts import build_concept_map, split_source_units
+    concepts = build_concept_map(split_source_units(BIOLOGY_SOURCE.text))
+    prompt = build_candidate_prompt(
+        source=BIOLOGY_SOURCE, concepts=concepts, count=6, candidate_count=24,
+        question_types=["mcq"], difficulty="medium", kind="practice", language="en",
+        previous_questions=[],
+    )
+    lowered = prompt.lower()
+    assert "copyright" in lowered
+    assert "boilerplate" in lowered
+    assert "trademarks" in lowered
+    assert "headers, footers" in lowered
+
+
+def test_llm_receives_cleaned_source_without_footer_text() -> None:
+    source = AIDocumentSource(
+        file_id=None,
+        title="DB Notes",
+        text=(
+            "[Page 1]\n"
+            "Oracle Database Documentation\n"
+            "A database is defined as an organized collection of structured data.\n"
+            "\n"
+            "[Page 2]\n"
+            "Oracle Database Documentation\n"
+            "A table is defined as a set of rows that share the same columns.\n"
+            "\n"
+            "[Page 3]\n"
+            "Oracle Database Documentation\n"
+            "Copyright © 2020, Oracle and/or its affiliates. All rights reserved.\n"
+        ),
+        page_count=3,
+    )
+    pool = make_pool([
+        dict(id="a", prompt="What is a database?", correct_answer="An organized collection of structured data",
+             options=["An organized collection of structured data", "A text file", "A network cable", "A spreadsheet"],
+             source_pages=[1], explanation="The source defines a database as an organized collection of structured data."),
+    ])
+    service = FakeQuizService(pool)
+    result = generate_quiz(service, source, **default_kwargs(count=1))
+    assert len(result.questions) == 1
+    user_prompt = service.calls[0]["user_prompt"]
+    assert "database is defined" in user_prompt
+    assert "Copyright © 2020" not in user_prompt
+    assert "Oracle Database Documentation" not in user_prompt
+
+
+def test_end_to_end_filters_boilerplate_candidates_from_pool() -> None:
+    pool = make_pool([
+        dict(id="a", prompt="What is the main purpose of photosynthesis?", correct_answer="To convert light energy into chemical energy",
+             options=["To convert light energy into chemical energy", "To produce oxygen only", "To store water", "To release carbon dioxide"],
+             source_pages=[1], explanation="Photosynthesis converts light energy into chemical energy."),
+        dict(id="b", type="fill-blank", prompt="Copyright © 2020, _____ and/or its affiliates.", correct_answer="Oracle",
+             options=None, source_pages=[1], explanation="The footer of every page contains this notice."),
+        dict(id="c", prompt="Which molecule do the light reactions produce as a byproduct?", correct_answer="Oxygen",
+             options=["Oxygen", "Glucose", "Water", "Carbon dioxide"], source_pages=[2],
+             explanation="The light reactions split water molecules and produce oxygen as a byproduct."),
+        dict(id="d", prompt="Why does the Calvin cycle not require light directly?", correct_answer="It uses ATP and NADPH",
+             options=["It uses ATP and NADPH", "It uses chlorophyll", "It produces oxygen", "It splits water"], source_pages=[3],
+             explanation="The Calvin cycle uses ATP and NADPH produced by the light reactions."),
+        dict(id="e", prompt="How do the light reactions and the Calvin cycle relate?", correct_answer="The products of one fuel the other",
+             options=["The products of one fuel the other", "They occur in the same place", "They both need light", "They both produce glucose"], source_pages=[3],
+             explanation="See page 3 of 12 of the publisher's manual."),
+    ])
+    result = generate_quiz(FakeQuizService(pool), BIOLOGY_SOURCE, **default_kwargs(count=4))
+    prompts = " | ".join(q.prompt for q in result.questions)
+    assert "Copyright" not in prompts
+    assert "and/or its affiliates" not in prompts
+    for q in result.questions:
+        assert "©" not in q.prompt + q.correct_answer + q.explanation
+        assert all("©" not in (o or "") for o in (q.options or []))
+
+
+def test_all_boilerplate_source_raises_ai_unavailable() -> None:
+    boilerplate = AIDocumentSource(
+        file_id=None,
+        title="Legal",
+        text=(
+            "[Page 1]\nCopyright © 2020, Oracle and/or its affiliates. All rights reserved.\n"
+            "[Page 2]\nAll rights reserved.\nPrinted in the USA.\n"
+        ),
+        page_count=2,
+    )
+    with pytest.raises(AIUnavailableError):
+        generate_quiz(FakeQuizService(make_pool([dict(id="a", source_pages=[1])])), boilerplate, **default_kwargs(count=1))
