@@ -43,10 +43,20 @@ export async function extractPdf(data: ArrayBuffer): Promise<ExtractedPdf> {
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i)
     const content = await page.getTextContent()
+    // Preserve the line boundaries reported by pdf.js. Source cleaning is
+    // intentionally line-oriented (headers/footers are normally separate
+    // text rows); flattening every item with spaces made a copyright footer
+    // part of the same "line" as the lesson and caused the whole page to be
+    // discarded as boilerplate.
     const text = content.items
-      .map((item) => ('str' in item ? item.str : ''))
-      .join(' ')
-      .replace(/\s+/g, ' ')
+      .map((item) => {
+        if (!('str' in item)) return ''
+        return `${item.str}${item.hasEOL ? '\n' : ' '}`
+      })
+      .join('')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
       .trim()
     pages.push({ page: i, text, wordCount: countWords(text) })
   }

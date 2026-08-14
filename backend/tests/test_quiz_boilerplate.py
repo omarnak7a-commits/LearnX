@@ -173,8 +173,24 @@ def test_clean_source_units_removes_boilerplate_and_repeated_headers() -> None:
     assert "query is defined" in cleaned[2].text
 
 
+def test_clean_source_units_preserves_flattened_educational_page() -> None:
+    # Exact production shape: PDF extraction flattened body + footer into one
+    # physical row. The old atomic line filter discarded all lesson content.
+    flattened = (
+        "[Page 1]\nPhotosynthesis converts light energy into chemical energy. "
+        "Chlorophyll absorbs photons in the thylakoid membrane. "
+        "Copyright © 2020, Example Press. All rights reserved. Page 1 of 1"
+    )
+    cleaned = clean_source_units(split_source_units(flattened))
+    assert len(cleaned) == 1
+    assert "Photosynthesis converts" in cleaned[0].text
+    assert "Chlorophyll absorbs" in cleaned[0].text
+    assert "Copyright" not in cleaned[0].text
+    assert "©" not in cleaned[0].text
+
+
 def test_clean_source_units_drops_all_boilerplate_pages() -> None:
-    boilerplate_only = "[Page 1]\nCopyright © 2020, Oracle and/or its affiliates. All rights reserved.\n\n[Page 2]\nAll rights reserved.\nPrinted in the USA."
+    boilerplate_only = "[Page 1]\nCopyright © 2020, Oracle and/or its affiliates. All rights reserved.\n\n[Page 2]\nAll rights reserved.\nPrinted in the USA.\nOxford University Press\nThird Edition"
     assert clean_source_units(split_source_units(boilerplate_only)) == []
 
 

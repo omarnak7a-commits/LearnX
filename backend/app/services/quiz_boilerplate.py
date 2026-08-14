@@ -218,7 +218,43 @@ def is_boilerplate_line(line: str) -> bool:
         return True
     if _BOILERPLATE_START_RE.match(s) or _BOILERPLATE_START_RE.match(normalized):
         return True
+    # Standalone publisher/edition rows often omit an explicit "published
+    # by" prefix. Keep this anchored to the whole row so educational uses of
+    # words such as "pressure" or "edition" are unaffected.
+    if re.fullmatch(
+        r"(?:(?:[\w&'’\-]+\s+){0,5}(?:university\s+)?press(?:,?\s+\w+)*|"
+        r"(?:first|second|third|fourth|fifth|revised|international)\s+edition)",
+        s,
+        re.IGNORECASE,
+    ):
+        return True
     return False
+
+
+_COMPOSITE_BOUNDARY_RE = re.compile(
+    r"(?<=[.!?؟])\s+|"
+    r"(?=\b(?:copyright|all rights reserved|isbn|issn|doi|published by|printed by|"
+    r"page\s+\d+\s+of\s+\d+)\b)|(?=[©®™])",
+    re.IGNORECASE,
+)
+
+
+def clean_source_line(line: str) -> str:
+    """Remove metadata fragments while preserving adjacent educational text.
+
+    Some PDF extractors flatten a complete page into one physical line.  A
+    line-level copyright match must not therefore discard all preceding
+    paragraphs. Suspicious composite lines are split at sentence/metadata
+    boundaries and only fragments that are independently boilerplate are
+    removed. Metadata-only lines still clean to an empty string.
+    """
+    source = line.strip()
+    if not source:
+        return ""
+    if not is_boilerplate_line(source):
+        return source
+    fragments = [part.strip() for part in _COMPOSITE_BOUNDARY_RE.split(source) if part.strip()]
+    return " ".join(part for part in fragments if not is_boilerplate_line(part)).strip()
 
 
 def line_key(line: str) -> str:
@@ -253,8 +289,9 @@ def clean_source_units(units: list["SourceUnit"]) -> list["SourceUnit"]:
     cleaned: list["SourceUnit"] = []
     for unit in units:
         kept: list[str] = []
-        for line in unit.text.splitlines():
-            if is_boilerplate_line(line):
+        for raw_line in unit.text.splitlines():
+            line = clean_source_line(raw_line)
+            if not line:
                 continue
             key = line_key(line)
             if len(key) < 2:
