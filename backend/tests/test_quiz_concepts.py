@@ -7,6 +7,7 @@ from app.services.quiz_concepts import (
     build_concept_map,
     concept_map_block,
     extract_concepts,
+    has_educational_content,
     is_metadata_line,
     is_trivial_concept,
     score_importance,
@@ -180,10 +181,18 @@ def test_concept_map_block_renders_top_concepts() -> None:
     assert "why important" in block
 
 
-def test_sparse_source_produces_fallback_concept() -> None:
-    concepts = build_concept_map([SourceUnit(page=1, text="Very short text.")])
-    assert len(concepts) == 1
-    assert concepts[0].importance >= 0.3
+def test_sparse_educational_source_produces_section_fallback() -> None:
+    units = [SourceUnit(page=1, text="Mitosis produces two genetically identical daughter cells.")]
+    assert has_educational_content(units)
+    concepts = build_concept_map(units)
+    assert concepts
+    assert any(concept.kind == "source_section" for concept in concepts)
+    assert "Mitosis produces" in concepts[0].evidence
+
+
+def test_metadata_or_trivial_text_is_not_educational_content() -> None:
+    assert not has_educational_content([SourceUnit(page=1, text="Oxford University Press Third Edition")])
+    assert not has_educational_content([SourceUnit(page=1, text="Very short text.")])
 
 
 def test_empty_source_produces_no_concepts() -> None:

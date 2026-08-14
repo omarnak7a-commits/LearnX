@@ -137,13 +137,6 @@ def is_trivial_concept(name: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def _term_frequencies(units: list[SourceUnit]) -> Counter[str]:
-    counter: Counter[str] = Counter()
-    for unit in units:
-        counter.update(content_token_list(unit.text))
-    return counter
-
-
 def _bigram_frequencies(units: list[SourceUnit]) -> Counter[tuple[str, str]]:
     counter: Counter[tuple[str, str]] = Counter()
     for unit in units:
@@ -398,6 +391,7 @@ def extract_concepts(units: list[SourceUnit]) -> list[Concept]:
 
 _KIND_RANK = {
     "definition": 5,
+    "source_section": 3,
     "numbered_heading": 4,
     "objective": 4,
     "heading": 4,
@@ -426,6 +420,7 @@ def score_importance(concepts: list[Concept]) -> list[Concept]:
             "comparison": 0.18,
             "multiword_term": 0.20,
             "repeated_term": 0.10,
+            "source_section": 0.35,
         }.get(concept.kind, 0.10)
         if concept.kind != "repeated_term":
             score += base
@@ -466,32 +461,105 @@ _KIND_LABEL = {
     "comparison": "comparison",
     "multiword_term": "multi-word term",
     "repeated_term": "repeated concept",
+    "source_section": "educational source section",
 }
 
 
-def build_concept_map(
-    units: list[SourceUnit], *, min_concepts: int = 1, max_concepts: int = 12
-) -> list[Concept]:
-    """Extract + score concepts, guaranteeing at least one useful concept."""
-    concepts = score_importance(extract_concepts(units))
-    concepts = [c for c in concepts if c.importance >= 0.10]
-    if not concepts and units:
-        # Sparse source: fall back to a single "general comprehension" concept
-        # anchored to the most frequent content terms.
-        counter = _term_frequencies(units)
-        top = [t for t, _ in counter.most_common(2)]
-        name = " ".join(top).title() if top else units[0].text[:60]
-        concepts = [
-            Concept(
-                name=name,
-                kind="repeated_term",
-                pages=[units[0].page],
-                evidence=units[0].text[:400],
-                importance=0.4,
-                reasons=["general comprehension fallback"],
+def educational_content_tokens(units: list[SourceUnit]) -> list[str]:
+    """Content-bearing tokens used by the sufficiency check.
+
+    This intentionally measures semantic material after source cleaning,
+    rather than page count, physical line count, or whether one of the narrow
+    concept regexes happened to match.
+    """
+    tokens: list[str] = []
+    for unit in units:
+        tokens.extend(
+            token for token in content_token_list(unit.text)
+            if token not in _GENERIC_PHRASES and not token.isdigit()
+        )
+    return tokens
+
+
+def has_educational_content(units: list[SourceUnit]) -> bool:
+    """Whether cleaned units contain enough meaningful material for a quiz."""
+    if not units:
+        return False
+    tokens = educational_content_tokens(units)
+    unique = set(tokens)
+    # A concise definition/explanation can be educational despite occupying
+    # one PDF row. Formula-only notes are also meaningful when they identify
+    # variables or operators.
+    if len(tokens) >= 5 and len(unique) >= 4:
+        return True
+    combined = " ".join(unit.text for unit in units)
+    return bool(
+        len(unique) >= 2
+        and re.search(r"[A-Za-z\u0600-\u06FF]", combined)
+        and re.search(r"[=+*/^]", combined)
+    )
+
+
+def _source_section_fallbacks(units: list[SourceUnit]) -> list[Concept]:
+    """Turn valid explanatory source sections into broad fallback concepts."""
+    fallbacks: list[Concept] = []
+    for unit in units:
+        sections = _sentences(unit)
+        if not sections and unit.text.strip():
+            sections = [unit.text.strip()]
+        for section in sections:
+            tokens = [token for token in content_token_list(section) if not token.isdigit()]
+            if len(tokens) < 4 and not re.search(r"[=+*/^]", section):
+                continue
+            # Preserve order while naming the section with its first distinct
+            # technical/content terms. Evidence remains the source verbatim.
+            name_terms: list[str] = []
+            for token in tokens:
+                if token not in name_terms:
+                    name_terms.append(token)
+                if len(name_terms) == 3:
+                    break
+            name = " ".join(name_terms).title() if name_terms else f"Section on page {unit.page}"
+            fallbacks.append(
+                Concept(
+                    name=name,
+                    kind="source_section",
+                    pages=[unit.page],
+                    evidence=section[:400],
+                    depth=len(section),
+                    importance=0.35,
+                    reasons=["meaningful educational source section"],
+                )
             )
-        ]
-    return concepts[:max_concepts]
+    return fallbacks
+
+
+def build_concept_map(
+    units: list[SourceUnit], *, min_concepts: int = 3, max_concepts: int = 12
+) -> list[Concept]:
+    """Extract and score concepts, backfilling from educational sections.
+
+    Regex-based concept extraction is useful for ranking but is not a valid
+    content-sufficiency test: ordinary explanations often contain no formal
+    "X is defined as" phrase, repeated bigram, title-case term, or process
+    marker. When extraction is sparse, grounded source sections provide the
+    concept map instead of incorrectly treating the document as empty.
+    """
+    concepts = [
+        concept
+        for concept in score_importance(extract_concepts(units))
+        if concept.importance >= 0.10
+    ]
+    if len(concepts) < min_concepts and has_educational_content(units):
+        keys = {concept.key() for concept in concepts}
+        for fallback in _source_section_fallbacks(units):
+            if fallback.key() in keys:
+                continue
+            concepts.append(fallback)
+            keys.add(fallback.key())
+            if len(concepts) >= min_concepts:
+                break
+    return sorted(concepts, key=lambda concept: concept.importance, reverse=True)[:max_concepts]
 
 
 def top_concepts(concepts: list[Concept], limit: int) -> list[Concept]:

@@ -135,10 +135,36 @@ function isBoilerplateLine(line: string): boolean {
   if (
     /^(published by|publisher|printed (in|by)|printing|for more information|visit (us|our)|call us|terms of use|privacy policy|legal notice|copyright|©|®|™|confidential|proprietary|internal use only|دار النشر|الناشر|طبع|رقم الإيداع|رقم الايداع|إيداع|ايداع)/i.test(
       s
-    )
+    ) ||
+    /^(?:(?:[\w&'’-]+\s+){0,5}(?:university\s+)?press(?:,?\s+\w+)*|(?:first|second|third|fourth|fifth|revised|international)\s+edition)$/i.test(s)
   )
     return true
   return false
+}
+
+/**
+ * Clean one extracted row without throwing away neighbouring lesson text.
+ *
+ * Older uploads (and many pdf.js producers) flatten an entire page into one
+ * row. The previous implementation treated a row atomically, so one trailing
+ * `Copyright © ...` marker made `isBoilerplateLine` reject the educational
+ * paragraphs before it as well. Split suspicious composite rows at sentence
+ * boundaries and strong metadata markers, then reject only the offending
+ * fragments. A genuinely metadata-only row still becomes empty.
+ */
+function cleanSourceLine(line: string): string {
+  const source = line.trim()
+  if (!source) return ''
+  if (!isBoilerplateLine(source)) return source
+
+  const fragments = source
+    .split(
+      /(?<=[.!?؟])\s+|(?=\b(?:copyright|all rights reserved|isbn|issn|doi|published by|printed by|page\s+\d+\s+of\s+\d+)\b|(?=[©®™]))/gi
+    )
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  return fragments.filter((part) => !isBoilerplateLine(part)).join(' ').trim()
 }
 
 /** Digit-insensitive key for comparing the same header/footer line across pages. */
@@ -156,7 +182,8 @@ function stripRepeatedHeadersFooters(pages: FilePageText[]): FilePageText[] {
   if (pages.length >= 2) {
     for (const page of pages) {
       const seen = new Set<string>()
-      for (const line of page.text.split('\n')) {
+      for (const rawLine of page.text.split('\n')) {
+        const line = cleanSourceLine(rawLine)
         const key = lineKeyOf(line)
         if (key.length < 2 || seen.has(key)) continue
         seen.add(key)
@@ -171,8 +198,9 @@ function stripRepeatedHeadersFooters(pages: FilePageText[]): FilePageText[] {
     ...page,
     text: page.text
       .split('\n')
+      .map(cleanSourceLine)
       .filter((line) => {
-        if (isBoilerplateLine(line)) return false
+        if (!line) return false
         const key = lineKeyOf(line)
         if (key.length < 2) return false
         const words = line.trim().split(/\s+/).length
@@ -715,9 +743,26 @@ export function generateQuestions(
     })
   }
 
-  // Final deterministic gate: any question that still carries boilerplate in
-  // any field is dropped, mirroring the backend's scoring rejection.
-  return questions.filter((q) => !isBoilerplateQuestion(q)).slice(0, count)
+  // Final deterministic gate: reject boilerplate and repeated/paraphrased
+  // prompts. Keep the first grounded form so a sparse source cannot fill the
+  // quiz with the same fact phrased as MCQ, T/F, and fill-in-the-blank.
+  const unique: VaultQuizQuestion[] = []
+  for (const question of questions) {
+    if (isBoilerplateQuestion(question)) continue
+    const tokens = new Set(tokenize(question.prompt))
+    const repeated = unique.some((existing) => {
+      const other = new Set(tokenize(existing.prompt))
+      if (tokens.size === 0 || other.size === 0) {
+        return question.prompt.trim().toLowerCase() === existing.prompt.trim().toLowerCase()
+      }
+      const intersection = [...tokens].filter((token) => other.has(token)).length
+      const union = new Set([...tokens, ...other]).size
+      return intersection / union >= 0.8
+    })
+    if (!repeated) unique.push(question)
+    if (unique.length >= count) break
+  }
+  return unique
 }
 
 function escapeRegExp(s: string): string {

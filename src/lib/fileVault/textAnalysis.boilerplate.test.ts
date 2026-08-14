@@ -118,9 +118,20 @@ describe('generateQuestions boilerplate filtering', () => {
     expect(/photosynthesis|calvin|light reactions/i.test(joined)).toBe(true)
   })
 
+  it('preserves educational content when pdf.js flattened a footer into the same line', () => {
+    // This reproduces the production failure exactly. extractPdf previously
+    // joined every text item with a space, so each page was one physical line.
+    // One © marker then caused source cleaning to discard the entire page.
+    const flattened = BIO.map((p) =>
+      page(p.page, `${p.text.replace(/\n/g, ' ')} ${FOOTER} Page ${p.page} of ${BIO.length}`)
+    )
+    const questions = generateQuestions(flattened, new Set([1, 2, 3]), 5, 8)
+    expect(questions.length).toBeGreaterThan(0)
+    expect(questions.some((q) => /photosynthesis|calvin|chlorophyll/i.test(q.prompt))).toBe(true)
+    for (const q of questions) expect(anyBoilerplateField(q)).toBe(false)
+  })
+
   it('a footer sentence is never used as a fill-in-the-blank', () => {
-    // Single-line page text: the footer sentence is embedded mid-text, so
-    // sentence-level filtering (not just line-level) must catch it.
     const pages = [
       page(1, `${BIO[0].text}${FOOTER}`),
       page(2, `${BIO[1].text}${FOOTER}`),
@@ -133,6 +144,24 @@ describe('generateQuestions boilerplate filtering', () => {
         expect(q.prompt.toLowerCase()).not.toContain('copyright')
       }
     }
+  })
+
+  it('short but meaningful educational text still generates a question', () => {
+    const pages = [page(1, 'Mitosis produces two genetically identical daughter cells.')]
+    const questions = generateQuestions(pages, new Set([1]), 9, 6)
+    expect(questions.length).toBeGreaterThan(0)
+    expect(questions[0].prompt).toContain('_____')
+  })
+
+  it('metadata-only pages are rejected', () => {
+    const pages = [page(1, `${FOOTER}\nOxford University Press\nThird Edition\nISBN 978-0-12-345678-9`)]
+    expect(generateQuestions(pages, new Set([1]), 4, 6)).toEqual([])
+  })
+
+  it('does not return repeated or near-identical prompts', () => {
+    const questions = generateQuestions(BIO, new Set([1, 2, 3]), 42, 20)
+    const normalized = questions.map((q) => q.prompt.toLowerCase().replace(/\W+/g, ' ').trim())
+    expect(new Set(normalized).size).toBe(questions.length)
   })
 })
 

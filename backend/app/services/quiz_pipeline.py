@@ -36,6 +36,7 @@ from app.services.quiz_concepts import (
     Concept,
     build_concept_map,
     concept_map_block,
+    has_educational_content,
     split_source_units,
     top_concepts,
 )
@@ -409,9 +410,11 @@ def generate_quiz(
     context = build_quiz_context(source)
     allowed_types = set(question_types)
 
-    # A source whose text is ENTIRELY boilerplate (copyright pages, legal
-    # notices, headers/footers) has no educational content to test.
-    if not context.units:
+    # Sufficiency is based on meaningful, cleaned content—not raw PDF page or
+    # line count, and not on whether a narrow concept detector happened to
+    # match. This accepts concise definitions/formulas while still rejecting
+    # metadata-only documents.
+    if not has_educational_content(context.units):
         raise AIUnavailableError("The source contains no educational content to build questions from.")
 
     candidate_count = min(32, max(count * 4, 20))
