@@ -333,6 +333,85 @@ export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Prom
   return requestJson<T>(path, opts, true)
 }
 
+/**
+ * Authenticated binary download — same JWT / refresh / bootstrap semantics
+ * as `apiFetch`, but the response body is read as raw bytes. Used by the
+ * PDF Viewer to load a real PDF into `pdfjsLib.getDocument` without
+ * exposing the storage URL or bypassing auth.
+ */
+export async function apiFetchArrayBuffer(path: string, opts: RequestOptions = {}): Promise<ArrayBuffer> {
+  return requestArrayBuffer(path, opts, true)
+}
+
+async function requestArrayBuffer(
+  path: string,
+  opts: RequestOptions,
+  allowRefresh: boolean,
+): Promise<ArrayBuffer> {
+  const { method = 'GET', body, rawBody, headers = {} } = opts
+  const isPublic = isPublicPath(path)
+
+  if (!isPublic) {
+    await waitForAuthReady()
+  }
+
+  const token = isPublic ? null : getAccessToken()
+
+  if (!isPublic && !token) {
+    throw new ApiError(401, 'Authentication required — please sign in again.')
+  }
+
+  const h: Record<string, string> = {
+    ...(rawBody ? {} : { 'Content-Type': 'application/json' }),
+    ...(token ? { Authorization: `Bearer ${token}`, 'X-Access-Token': token } : {}),
+    ...headers,
+  }
+
+  let response: Response
+  try {
+    response = await fetch(apiUrl(path), {
+      method,
+      headers: h,
+      credentials: 'include',
+      body: rawBody ?? (body !== undefined ? JSON.stringify(body) : undefined),
+    })
+  } catch {
+    throw new ApiError(0, 'Network error — backend unreachable.')
+  }
+
+  if (response.status === 401 && allowRefresh && !isPublic) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      return requestArrayBuffer(path, opts, false)
+    }
+    clearAccessToken()
+  }
+
+  if (!response.ok) {
+    let detail = response.statusText
+    try {
+      const text = await response.text()
+      if (text) {
+        try {
+          const parsed = JSON.parse(text) as { detail?: unknown }
+          if (parsed && typeof parsed.detail === 'string') {
+            detail = parsed.detail
+          } else {
+            detail = text
+          }
+        } catch {
+          detail = text
+        }
+      }
+    } catch {
+      // ignore secondary read errors
+    }
+    throw new ApiError(response.status, detail)
+  }
+
+  return response.arrayBuffer()
+}
+
 async function requestJson<T>(
   path: string,
   opts: RequestOptions,

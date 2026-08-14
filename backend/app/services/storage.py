@@ -149,6 +149,79 @@ def download_user_object(user_id: str, key: str, max_bytes: int) -> bytes:
     return data
 
 
+def stream_user_object(
+    user_id: str,
+    key: str,
+    *,
+    chunk_bytes: int = 1024 * 1024,
+    max_bytes: int | None = None,
+    range_start: int | None = None,
+    range_end: int | None = None,
+) -> tuple[int, int, Iterator[bytes]]:
+    """Open a chunked streaming read of a user-scoped object.
+
+    Returns ``(content_length, status_code, iterator)`` so the caller can
+    build a proper ``StreamingResponse`` (and decide between ``200 OK`` and
+    ``206 Partial Content`` when a Range was supplied).
+
+    The first namespace check (DB ownership) is the caller's responsibility;
+    this helper only enforces the storage-side user prefix as a defense in
+    depth, and applies the optional size ceiling to a HEAD request before
+    the body stream is opened.
+    """
+    expected_prefix = f"users/{user_id}/"
+    if not key.startswith(expected_prefix):
+        raise StorageError("Refusing to read an object outside the caller's namespace.")
+    try:
+        metadata = get_client().head_object(Bucket=_bucket(), Key=key)
+        content_length = int(metadata.get("ContentLength") or 0)
+        if max_bytes is not None and content_length > max_bytes:
+            raise StorageError(f"File exceeds the {max_bytes}-byte viewer limit.")
+    except StorageError:
+        raise
+    except ClientError as exc:
+        logger.exception("storage head failed for a user-scoped object")
+        raise StorageError("Could not retrieve the private file.") from exc
+
+    params: dict[str, Any] = {"Bucket": _bucket(), "Key": key}
+    if range_start is not None and range_end is not None and range_start <= range_end:
+        params["Range"] = f"bytes={range_start}-{range_end}"
+        status_code = 206
+    else:
+        status_code = 200
+        range_start = None
+        range_end = None
+
+    try:
+        body = get_client().get_object(**params)["Body"]
+    except ClientError as exc:
+        logger.exception("storage stream-open failed for a user-scoped object")
+        raise StorageError("Could not open the private file for streaming.") from exc
+
+    def iterator() -> Iterator[bytes]:
+        try:
+            if range_start is not None and range_end is not None:
+                # boto3 honors Range automatically; still cap to requested span.
+                remaining = range_end - range_start + 1
+                for chunk in body.iter_chunks(chunk_size=chunk_bytes):
+                    if remaining <= 0:
+                        break
+                    if len(chunk) > remaining:
+                        chunk = chunk[:remaining]
+                    remaining -= len(chunk)
+                    yield chunk
+            else:
+                for chunk in body.iter_chunks(chunk_size=chunk_bytes):
+                    yield chunk
+        finally:
+            try:
+                body.close()
+            except Exception:
+                pass
+
+    return content_length, status_code, iterator()
+
+
 def delete_object(user_id: str, key: str) -> None:
     """Deletes an object, refusing keys that are not scoped to `user_id`."""
     expected_prefix = f"users/{user_id}/"
