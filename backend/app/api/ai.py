@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,7 +32,6 @@ from app.schemas.ai import (
     AIMindMapResult,
     AIQuizRequest,
     AIQuizResponse,
-    AIQuizResult,
     AISourceRequest,
     AISummaryRequest,
     AISummaryResponse,
@@ -62,6 +62,7 @@ from app.services.ai_service import (
     AIUnavailableError,
     get_ai_service,
 )
+from app.services.quiz_pipeline import generate_quiz
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -302,7 +303,7 @@ def quiz(
     service: AIService = Depends(get_ai_service),
 ) -> AIQuizResponse:
     try:
-        _, source = _source_for(
+        file, source = _source_for(
             payload,
             db=db,
             user=user,
@@ -311,25 +312,35 @@ def quiz(
         )
         assert source is not None
         language = _resolve_request_language(payload, user)
-        types = ", ".join(payload.question_types)
-        completion = _structured(
-            service=service,
-            response_model=AIQuizResult,
-            source=source,
+        seed = payload.seed if payload.seed is not None else secrets.randbelow(2_147_483_646) + 1
+
+        # Backend-side quiz history: caller-supplied previousQuestions plus the
+        # questions already persisted on the file's analysis, so repeats are
+        # suppressed even when the frontend sends nothing.
+        previous_questions = list(payload.previous_questions)
+        if file is not None and isinstance(file.analysis, dict):
+            for question in file.analysis.get("importantQuestions") or []:
+                if isinstance(question, str) and question.strip():
+                    previous_questions.append(question.strip())
+
+        result = generate_quiz(
+            service,
+            source,
+            count=payload.count,
+            question_types=list(payload.question_types),
+            difficulty=payload.difficulty,
+            kind=payload.kind,
             language=language,
-            task=(
-                f"Generate {payload.count} {payload.kind} questions. Allowed types: {types}. "
-                f"Difficulty: {payload.difficulty}. Use only the supplied pages. MCQ distractors must be "
-                "plausible, and every answer needs a grounded explanation and sourcePages. IDs must be unique."
-            ),
-            max_tokens=6000,
+            seed=seed,
+            previous_questions=previous_questions,
+            system_prompt=_system_prompt(language, structured=True),
         )
-        allowed_types = set(payload.question_types)
-        questions = [q for q in completion.value.questions if q.type in allowed_types][: payload.count]
-        if not questions:
-            raise AIUnavailableError("The provider did not return usable quiz questions.")
-        value = AIQuizResult(questions=questions)
-        return AIQuizResponse(**value.model_dump(), **_metadata(completion))
+        return AIQuizResponse(
+            questions=result.questions,
+            provider=result.provider,
+            model=result.model,
+            fallback_used=result.fallback_used,
+        )
     except (AIDocumentError, AIServiceError) as exc:
         raise _as_http_exception(exc) from exc
 
