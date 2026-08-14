@@ -21,11 +21,12 @@ from __future__ import annotations
 
 import re
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from app.schemas.ai import AIQuizQuestion
+from app.services.quiz_boilerplate import question_boilerplate_fields
 
 if TYPE_CHECKING:  # pragma: no cover - only used for type hints
     from app.services.quiz_concepts import Concept
@@ -385,6 +386,9 @@ class CandidateScore:
     clarity: float = 0.0
     distractor_quality: float = 0.0
     source_grounding: float = 0.0
+    # Boilerplate candidates are rejected outright: every component is zero
+    # and the offending fields are listed so the rejection is explainable.
+    boilerplate: list[str] = field(default_factory=list)
 
     @property
     def breakdown(self) -> dict[str, float]:
@@ -424,6 +428,14 @@ def score_candidate(
     history: list[str],
 ) -> CandidateScore:
     """Transparent multi-factor score for one candidate question."""
+    # Boilerplate scoring rejection: questions built on copyright/legal/
+    # publisher/metadata text receive a score of zero, whatever their other
+    # factors. This mirrors the earlier normalize_candidate rejection so the
+    # scoring layer alone is already safe (defence in depth).
+    boilerplate = question_boilerplate_fields(question)
+    if boilerplate:
+        return CandidateScore(total=0.0, boilerplate=boilerplate)
+
     prompt = normalize_question_text(question.prompt)
     combined_tokens = content_tokens(
         f"{question.prompt} {question.correct_answer} {' '.join(question.options or [])}"

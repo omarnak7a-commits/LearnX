@@ -63,6 +63,140 @@ const GENERIC_ACADEMIC_WORDS = new Set([
   'introduction',
 ])
 
+/**
+ * Deterministic PDF-boilerplate detector — the offline mirror of the backend
+ * `quiz_boilerplate` layer. Copyright notices, legal/publisher text, ISBNs,
+ * DOIs, URLs, e-mail addresses, page folios, and Arabic equivalents must
+ * never become quiz questions, even when the backend is unreachable and the
+ * local fallback engine generates the exam.
+ */
+const BOILERPLATE_SYMBOL_RE = /©|®|™|Ⓒ|ⓒ/
+const BOILERPLATE_URL_RE = /https?:\/\/\S+|www\.\S+/i
+const BOILERPLATE_EMAIL_RE = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i
+const BOILERPLATE_ISBN_RE = /\bisbn[:\s]*[\d\-x]{8,}\b/i
+const BOILERPLATE_DOI_RE = /\b10\.\d{4,9}\/[-._;()/:a-z0-9]+\b/i
+const BOILERPLATE_WORD_RES: RegExp[] = [
+  /\bcopyright\b/i,
+  /all rights reserved/i,
+  /\btrademarks?\b/i,
+  /\bregistered marks?\b/i,
+  /\bisbn\b/i,
+  /\bdoi\b/i,
+  /\bissn\b/i,
+  /\bpublish(ed|er|ers|ing|es)?\b/i,
+  /\blicen[cs]e(d|ing)?\b/i,
+  /\bpermission of\b/i,
+  /\bterms of (use|service)\b/i,
+  /\bprivacy policy\b/i,
+  /\blegal notice\b/i,
+  /\bunauthorized\b/i,
+  /\bproprietary\b/i,
+  /\bconfidential\b/i,
+  /\bdo not (copy|distribute|sell)\b/i,
+  /\bmay not be (reproduced|copied|distributed)\b/i,
+  /\bno part of this\b/i,
+  /\bpages?\s*\d+(\s*[-–]\s*\d+)?\b/i,
+  /\bpage\s*\d+\s+of\s+\d+\b/i,
+  /حقوق النشر|حقوق الطبع|جميع الحقوق محفوظ[ةه]|كل الحقوق محفوظ[ةه]|الطبع والنشر|دار النشر|الناشر|رقم الإيداع|رقم الايداع|ترخيص|علام[ةه] تجاري[ةه]/i,
+]
+
+/**
+ * True when the text contains deterministic PDF-boilerplate markers.
+ * Used both to clean source lines and to filter generated questions.
+ */
+export function isBoilerplateText(text: string): boolean {
+  if (!text) return false
+  if (BOILERPLATE_SYMBOL_RE.test(text)) return true
+  if (BOILERPLATE_URL_RE.test(text) || BOILERPLATE_EMAIL_RE.test(text)) return true
+  if (BOILERPLATE_ISBN_RE.test(text) || BOILERPLATE_DOI_RE.test(text)) return true
+  return BOILERPLATE_WORD_RES.some((re) => re.test(text))
+}
+
+/** Line-level detection for source cleaning (stricter: only flags lines that ARE boilerplate). */
+function isBoilerplateLine(line: string): boolean {
+  const s = line.trim()
+  if (!s || /^\W+$/.test(s)) return true
+  if (BOILERPLATE_SYMBOL_RE.test(s) || BOILERPLATE_URL_RE.test(s) || BOILERPLATE_EMAIL_RE.test(s))
+    return true
+  if (
+    BOILERPLATE_ISBN_RE.test(s) ||
+    BOILERPLATE_DOI_RE.test(s) ||
+    /\bissn[:\s]*\d{4}/i.test(s)
+  )
+    return true
+  if (/^\d{1,5}$/.test(s)) return true
+  if (/^(page|صفحة|صفحه)\s*\d+(\s+(of|من)\s*\d+)?$/i.test(s)) return true
+  if (
+    /all rights reserved|جميع الحقوق محفوظ|حقوق النشر|حقوق الطبع|may not be (reproduced|copied|distributed)|no part of this|do not (copy|distribute|sell)|unauthorized (use|reproduction)|trademarks? of/i.test(
+      s
+    )
+  )
+    return true
+  if (
+    /^(published by|publisher|printed (in|by)|printing|for more information|visit (us|our)|call us|terms of use|privacy policy|legal notice|copyright|©|®|™|confidential|proprietary|internal use only|دار النشر|الناشر|طبع|رقم الإيداع|رقم الايداع|إيداع|ايداع)/i.test(
+      s
+    )
+  )
+    return true
+  return false
+}
+
+/** Digit-insensitive key for comparing the same header/footer line across pages. */
+function lineKeyOf(line: string): string {
+  return line.replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+/**
+ * Removes boilerplate lines from every page, then removes repeated
+ * headers/footers: short lines that appear (digit-insensitively) on two or
+ * more distinct pages, e.g. "Page 3 of 12" or a publisher's footer line.
+ */
+function stripRepeatedHeadersFooters(pages: FilePageText[]): FilePageText[] {
+  const counts = new Map<string, number>()
+  if (pages.length >= 2) {
+    for (const page of pages) {
+      const seen = new Set<string>()
+      for (const line of page.text.split('\n')) {
+        const key = lineKeyOf(line)
+        if (key.length < 2 || seen.has(key)) continue
+        seen.add(key)
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
+    }
+  }
+  const repeated = new Set(
+    [...counts.entries()].filter(([, count]) => count >= 2).map(([key]) => key)
+  )
+  return pages.map((page) => ({
+    ...page,
+    text: page.text
+      .split('\n')
+      .filter((line) => {
+        if (isBoilerplateLine(line)) return false
+        const key = lineKeyOf(line)
+        if (key.length < 2) return false
+        const words = line.trim().split(/\s+/).length
+        if (repeated.has(key) && words <= 15) return false
+        return true
+      })
+      .join('\n'),
+  }))
+}
+
+function cleanPages(pages: FilePageText[]): FilePageText[] {
+  return stripRepeatedHeadersFooters(pages)
+}
+
+/** True when ANY field of a generated question carries boilerplate. */
+function isBoilerplateQuestion(q: VaultQuizQuestion): boolean {
+  return (
+    isBoilerplateText(q.prompt) ||
+    isBoilerplateText(q.correctAnswer) ||
+    isBoilerplateText(q.explanation) ||
+    (q.options ?? []).some((option) => isBoilerplateText(option))
+  )
+}
+
 /** Tiny seeded PRNG (mulberry32) so quiz distractor order is deterministic per file, not random each render. */
 function seededRandom(seed: number): () => number {
   let a = seed >>> 0 || 1
@@ -483,7 +617,10 @@ export function generateQuestions(
   seed: number,
   count = 8
 ): VaultQuizQuestion[] {
-  const pages = normalizePages(rawPages)
+  // Boilerplate lines and repeated headers/footers are stripped BEFORE any
+  // question is built, so copyright/legal/publisher text can never feed the
+  // offline generator.
+  const pages = cleanPages(normalizePages(rawPages))
   const scopedPages = pages.filter((p) => allowedPages.has(p.page))
   if (scopedPages.length === 0) return []
 
@@ -543,6 +680,8 @@ export function generateQuestions(
 
   for (let i = 0; i < scoredSentences.length && questions.length < count; i++) {
     const { sentence, page } = scoredSentences[i]
+    // Never blank out a boilerplate sentence (copyright footers etc.).
+    if (isBoilerplateText(sentence)) continue
     const tokens = tokenize(sentence)
     if (tokens.length === 0) continue
     const target = [...tokens].sort((a, b) => (freq.get(b) ?? 0) - (freq.get(a) ?? 0))[0]
@@ -576,7 +715,9 @@ export function generateQuestions(
     })
   }
 
-  return questions.slice(0, count)
+  // Final deterministic gate: any question that still carries boilerplate in
+  // any field is dropped, mirroring the backend's scoring rejection.
+  return questions.filter((q) => !isBoilerplateQuestion(q)).slice(0, count)
 }
 
 function escapeRegExp(s: string): string {
@@ -602,7 +743,7 @@ export function analyzeDocument(
   title: string,
   rawPages: FilePageText[]
 ): FileAiAnalysis {
-  const pages = normalizePages(rawPages)
+  const pages = cleanPages(normalizePages(rawPages))
   const fullText = pages.map((p) => p.text).join('\n\n')
   const sentences = splitSentences(fullText)
   const freq = termFrequencies(tokenize(fullText))
