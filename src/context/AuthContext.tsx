@@ -9,7 +9,16 @@ import {
   type ReactNode,
 } from 'react'
 import type { AuthUser } from '../types/auth'
-import { apiUrl, authHeaders, getToken, setToken } from '../lib/apiClient'
+import {
+  apiUrl,
+  authHeaders,
+  clearAccessToken,
+  getAccessToken,
+  isAccessTokenExpired,
+  markAuthReady,
+  refreshAccessToken,
+  setAccessToken,
+} from '../lib/apiClient'
 import { setAiLanguage, normalizeAiLanguage, hasExplicitAiLanguage } from '../lib/ai/language'
 
 function normalizeUser(raw: any): AuthUser | null {
@@ -48,6 +57,8 @@ function normalizeUser(raw: any): AuthUser | null {
 interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
+  /** True once the session bootstrap has completed — safe for protected AI calls. */
+  authReady: boolean
   isAuthenticated: boolean
   register: (input: {
     fullName: string
@@ -78,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshUser = useCallback(async () => {
     try {
-      const token = getToken()
+      const token = getAccessToken()
       if (!token) return
       const res = await fetch(apiUrl('/api/v1/auth/me'), {
         headers: authHeaders(),
@@ -104,21 +115,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     bootstrapped.current = true
     ;(async () => {
       try {
-        const refreshRes = await fetch(apiUrl('/api/v1/auth/refresh'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          credentials: 'include',
-        })
-        if (refreshRes.ok) {
-          const data = await refreshRes.json()
-          const normalized = normalizeUser(data.user || data)
-          setUser(normalized)
-          if (normalized) localStorage.setItem('learnx_user', JSON.stringify(normalized))
-          if (data.access_token) setToken(data.access_token)
-        } else {
+        // Hydrate the token from storage into the single source of truth.
+        const existing = getAccessToken()
+        if (existing && !isAccessTokenExpired(existing)) {
+          // Session already valid — hydrate the user without a needless (and
+          // concurrency-unsafe) refresh rotation.
           await refreshUser()
+        } else {
+          // Missing or expired access token — refresh through the shared,
+          // concurrency-safe lock (never an independent /refresh fetch, which
+          // would race the request layer and rotate the refresh token twice).
+          const token = await refreshAccessToken()
+          if (token) {
+            await refreshUser()
+          } else if (getAccessToken()) {
+            await refreshUser()
+          }
         }
-      } catch {} finally {
+      } catch {
+        // Bootstrap errors are non-fatal; the request layer will handle 401s.
+      } finally {
+        markAuthReady()
         setLoading(false)
       }
     })()
@@ -147,7 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const normalized = normalizeUser(data.user || data)!
       setUser(normalized)
       localStorage.setItem('learnx_user', JSON.stringify(normalized))
-      if (data.access_token) setToken(data.access_token)
+      if (data.access_token) setAccessToken(data.access_token)
       return normalized
     },
     []
@@ -170,7 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const normalized = normalizeUser(data.user || data)!
       setUser(normalized)
       localStorage.setItem('learnx_user', JSON.stringify(normalized))
-      if (data.access_token) setToken(data.access_token)
+      if (data.access_token) setAccessToken(data.access_token)
       return normalized
     },
     []
@@ -191,7 +208,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await fetch(apiUrl('/api/v1/auth/logout'), { method: 'POST', credentials: 'include' })
     } finally {
       localStorage.removeItem('learnx_user')
-      setToken(null)
+      clearAccessToken()
       setUser(null)
       window.location.href = '/'
     }
@@ -206,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
     } finally {
       localStorage.removeItem('learnx_user')
-      setToken(null)
+      clearAccessToken()
       setUser(null)
       window.location.href = '/'
     }
@@ -216,6 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       loading,
+      authReady: !loading,
       isAuthenticated: user !== null,
       register,
       login,
