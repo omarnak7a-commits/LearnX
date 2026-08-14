@@ -2,7 +2,7 @@
  * File Vault API client — real upload/download via Supabase Storage S3.
  */
 
-import { apiFetch } from '../apiClient'
+import { apiFetch, apiFetchArrayBuffer } from '../apiClient'
 import type { FileAiAnalysis, VaultFile } from '../../types/fileVault'
 
 export interface ApiVaultFile {
@@ -110,6 +110,26 @@ export const vaultApi = {
 
   downloadUrl: (fileId: string) =>
     apiFetch<{ downloadUrl: string; name: string }>(`/api/v1/file-vault/${fileId}/download`),
+
+  /**
+   * Returns the authenticated streaming URL for the raw PDF bytes of an
+   * owned file. Callers (the PDF Viewer) attach the bearer token as a
+   * query param only when they cannot set request headers (e.g. an
+   * `<embed>`/`<object>` tag); the in-app viewer uses `contentBuffer`
+   * below, which goes through the centralized request layer with proper
+   * Authorization / X-Access-Token headers.
+   */
+  contentUrl: (fileId: string) => `/api/v1/file-vault/${fileId}/content`,
+
+  /**
+   * Fetches the raw PDF bytes for an owned file via the authenticated
+   * backend, going through the same centralized request layer (with
+   * JWT, X-Access-Token, the auth bootstrap gate, the concurrency-safe
+   * refresh-on-401 path, and the global error type) used by every
+   * other authenticated call. Returns the bytes as a real `ArrayBuffer`
+   * so the PDF Viewer can pass them directly to `pdfjsLib.getDocument`.
+   */
+  contentBuffer: (fileId: string) => apiFetchArrayBuffer(`/api/v1/file-vault/${fileId}/content`),
 
   createNote: (input: { fileId: string; page: number; content: string; color?: string }) =>
     apiFetch<Record<string, unknown>>('/api/v1/file-vault/notes', { method: 'POST', body: input }),

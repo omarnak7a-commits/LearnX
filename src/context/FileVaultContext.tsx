@@ -184,6 +184,18 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
         // Backend unreachable — keep the local offline path.
         await storage.putBlob(localId, new Blob([arrayBuffer], { type: 'application/pdf' }))
       }
+      // Always mirror the bytes to the local IndexedDB blob store under the
+      // canonical server ID. The in-browser PDF Viewer reads from this store
+      // for instant first-paint, and the authenticated content endpoint is
+      // the fallback for files that never made it to the local cache
+      // (e.g. previously-uploaded files opened on a new device).
+      if (serverId !== localId) {
+        try {
+          await storage.putBlob(serverId, new Blob([arrayBuffer], { type: 'application/pdf' }))
+        } catch {
+          // Non-fatal — the authenticated content endpoint is the fallback.
+        }
+      }
       setUploadProgress((prev) => ({ ...prev, [localId]: 70 }))
 
       const extracted = await extractPdf(arrayBuffer.slice(0))
@@ -381,12 +393,44 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
     async (id: string): Promise<PDFDocumentProxy | null> => {
       const cached = pdfDocCache.current.get(id)
       if (cached) return cached
-      const blob = await storage.getBlob(id)
-      if (!blob) return null
-      const buffer = await blob.arrayBuffer()
-      const doc = await loadPdfDocument(buffer)
-      pdfDocCache.current.set(id, doc)
-      return doc
+
+      // Fast path: bytes are already in IndexedDB (the typical case for
+      // files the current device uploaded). Return immediately.
+      const localBlob = await storage.getBlob(id)
+      if (localBlob) {
+        try {
+          const buffer = await localBlob.arrayBuffer()
+          const doc = await loadPdfDocument(buffer)
+          pdfDocCache.current.set(id, doc)
+          return doc
+        } catch {
+          // Bad local cache — fall through to the network path.
+        }
+      }
+
+      // Authenticated fallback: fetch the bytes from the user's own vault
+      // namespace through the centralized request layer. This is the path
+      // that makes previously-uploaded PDFs viewable after a refresh, a
+      // new device, or any time the IndexedDB mirror is missing.
+      try {
+        const buffer = await vaultApi.contentBuffer(id)
+        // Best-effort: mirror the bytes to IndexedDB so the next open is
+        // instant. Failure to write the cache is non-fatal.
+        try {
+          await storage.putBlob(id, new Blob([buffer], { type: 'application/pdf' }))
+        } catch {
+          // ignore cache write errors
+        }
+        const doc = await loadPdfDocument(buffer)
+        pdfDocCache.current.set(id, doc)
+        return doc
+      } catch {
+        // Either a 401 (handled upstream by the auth layer), a 404
+        // (file does not belong to the caller / was removed), or a
+        // network error. Surface a clean "no document" result; the
+        // FileWorkspace renders a proper error state for this.
+        return null
+      }
     },
     [storage]
   )

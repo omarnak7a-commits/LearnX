@@ -57,17 +57,42 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
   const { recordProgress } = useChallenges()
   const [tab, setTab] = useState<WorkspaceTab>(initialTab)
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
+  const [docError, setDocError] = useState<string | null>(null)
+  const [docLoading, setDocLoading] = useState(true)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const sessionStartRef = useRef(Date.now())
 
   useEffect(() => {
     let cancelled = false
-    getPdfDocument(file.id).then((d) => {
-      if (!cancelled) setDoc(d)
-    })
+    setDoc(null)
+    setDocError(null)
+    setDocLoading(true)
+    getPdfDocument(file.id)
+      .then((d) => {
+        if (cancelled) return
+        if (d) {
+          setDoc(d)
+        } else {
+          setDocError(
+            'This PDF could not be loaded. It may have been deleted, or your session has expired. Please try again.'
+          )
+        }
+      })
+      .catch((reason) => {
+        if (cancelled) return
+        setDocError(
+          reason instanceof Error
+            ? reason.message
+            : 'This PDF could not be loaded. Please try again in a moment.'
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setDocLoading(false)
+      })
     return () => {
       cancelled = true
     }
-  }, [file.id, getPdfDocument])
+  }, [file.id, getPdfDocument, loadAttempt])
 
   // Track real study time spent in this workspace and flush it on unmount —
   // both into the File Vault's per-file stats and the Global XP System's
@@ -160,6 +185,11 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
                   recordProgress('pdf-read')
                 }}
                 color={file.color}
+                errorMessage={docError}
+                loadingMessage={docLoading ? 'Loading your document…' : null}
+                onRequestReload={() => {
+                  setLoadAttempt((value) => value + 1)
+                }}
               />
             </div>
           )}

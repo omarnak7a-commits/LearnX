@@ -22,7 +22,7 @@ Endpoints (all under /api/v1/courses):
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_role
@@ -188,16 +188,17 @@ def update_course(
     return _course_out(db, course, user)
 
 
-@router.delete("/{course_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{course_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def delete_course(
     course_id: str,
     user: User = Depends(require_role("doctor")),
     db: Session = Depends(get_db),
-) -> None:
+) -> Response:
     course = course_service.get_course(db, course_id)
     if course is None or course.doctor_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Course not found.")
     course_service.delete_course(db, course_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{course_id}/modules", response_model=ModuleOut, status_code=status.HTTP_201_CREATED)
@@ -273,12 +274,12 @@ def rename_lesson(
     return {"ok": True}
 
 
-@router.delete("/modules/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/modules/{module_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def delete_module(
     module_id: str,
     user: User = Depends(require_role("doctor")),
     db: Session = Depends(get_db),
-) -> None:
+) -> Response:
     module = db.get(CourseModule, module_id)
     if module is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Module not found.")
@@ -286,14 +287,15 @@ def delete_module(
     if course is None or course.doctor_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Module not found.")
     course_service.delete_module(db, module_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.delete("/lessons/{lesson_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/lessons/{lesson_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def delete_lesson(
     lesson_id: str,
     user: User = Depends(require_role("doctor")),
     db: Session = Depends(get_db),
-) -> None:
+) -> Response:
     from app.models.course import CourseLesson
 
     lesson = db.get(CourseLesson, lesson_id)
@@ -304,6 +306,7 @@ def delete_lesson(
     if course is None or course.doctor_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found.")
     course_service.delete_lesson(db, lesson_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{course_id}/reorder-modules")

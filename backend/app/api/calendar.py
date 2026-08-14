@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -107,15 +107,16 @@ def update_event(
     return _out(event)
 
 
-@router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def delete_event(
     event_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> None:
+) -> Response:
     event = db.get(CalendarEvent, event_id)
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found.")
     require_owner(str(event.owner_id), str(user.id))
     db.delete(event)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
