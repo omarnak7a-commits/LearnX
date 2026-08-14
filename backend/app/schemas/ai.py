@@ -121,6 +121,12 @@ class AIQuizRequest(AISourceRequest):
     difficulty: Difficulty | Literal["mixed"] = "mixed"
     kind: Literal["practice", "exam"] = "practice"
     allowed_pages: list[int] | None = Field(default=None, min_length=1, max_length=300)
+    # Optional determinism + history knobs (backward compatible; the frontend
+    # does not need to send them). A seed makes selection/randomization
+    # reproducible; previousQuestions lets callers suppress repeats, and the
+    # backend also merges persisted analysis questions as additional history.
+    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    previous_questions: list[str] = Field(default_factory=list, max_length=100)
 
 
 class AIQuizQuestion(AIBaseModel):
