@@ -201,7 +201,8 @@ _SKILL_RULES: list[tuple[str, list[str]]] = [
     ("process_order", ["step", "stage", "phase", "sequence", "order", "first", "next", "then", "follows", "followed by", "which step", "occurs next", "process", "work", "works", "produce", "produced", "generate", "generated", "الخطوه", "خطوات", "مرحله", "ترتيب", "تسلسل", "التالي", "العمليه", "ينتج", "يتم انتاج"]),
     ("cause_effect", ["why", "because", "reason", "cause", "effect", "affect", "leads", "results in", "due to", "therefore", "consequence", "impact", "لماذا", "السبب", "بسبب", "نتيجه", "يودي", "يسبب", "تاثير", "اثر"]),
     ("application", ["what would happen", "scenario", "demonstrates", "demonstrate", "example", "apply", "predict", "suppose", "given", "ماذا يحدث لو", "سيناريو", "مثال", "لنفترض", "توقع", "يطبق"]),
-    ("understanding", ["explain", "explains", "describe", "describes", "how", "main purpose", "primary function", "main idea", "main function", "purpose", "function", "role", "best explains", "best describes", "summarize", "relationship", "relation", "conclusion", "why is", "اشرح", "وضح", "وظيفه", "لخص", "الفكره", "العلاقه", "استنتاج", "الغرض"]),
+    ("analysis", ["infer", "inference", "conclusion", "conclude", "best supported", "evidence supports", "analyze", "analysis", "relationship", "can be deduced", "استنتاج", "يستنتج", "حلل", "العلاقه"]),
+    ("understanding", ["explain", "explains", "describe", "describes", "how", "main purpose", "primary function", "main idea", "main function", "purpose", "function", "role", "best explains", "best describes", "summarize", "relation", "why is", "اشرح", "وضح", "وظيفه", "لخص", "الفكره", "الغرض"]),
     ("factual_recall", ["what is", "define", "definition", "which of the following", "identify", "name", "list", "true or false", "who", "what", "when", "where", "ما هو", "ما هي", "عرف", "تعريف", "اذكر", "عدد", "ما المقصود", "حدد", "صح ام خطا", "ما"]),
 ]
 
@@ -377,31 +378,50 @@ _DIFF_ORDER = {"easy": 0, "medium": 1, "hard": 2}
 
 @dataclass
 class CandidateScore:
+    """The eight product quality dimensions and their exact weighted total."""
+
     total: float
+    educational_importance: float = 0.0
+    source_grounding: float = 0.0
+    conceptual_understanding: float = 0.0
+    clarity: float = 0.0
+    distractor_quality: float = 0.0
+    cognitive_value: float = 0.0
+    novelty: float = 0.0
+    difficulty_match: float = 0.0
+    # Compatibility diagnostics retained for existing callers/tests.  They do
+    # not add extra weight to the final score.
     relevance: float = 0.0
     educational_value: float = 0.0
     concept_importance: float = 0.0
-    difficulty_match: float = 0.0
-    novelty: float = 0.0
-    clarity: float = 0.0
-    distractor_quality: float = 0.0
-    source_grounding: float = 0.0
-    # Boilerplate candidates are rejected outright: every component is zero
-    # and the offending fields are listed so the rejection is explainable.
     boilerplate: list[str] = field(default_factory=list)
 
     @property
     def breakdown(self) -> dict[str, float]:
         return {
-            "relevance": self.relevance,
-            "educational_value": self.educational_value,
-            "concept_importance": self.concept_importance,
-            "difficulty_match": self.difficulty_match,
-            "novelty": self.novelty,
+            "educational_importance": self.educational_importance,
+            "source_grounding": self.source_grounding,
+            "conceptual_understanding": self.conceptual_understanding,
             "clarity": self.clarity,
             "distractor_quality": self.distractor_quality,
-            "source_grounding": self.source_grounding,
+            "cognitive_value": self.cognitive_value,
+            "novelty": self.novelty,
+            "difficulty_match": self.difficulty_match,
         }
+
+
+# These constants are intentionally public in the module: tests assert that
+# implementation and product specification cannot silently drift apart.
+QUALITY_WEIGHTS: dict[str, float] = {
+    "educational_importance": 0.25,
+    "source_grounding": 0.20,
+    "conceptual_understanding": 0.15,
+    "clarity": 0.10,
+    "distractor_quality": 0.10,
+    "cognitive_value": 0.10,
+    "novelty": 0.05,
+    "difficulty_match": 0.05,
+}
 
 
 def _difficulty_match(question_difficulty: str, requested: str) -> float:
@@ -417,6 +437,196 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
 
+_ABSURD_DISTRACTOR = re.compile(
+    r"\b(banana|purple elephant|unicorn|magic|random answer|i don t know|none of the above|all of the above|zzzz)\b",
+    re.IGNORECASE,
+)
+
+
+def distractor_quality_score(question: AIQuizQuestion, vocab: set[str]) -> float:
+    """Category/shape/source checks for MCQ distractors (1.0 for non-MCQ)."""
+    if question.type != "mcq":
+        if question.type == "true-false":
+            values = {normalize_question_text(value) for value in question.options or []}
+            return 1.0 if values == {"true", "false"} or values == {"صح", "خطا"} else 0.0
+        return 1.0
+    if not question.options or len(question.options) != 4:
+        return 0.0
+
+    normalized = [normalize_question_text(value) for value in question.options]
+    if any(not value for value in normalized) or len(set(normalized)) != 4:
+        return 0.0
+    correct_key = normalize_question_text(question.correct_answer)
+    if normalized.count(correct_key) != 1:
+        return 0.0
+    correct = question.correct_answer.strip()
+    distractors = [value.strip() for value in question.options if normalize_question_text(value) != correct_key]
+    if len(distractors) != 3:
+        return 0.0
+
+    option_lengths = [max(1, len(content_token_list(value))) for value in question.options]
+    shortest, longest = min(option_lengths), max(option_lengths)
+    shape = 1.0 if longest <= max(5, shortest * 4) else 0.55
+    correct_numeric = bool(re.search(r"\d|[=+*/^]", correct))
+    if correct_numeric:
+        numeric_count = sum(bool(re.search(r"\d|[=+*/^]", value)) for value in question.options)
+        if numeric_count < 3:
+            shape *= 0.4
+    if correct.lower().startswith("to "):
+        parallel = sum(value.lower().startswith("to ") for value in question.options)
+        if parallel < 3:
+            shape *= 0.65
+
+    checks: list[float] = []
+    for distractor in distractors:
+        value = 1.0
+        if len(distractor) < 2 or len(distractor) > 400:
+            value *= 0.25
+        if _ABSURD_DISTRACTOR.search(normalize_question_text(distractor)):
+            value = 0.0
+        tokens = content_tokens(distractor)
+        # Plausible distractors should be drawn from the same source domain.
+        if not (tokens & vocab):
+            value *= 0.25
+        length_ratio = max(len(distractor), len(correct)) / max(1, min(len(distractor), len(correct)))
+        if length_ratio > 5:
+            value *= 0.45
+        checks.append(value)
+    return _clamp(shape * (sum(checks) / max(1, len(checks))))
+
+
+def _clarity_score(question: AIQuizQuestion) -> float:
+    # Clarity is about readable question form, not the number of non-stopword
+    # concepts. A concise prompt such as "What is mitosis?" is grammatically
+    # complete even though its content-token set has only one item.
+    prompt_words = re.findall(r"[^\W_]+", question.prompt, flags=re.UNICODE)
+    if len(prompt_words) < 3 or len(question.prompt) < 8 or len(question.prompt) > 600:
+        return 0.35
+    value = 1.0
+    if re.search(r"\b(thing|stuff|something|it above|the text above)\b", question.prompt, re.IGNORECASE):
+        value *= 0.45
+    if question.type in {"mcq", "true-false"} and not question.options:
+        value *= 0.2
+    if question.type == "fill-blank" and len(re.findall(r"_{3,}", question.prompt)) != 1:
+        value *= 0.2
+    return value
+
+
+def _cognitive_score(skill: str) -> float:
+    return {
+        "factual_recall": 0.55,
+        "understanding": 0.80,
+        "process_order": 0.86,
+        "misconception": 0.86,
+        "cause_effect": 0.92,
+        "comparison": 0.92,
+        "application": 1.0,
+        "analysis": 1.0,
+    }.get(skill, 0.65)
+
+
+def _novelty(question: AIQuizQuestion, history: list[str]) -> float:
+    if not history:
+        return 1.0
+    return 1.0 - max(semantic_similarity(question.prompt, past) for past in history)
+
+
+def _explanation_quality(question: AIQuizQuestion, evidence: str = "") -> float:
+    explanation_tokens = content_tokens(question.explanation)
+    if len(explanation_tokens) < 4:
+        return 0.25
+    specificity = _clamp(len(explanation_tokens) / 12)
+    if evidence:
+        overlap = len(explanation_tokens & content_tokens(evidence)) / max(1, len(explanation_tokens))
+        specificity = 0.45 * specificity + 0.55 * _clamp(overlap * 2.5)
+    return specificity
+
+
+def _weighted_score(values: dict[str, float]) -> float:
+    return sum(QUALITY_WEIGHTS[name] * values[name] for name in QUALITY_WEIGHTS)
+
+
+def score_blueprinted_candidate(
+    question: AIQuizQuestion,
+    *,
+    importance: float,
+    cognitive_skill: str,
+    evidence: str,
+    source_quote: str,
+    vocab: set[str],
+    page_text: dict[int, str],
+    included_pages: set[int],
+    requested_difficulty: str,
+    history: list[str],
+) -> CandidateScore:
+    """Authoritative score for a candidate tied to a verified blueprint."""
+    boilerplate = question_boilerplate_fields(question)
+    if boilerplate:
+        return CandidateScore(total=0.0, boilerplate=boilerplate)
+
+    prompt_tokens = content_tokens(question.prompt)
+    answer_tokens = content_tokens(question.correct_answer)
+    explanation_tokens = content_tokens(question.explanation)
+    evidence_tokens = content_tokens(evidence)
+    quote_key = " ".join(content_token_list(source_quote))
+    evidence_key = " ".join(content_token_list(evidence))
+
+    valid_pages = [page for page in question.source_pages if page in included_pages]
+    quote_on_page = bool(quote_key) and any(
+        quote_key in " ".join(content_token_list(page_text.get(page, ""))) for page in valid_pages
+    )
+    quote_matches_evidence = bool(quote_key and evidence_key) and (
+        quote_key == evidence_key or quote_key in evidence_key or evidence_key in quote_key
+    )
+    answer_support = 1.0 if question.type == "true-false" else _clamp(
+        len(answer_tokens & evidence_tokens) / max(1, len(answer_tokens)) * 1.5
+    )
+    prompt_support = _clamp(len(prompt_tokens & evidence_tokens) / max(1, len(prompt_tokens)) * 2.0)
+    explanation_support = _clamp(
+        len(explanation_tokens & evidence_tokens) / max(1, len(explanation_tokens)) * 2.0
+    )
+    source_grounding = (
+        0.35 * float(quote_on_page)
+        + 0.25 * float(quote_matches_evidence)
+        + 0.15 * answer_support
+        + 0.10 * prompt_support
+        + 0.15 * explanation_support
+    )
+
+    educational_importance = _clamp(importance)
+    conceptual_understanding = 0.55 * _cognitive_score(cognitive_skill) + 0.45 * _explanation_quality(
+        question, evidence
+    )
+    clarity = _clarity_score(question)
+    distractors = distractor_quality_score(question, vocab)
+    cognitive_value = _cognitive_score(cognitive_skill)
+    novelty = _novelty(question, history)
+    difficulty_match = _difficulty_match(question.difficulty, requested_difficulty)
+    relevance = _clamp(
+        len(content_tokens(f"{question.prompt} {question.correct_answer}") & vocab)
+        / max(1, len(content_tokens(f"{question.prompt} {question.correct_answer}")))
+    )
+    values = {
+        "educational_importance": educational_importance,
+        "source_grounding": source_grounding,
+        "conceptual_understanding": conceptual_understanding,
+        "clarity": clarity,
+        "distractor_quality": distractors,
+        "cognitive_value": cognitive_value,
+        "novelty": novelty,
+        "difficulty_match": difficulty_match,
+    }
+    total = _weighted_score(values)
+    rounded = {name: round(value, 4) for name, value in values.items()}
+    return CandidateScore(
+        total=round(total, 4),
+        **rounded,
+        relevance=round(relevance, 4),
+        educational_value=round(_explanation_quality(question, evidence), 4),
+        concept_importance=round(educational_importance, 4),
+    )
+
+
 def score_candidate(
     question: AIQuizQuestion,
     *,
@@ -427,132 +637,32 @@ def score_candidate(
     requested_difficulty: str,
     history: list[str],
 ) -> CandidateScore:
-    """Transparent multi-factor score for one candidate question."""
-    # Boilerplate scoring rejection: questions built on copyright/legal/
-    # publisher/metadata text receive a score of zero, whatever their other
-    # factors. This mirrors the earlier normalize_candidate rejection so the
-    # scoring layer alone is already safe (defence in depth).
+    """Compatibility scorer for callers without blueprints.
+
+    The production pipeline uses :func:`score_blueprinted_candidate`; this
+    adapter keeps the deterministic utility useful in tests and older code
+    while using the same eight weights.
+    """
     boilerplate = question_boilerplate_fields(question)
     if boilerplate:
         return CandidateScore(total=0.0, boilerplate=boilerplate)
-
-    prompt = normalize_question_text(question.prompt)
-    combined_tokens = content_tokens(
-        f"{question.prompt} {question.correct_answer} {' '.join(question.options or [])}"
+    concept, overlap = match_concept(question, concepts)
+    skill = classify_cognitive_skill(question.prompt)
+    # Legacy candidates have no exact quote, so use their matched evidence and
+    # pages as a diagnostic estimate—not as production-grade grounding.
+    score = score_blueprinted_candidate(
+        question,
+        importance=_clamp(concept.importance * (0.5 + overlap)),
+        cognitive_skill=skill,
+        evidence=concept.evidence,
+        source_quote=concept.evidence,
+        vocab=vocab,
+        page_text=page_text,
+        included_pages=included_pages,
+        requested_difficulty=requested_difficulty,
+        history=history,
     )
-    prompt_tokens = content_tokens(question.prompt)
-
-    # --- relevance: how much of the question is drawn from the source ---
-    relevance = _clamp(
-        len(combined_tokens & vocab) / max(1, len(combined_tokens)) if combined_tokens else 0.0
-    )
-
-    # --- concept importance ---
-    concept, concept_overlap = match_concept(question, concepts)
-    concept_importance = concept.importance
-    # A question that barely touches its assigned concept is less valuable.
-    concept_importance *= _clamp(0.5 + concept_overlap)
-
-    # --- educational value ---
-    explanation_quality = _clamp(
-        (len(question.explanation) - 20) / 120 if len(question.explanation) < 140 else 1.0
-    )
-    if len(prompt_tokens) >= 3:
-        specificity = 1.0
-    elif len(prompt_tokens) == 2:
-        specificity = 0.85
-    elif len(prompt_tokens) == 1:
-        specificity = 0.7
-    else:
-        specificity = 0.3
-    educational_value = 0.6 * explanation_quality + 0.4 * specificity
-
-    # --- difficulty match ---
-    difficulty_match = _difficulty_match(question.difficulty, requested_difficulty)
-    # Hard questions must still be anchored to important content.
-    if question.difficulty == "hard" and concept.importance < 0.4:
-        difficulty_match *= 0.5
-
-    # --- novelty against previous-question history ---
-    novelty = 1.0
-    if history:
-        novelty = 1.0 - max(semantic_similarity(question.prompt, past) for past in history)
-
-    # --- clarity ---
-    clarity = 1.0
-    if question.type in {"mcq", "true-false"}:
-        if not question.options:
-            clarity *= 0.3
-        else:
-            normalized = [o.strip().lower() for o in question.options]
-            if len(set(normalized)) != len(normalized):
-                clarity *= 0.4
-            if len(question.prompt) < 10 or len(question.prompt) > 500:
-                clarity *= 0.6
-    if not prompt_tokens:
-        clarity *= 0.3
-
-    # --- distractor quality (MCQ only; T/F and text answers have none) ---
-    distractor_quality = 1.0
-    if question.type == "mcq" and question.options:
-        options = question.options
-        correct = question.correct_answer.strip()
-        distractors = [o for o in options if o.strip().lower() != correct.lower()]
-        if len(distractors) < 2:
-            distractor_quality *= 0.2
-        else:
-            checks: list[float] = []
-            for d in distractors:
-                ok = 1.0
-                if not d or not d.strip():
-                    ok *= 0.0
-                if len(d) < 3 or len(d) > 400:
-                    ok *= 0.5
-                length_ratio = abs(len(d) - len(correct)) / max(1, len(correct))
-                if length_ratio > 1.5:
-                    ok *= 0.6
-                d_tokens = content_tokens(d)
-                if not (d_tokens & vocab):
-                    ok *= 0.5  # distractor unrelated to the source
-                checks.append(ok)
-            distractor_quality *= sum(checks) / len(checks)
-    elif question.type == "true-false":
-        options = [o.strip().lower() for o in (question.options or [])]
-        if sorted(options) not in (["false", "true"], ["صح", "خطا"]):
-            distractor_quality *= 0.6
-
-    # --- source grounding: pages in scope + local page-text overlap ---
-    source_grounding = 0.0
-    valid_pages = [p for p in question.source_pages if p in included_pages]
-    if valid_pages:
-        source_grounding = 0.5
-        local = max(
-            (_jaccard(prompt_tokens, content_tokens(page_text.get(p, ""))) for p in valid_pages),
-            default=0.0,
-        )
-        source_grounding += 0.5 * _clamp(local * 2)
-
-    total = (
-        0.15 * relevance
-        + 0.15 * educational_value
-        + 0.20 * concept_importance
-        + 0.15 * difficulty_match
-        + 0.05 * novelty
-        + 0.10 * clarity
-        + 0.10 * distractor_quality
-        + 0.10 * source_grounding
-    )
-    return CandidateScore(
-        total=round(total, 4),
-        relevance=round(relevance, 4),
-        educational_value=round(educational_value, 4),
-        concept_importance=round(concept_importance, 4),
-        difficulty_match=round(difficulty_match, 4),
-        novelty=round(novelty, 4),
-        clarity=round(clarity, 4),
-        distractor_quality=round(distractor_quality, 4),
-        source_grounding=round(source_grounding, 4),
-    )
+    return score
 
 
 # --------------------------------------------------------------------------- #
@@ -566,6 +676,10 @@ class ScoredCandidate:
     concept: str
     skill: str
     pattern: str
+    objective_key: str = ""
+    blueprint_id: str = ""
+    category: str = ""
+    knowledge_target: str = ""
 
 
 def _shuffle(rng: random.Random, items: list[Any]) -> list[Any]:
@@ -588,18 +702,19 @@ def select_diverse(
     *,
     rng: random.Random,
 ) -> list[AIQuizQuestion]:
-    """Greedy highest-score selection with diversity penalties.
+    """Select strong questions with hard objective deduplication and diversity.
 
-    Penalties discourage reusing the same concept, cognitive skill, wording
-    pattern, page, or true/false polarity, so the final quiz stays varied
-    while still favouring high-quality questions.
+    The same concept may legitimately recur only for a different knowledge
+    target. The same semantic objective may not recur at all, even when its
+    wording, cognitive verb, or question type differs.
     """
-    pool = list(candidates)
-    pool.sort(key=lambda c: c.score, reverse=True)
-
+    pool = sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
     selected: list[AIQuizQuestion] = []
-    seen_concepts: set[str] = set()
-    seen_pages: dict[int, int] = {}
+    seen_objectives: set[str] = set()
+    seen_concept_targets: set[tuple[str, str]] = set()
+    concept_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    page_counts: dict[int, int] = {}
     skill_counts: dict[str, int] = {}
     pattern_counts: dict[str, int] = {}
     true_count = 0
@@ -608,40 +723,58 @@ def select_diverse(
     while pool and len(selected) < count:
         best_index = -1
         best_score = float("-inf")
-        for i, candidate in enumerate(pool):
+        for index, candidate in enumerate(pool):
+            concept_target = (
+                normalize_question_text(candidate.concept),
+                normalize_question_text(candidate.knowledge_target),
+            )
+            if candidate.objective_key and candidate.objective_key in seen_objectives:
+                continue
+            if all(concept_target) and concept_target in seen_concept_targets:
+                continue
             penalty = 0.0
-            penalty += 0.35 * skill_counts.get(candidate.skill, 0)
-            penalty += 0.20 * pattern_counts.get(candidate.pattern, 0)
-            if candidate.concept in seen_concepts:
-                penalty += 0.45
+            penalty += 0.18 * skill_counts.get(candidate.skill, 0)
+            penalty += 0.08 * pattern_counts.get(candidate.pattern, 0)
+            penalty += 0.12 * concept_counts.get(candidate.concept.casefold(), 0)
+            if candidate.category:
+                penalty += 0.05 * category_counts.get(candidate.category, 0)
             for page in candidate.question.source_pages:
-                penalty += 0.06 * seen_pages.get(page, 0)
+                penalty += 0.035 * page_counts.get(page, 0)
             if candidate.question.type == "true-false":
-                answer = candidate.question.correct_answer.strip().lower()
-                is_true = answer in {"true", "صح", "صحيح"}
-                if is_true:
-                    if true_count > false_count:
-                        penalty += 0.35
-                elif false_count >= true_count:
-                    penalty += 0.35
-            # Small deterministic jitter so equal scores don't always pick
-            # the first candidate, but the same seed always picks the same set.
-            jitter = rng.random() * 0.08
-            adjusted = candidate.score - penalty + jitter
+                answer = normalize_question_text(candidate.question.correct_answer)
+                if answer in {"true", "صح", "صحيح"} and true_count > false_count:
+                    penalty += 0.16
+                if answer in {"false", "خطا"} and false_count > true_count:
+                    penalty += 0.16
+            # Seeds vary only candidates that have already cleared every hard
+            # gate and the quality floor; jitter can never rescue weak content.
+            adjusted = candidate.score - penalty + rng.random() * 0.035
             if adjusted > best_score:
                 best_score = adjusted
-                best_index = i
+                best_index = index
 
+        if best_index < 0:
+            break
         chosen = pool.pop(best_index)
-        question = chosen.question
-        selected.append(question)
-        seen_concepts.add(chosen.concept)
+        selected.append(chosen.question)
+        if chosen.objective_key:
+            seen_objectives.add(chosen.objective_key)
+        chosen_concept_target = (
+            normalize_question_text(chosen.concept),
+            normalize_question_text(chosen.knowledge_target),
+        )
+        if all(chosen_concept_target):
+            seen_concept_targets.add(chosen_concept_target)
+        concept_key = chosen.concept.casefold()
+        concept_counts[concept_key] = concept_counts.get(concept_key, 0) + 1
+        if chosen.category:
+            category_counts[chosen.category] = category_counts.get(chosen.category, 0) + 1
         skill_counts[chosen.skill] = skill_counts.get(chosen.skill, 0) + 1
         pattern_counts[chosen.pattern] = pattern_counts.get(chosen.pattern, 0) + 1
-        for page in question.source_pages:
-            seen_pages[page] = seen_pages.get(page, 0) + 1
-        if question.type == "true-false":
-            answer = question.correct_answer.strip().lower()
+        for page in chosen.question.source_pages:
+            page_counts[page] = page_counts.get(page, 0) + 1
+        if chosen.question.type == "true-false":
+            answer = normalize_question_text(chosen.question.correct_answer)
             if answer in {"true", "صح", "صحيح"}:
                 true_count += 1
             else:

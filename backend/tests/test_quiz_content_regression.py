@@ -17,12 +17,12 @@ def biology_pool() -> _RawQuizPool:
             dict(
                 id="photosynthesis-purpose",
                 prompt="What is the main purpose of photosynthesis?",
-                correct_answer="To convert light energy into chemical energy",
+                correct_answer="light energy into chemical energy",
                 options=[
-                    "To convert light energy into chemical energy",
-                    "To release stored energy from glucose",
-                    "To copy genetic information before division",
-                    "To move water through animal cells",
+                    "light energy into chemical energy",
+                    "stored energy from glucose",
+                    "genetic information before division",
+                    "water through animal cells",
                 ],
                 source_pages=[1],
                 explanation="Photosynthesis converts light energy into chemical energy in chloroplasts.",
@@ -33,20 +33,26 @@ def biology_pool() -> _RawQuizPool:
                 correct_answer="ATP and NADPH",
                 options=["ATP and NADPH", "DNA and RNA", "Glucose and oxygen", "Water and carbon dioxide"],
                 source_pages=[2],
-                explanation="The light reactions produce ATP and NADPH, which power the Calvin cycle.",
+                explanation="ATP and NADPH power carbon fixation.",
             ),
             dict(
                 id="calvin-cycle",
-                prompt="What does the Calvin cycle do with carbon dioxide?",
-                correct_answer="It fixes carbon dioxide into carbohydrates",
+                prompt=(
+                    "Suppose carbon dioxide enters the Calvin cycle. "
+                    "What would happen to the carbon dioxide?"
+                ),
+                correct_answer="The Calvin cycle fixes carbon dioxide",
                 options=[
-                    "It fixes carbon dioxide into carbohydrates",
-                    "It splits water into oxygen",
-                    "It absorbs photons with chlorophyll",
-                    "It releases ATP from glucose",
+                    "The Calvin cycle fixes carbon dioxide",
+                    "The light reactions split water",
+                    "Chlorophyll captures photons",
+                    "ATP and NADPH power carbon fixation",
                 ],
                 source_pages=[3],
-                explanation="The Calvin cycle fixes carbon dioxide and builds carbohydrates.",
+                explanation=(
+                    "The Calvin cycle fixes carbon dioxide and builds carbohydrates "
+                    "through enzyme-controlled reactions."
+                ),
             ),
         ]
     )
@@ -103,9 +109,9 @@ def test_short_meaningful_pdf_generates_a_question() -> None:
                 correct_answer="Two genetically identical daughter cells",
                 options=[
                     "Two genetically identical daughter cells",
-                    "Four genetically different cells",
-                    "One cell without DNA",
-                    "Two unrelated proteins",
+                    "Four genetically different daughter cells",
+                    "Two genetically different daughter cells",
+                    "Four genetically identical daughter cells",
                 ],
                 source_pages=[1],
                 explanation="The note states that mitosis produces two genetically identical daughter cells.",

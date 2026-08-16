@@ -1,23 +1,21 @@
-"""High-quality AI quiz generation pipeline.
+"""Source-grounded, teacher-planned AI quiz generation.
 
-Flow (mirrors the product spec):
+Production flow:
 
-    source PDF  ->  split by page/section  ->  deterministic concept map
-    ->  importance scoring  ->  LLM candidate pool (MORE than needed)
-    ->  per-candidate validation  ->  exact de-dup  ->  paraphrase de-dup
-    ->  previous-question filtering  ->  multi-factor quality scoring
-    ->  quality threshold  ->  diverse final selection  ->  seeded
-    answer-position randomization  ->  existing AIQuizResponse contract.
+    PDF extraction -> boilerplate cleaning -> deterministic evidence signals
+    -> semantic important-content map (A-I) -> backend grounding/classification
+    -> teacher-style question blueprints -> LLM candidate variants
+    -> blueprint/type/evidence hard gates -> objective + wording deduplication
+    -> exact eight-factor quality score -> cognitive diversity selection
+    -> seeded option ordering -> unchanged public response contract.
 
-The LLM is never asked to "just generate N questions". It receives the
-high-value concept map, explicit difficulty/cognitive-skill/wording-pattern
-instructions, the relevant source excerpts, and is asked for an over-sized
-candidate pool that the deterministic layer then scores and trims.
+The provider proposes maps and question prose.  It never decides what survives.
 """
 
 from __future__ import annotations
 
 import random
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,6 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.ai import AIQuizQuestion
 from app.services.ai_documents import AIDocumentSource
 from app.services.ai_service import AIService, AIUnavailableError
+from app.services.quiz_blueprints import (
+    QuestionBlueprint,
+    blueprint_block,
+    build_question_blueprints,
+)
 from app.services.quiz_boilerplate import (
     clean_source_units,
     cleaned_source_block,
@@ -40,35 +43,44 @@ from app.services.quiz_concepts import (
     split_source_units,
     top_concepts,
 )
+from app.services.quiz_content_map import (
+    ContentItem,
+    _RawContentMap,
+    build_content_map_prompt,
+    content_map_block,
+    fallback_content_map,
+    normalize_content_map,
+    quote_is_grounded,
+    quotes_equivalent,
+)
 from app.services.quiz_scoring import (
     ScoredCandidate,
-    duplicates_within,
-    is_repeat_of_history,
-    is_trivial_question,
-    randomize_answer_positions,
-    score_candidate,
-    select_diverse,
     classify_cognitive_skill,
     classify_pattern,
-    match_concept,
+    content_jaccard,
     content_tokens,
+    distractor_quality_score,
+    exact_duplicate_key,
+    is_repeat_of_history,
+    is_trivial_question,
+    normalize_question_text,
+    randomize_answer_positions,
+    score_blueprinted_candidate,
+    select_diverse,
 )
 
-_DEFAULT_THRESHOLD = 0.55
-
-# --------------------------------------------------------------------------- #
-# Lenient LLM candidate schema
-#
-# The LLM is asked for ~20-32 candidates; a single malformed question must
-# not invalidate the whole pool. We therefore validate leniently here and
-# normalize/repair each candidate individually before scoring.
-# --------------------------------------------------------------------------- #
+_DEFAULT_THRESHOLD = 0.68
+_MIN_GROUNDING = 0.72
+_MIN_DISTRACTORS = 0.55
 
 
 class _RawCandidate(BaseModel):
+    """Lenient provider shape; malformed entries do not invalidate the pool."""
+
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: str = ""
+    blueprint_id: str = ""
     type: str = ""
     prompt: str = ""
     options: list[str] | None = None
@@ -76,6 +88,9 @@ class _RawCandidate(BaseModel):
     explanation: str = ""
     difficulty: str = ""
     source_pages: list[Any] = Field(default_factory=list)
+    source_quote: str = ""
+    distractor_rationales: list[str] = Field(default_factory=list)
+    false_statement_basis: str = ""
 
 
 class _RawQuizPool(BaseModel):
@@ -85,26 +100,67 @@ class _RawQuizPool(BaseModel):
 
 
 _TYPE_ALIASES = {
-    "mcq": "mcq", "multiple-choice": "mcq", "multiple choice": "mcq", "multiple_choice": "mcq",
-    "true-false": "true-false", "true_false": "true-false", "truefalse": "true-false",
-    "true or false": "true-false", "trueorfalse": "true-false",
-    "fill-blank": "fill-blank", "fill_blank": "fill-blank", "fillblank": "fill-blank",
-    "fill in the blank": "fill-blank", "fill-in-the-blank": "fill-blank",
-    "short-answer": "short-answer", "short_answer": "short-answer", "shortanswer": "short-answer",
+    "mcq": "mcq",
+    "multiple-choice": "mcq",
+    "multiple choice": "mcq",
+    "multiple_choice": "mcq",
+    "true-false": "true-false",
+    "true_false": "true-false",
+    "truefalse": "true-false",
+    "true or false": "true-false",
+    "trueorfalse": "true-false",
+    "fill-blank": "fill-blank",
+    "fill_blank": "fill-blank",
+    "fillblank": "fill-blank",
+    "fill in the blank": "fill-blank",
+    "fill-in-the-blank": "fill-blank",
+    "short-answer": "short-answer",
+    "short_answer": "short-answer",
+    "shortanswer": "short-answer",
     "short answer": "short-answer",
 }
-
 _TRUE_WORDS = {"true", "t", "yes", "correct", "right", "صح", "صحيح", "نعم"}
 _FALSE_WORDS = {"false", "f", "no", "incorrect", "wrong", "خطا", "خطأ", "لا"}
+_GENERIC_BLANK_ANSWERS = {
+    "thing",
+    "things",
+    "process",
+    "system",
+    "method",
+    "concept",
+    "information",
+    "example",
+    "result",
+    "important",
+    "document",
+    "page",
+    "section",
+    "it",
+    "they",
+}
+_SOURCE_REFERENCE = re.compile(
+    r"\b(according to|in the source|the document|the text|the passage|the pdf|on page|mentioned|discussed)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
 class QuizContext:
     units: list[Any] = field(default_factory=list)
     concepts: list[Concept] = field(default_factory=list)
+    content_map: list[ContentItem] = field(default_factory=list)
+    blueprints: list[QuestionBlueprint] = field(default_factory=list)
     vocab: set[str] = field(default_factory=set)
     page_text: dict[int, str] = field(default_factory=dict)
     included_pages: set[int] = field(default_factory=set)
+
+
+@dataclass
+class CandidateRecord:
+    question: AIQuizQuestion
+    blueprint: QuestionBlueprint
+    source_quote: str
+    distractor_rationales: tuple[str, ...] = ()
 
 
 @dataclass
@@ -113,11 +169,6 @@ class QuizGenerationResult:
     provider: str
     model: str
     fallback_used: bool
-
-
-# --------------------------------------------------------------------------- #
-# Language & difficulty guidance
-# --------------------------------------------------------------------------- #
 
 
 def quiz_language_guidance(language: str) -> str:
@@ -135,57 +186,31 @@ def quiz_language_guidance(language: str) -> str:
 
 
 _DIFFICULTY_GUIDANCE = {
-    "easy": (
-        "EASY: direct understanding/recall of an important concept — ask what something "
-        "is, or its single most important fact."
-    ),
-    "medium": (
-        "MEDIUM: requires connecting two concepts or interpreting information — ask how "
-        "or why things relate."
-    ),
+    "easy": "EASY: direct understanding or recall of an important concept.",
+    "medium": "MEDIUM: connect or interpret supported ideas.",
     "hard": (
-        "HARD: reasoning, application, comparison, cause/effect, or multi-step "
-        "understanding of IMPORTANT concepts. Hard must NEVER mean obscure or trivial details."
+        "HARD: reason, apply, compare, or analyze IMPORTANT source ideas. "
+        "Hard never means an obscure detail."
     ),
-    "mixed": "MIXED: produce a balanced spread of easy, medium, and hard questions.",
+    "mixed": "MIXED: use each blueprint's planned easy/medium/hard level.",
 }
-
-_COGNITIVE_SKILLS = (
-    "understanding, application, cause/effect, comparison, process/order, "
-    "factual recall, and misconception detection"
-)
-
-_WORDING_PATTERNS = (
-    '"Why does X happen?", "Which statement best explains X?", '
-    '"What would happen if X changed?", "Which step occurs next?", '
-    '"How does X differ from Y?", "Which scenario demonstrates X?", '
-    '"What is the main purpose of X?", "Which conclusion is best supported?", '
-    '"Which statement is incorrect?", "What relationship exists between X and Y?"'
-)
-
-
-# --------------------------------------------------------------------------- #
-# Context building
-# --------------------------------------------------------------------------- #
 
 
 def build_quiz_context(source: AIDocumentSource) -> QuizContext:
-    # Source cleaning runs FIRST: boilerplate lines (copyright notices, legal
-    # text, ISBNs/DOIs/URLs, page folios) and repeated headers/footers are
-    # removed before any concept extraction or scoring sees the text.
+    # Existing boilerplate protection remains the first layer.  Neither the
+    # semantic mapper nor the question writer sees removed headers/legal text.
     units = clean_source_units(split_source_units(source.text))
     concepts = build_concept_map(units)
     vocab: set[str] = set()
     for unit in units:
         vocab |= content_tokens(unit.text)
-    page_text = {unit.page: unit.text for unit in units}
-    included_pages = {unit.page for unit in units}
-    return QuizContext(units=units, concepts=concepts, vocab=vocab, page_text=page_text, included_pages=included_pages)
-
-
-# --------------------------------------------------------------------------- #
-# Prompt building
-# --------------------------------------------------------------------------- #
+    return QuizContext(
+        units=units,
+        concepts=concepts,
+        vocab=vocab,
+        page_text={unit.page: unit.text for unit in units},
+        included_pages={unit.page for unit in units},
+    )
 
 
 def build_candidate_prompt(
@@ -200,59 +225,65 @@ def build_candidate_prompt(
     language: str,
     previous_questions: list[str],
     source_block: str | None = None,
+    blueprints: list[QuestionBlueprint] | None = None,
+    content_items: list[ContentItem] | None = None,
 ) -> str:
-    lines: list[str] = []
-    lines.append(
-        f"Generate exactly {candidate_count} candidate quiz questions for this study document "
-        f"({kind} quiz). {candidate_count} is MORE than the {count} questions that will finally be "
-        "selected, so produce a rich, varied candidate pool."
-    )
-    lines.append("")
-    lines.append(
-        "CONCEPT MAP — test ONLY these high-value concepts (or closely related sub-concepts "
-        "visible in their evidence). Do not test unimportant details."
-    )
-    lines.append(concept_map_block(top_concepts(concepts, 12)))
-    lines.append("")
-    lines.append("DIFFICULTY RULE: " + _DIFFICULTY_GUIDANCE.get(difficulty, _DIFFICULTY_GUIDANCE["mixed"]))
-    lines.append("")
-    lines.append("QUESTION TYPES: " + ", ".join(question_types) + ".")
-    lines.append("")
-    lines.append("COGNITIVE DIVERSITY — mix these skills (only when the source supports them): " + _COGNITIVE_SKILLS + ".")
-    lines.append("")
-    lines.append(
-        "WORDING DIVERSITY — do NOT write 'What is X?' for every question. Use varied patterns, "
-        "for example: " + _WORDING_PATTERNS + ". Only use a pattern when the source supports it."
-    )
-    lines.append("")
-    lines.append("RULES:")
-    lines.append("- Use ONLY the supplied source; never invent facts, names, dates, or numbers.")
-    lines.append("- Distribute questions across the important sections/pages — do not concentrate on one page.")
-    lines.append("- MCQ: exactly 4 plausible options and exactly ONE correct answer. Distractors must be "
-                 "plausible, similar in length, and related to the source — never absurd.")
-    lines.append("- true-false: one clear statement whose truth value is unambiguous in the source; "
-                 "vary True and False correct answers.")
-    lines.append("- Every question needs: a unique id, a prompt, an explanation citing the source, "
-                 "a difficulty (easy/medium/hard), and sourcePages (1-based page numbers where the answer is found).")
-    lines.append("- NEVER ask about page numbers, ISBNs, headers, footers, metadata, word counts, or formatting.")
-    lines.append("- NEVER write questions about copyright notices, publisher/legal/licensing text, "
-                 "trademarks, DOIs, URLs, e-mail addresses, or any boilerplate repeated across pages. "
-                 "The source below has already been cleaned of such material — do not reintroduce it. "
-                 "If a page contains only such material, ignore that page entirely.")
+    """Build the writer prompt.
+
+    Production passes blueprints and therefore supplies only verified evidence
+    packets—not raw PDF text.  The legacy branch keeps this utility backwards
+    compatible for tests and callers that only render a prompt.
+    """
+    if not blueprints:
+        return "\n".join(
+            [
+                f"Generate exactly {candidate_count} candidate quiz questions for this {kind} quiz.",
+                "CONCEPT MAP — test ONLY high-value concepts:",
+                concept_map_block(top_concepts(concepts, 12)),
+                "QUESTION TYPES: " + ", ".join(question_types),
+                "EXCLUDE BOILERPLATE: never ask about copyright, trademarks, publisher metadata, URLs, ISBNs, or repeated headers, footers, and page furniture.",
+                "PREVIOUS QUESTIONS — do NOT repeat or paraphrase any of these:",
+                *[f"- {past}" for past in previous_questions[:30]],
+                "SOURCE:",
+                source_block if source_block is not None else source.prompt_block(),
+            ]
+        )
+
+    lines = [
+        f"Write exactly {candidate_count} candidate variants for a {kind} quiz; {count} will survive.",
+        "The backend has already classified source importance and designed the blueprints below.",
+        "Use a blueprint_id exactly as written. Do not invent, merge, or reinterpret an objective.",
+        "Cover every blueprint once before writing a second wording for any blueprint.",
+        "",
+        "VERIFIED IMPORTANT-CONTENT MAP (H/I are intentionally absent):",
+        content_map_block(content_items or []),
+        "",
+        "TEACHER QUESTION BLUEPRINTS:",
+        blueprint_block(blueprints),
+        "",
+        "HARD RULES:",
+        "- Use only the blueprint's verbatim evidence. No outside facts, assumptions, examples, names, or numbers.",
+        "- Copy that blueprint evidence verbatim into source_quote and cite only its source pages.",
+        "- Match the planned question type, cognitive skill, knowledge target, and difficulty.",
+        "- APPLICATION means transfer, not a label: require a changed condition, prediction, calculation, outcome, or decision. Never turn recall into application by merely prefixing 'Suppose', 'Given', or 'Scenario'.",
+        "- Never ask what the source/document/page says; ask about the subject itself.",
+        "- MCQ: exactly four unique, parallel options and one matching correct answer. Every distractor must be a plausible same-category misconception using source-domain terms. Provide exactly three distractor_rationales explaining why each wrong option is tempting but contradicted by the evidence.",
+        "- True/false: test a meaningful relationship, mechanism, distinction, or constraint—not mere word swapping. A false statement must alter one source-resolvable relation and provide false_statement_basis.",
+        "- Fill-blank: blank exactly one meaningful technical term, formula component, or concept. The answer must appear verbatim in the evidence; never blank a generic word.",
+        "- Application: use a small scenario that applies only the relationship explicitly present in the evidence. Do not add real-world conditions that are absent.",
+        "- Explanations must state why the answer follows from the quoted evidence; do not merely say that it is correct.",
+        "- Never generate metadata, formatting, copyright, publisher, URL, ISBN, header, or footer questions.",
+        "DIFFICULTY RULE: " + _DIFFICULTY_GUIDANCE.get(difficulty, _DIFFICULTY_GUIDANCE["mixed"]),
+    ]
     if previous_questions:
-        lines.append("")
-        lines.append("PREVIOUS QUESTIONS — do NOT repeat or paraphrase any of these:")
-        for past in previous_questions[:30]:
-            lines.append(f"- {past}")
-    lines.append("")
-    lines.append("SOURCE:")
-    lines.append(source_block if source_block is not None else source.prompt_block())
+        lines.extend(["", "PREVIOUS QUESTIONS — do not repeat or paraphrase:"])
+        lines.extend(f"- {past}" for past in previous_questions[:30])
     return "\n".join(lines)
 
 
-# --------------------------------------------------------------------------- #
-# Candidate normalization
-# --------------------------------------------------------------------------- #
+def _canonical_type(value: str) -> str | None:
+    raw = (value or "").strip().lower()
+    return _TYPE_ALIASES.get(raw) or _TYPE_ALIASES.get(raw.replace("_", " "))
 
 
 def _coerce_pages(raw_pages: list[Any], page_count: int) -> list[int]:
@@ -270,40 +301,25 @@ def _coerce_pages(raw_pages: list[Any], page_count: int) -> list[int]:
 
 
 def _normalize_true_false(options: list[str] | None, correct: str) -> tuple[list[str], str] | None:
-    correct_polarity: bool | None = None
-    key = correct.strip().lower()
+    key = normalize_question_text(correct)
     if key in _TRUE_WORDS:
-        correct_polarity = True
-    elif key in _FALSE_WORDS:
-        correct_polarity = False
-    else:
-        # Fall back to the option list to infer polarity.
-        for option in options or []:
-            k = option.strip().lower()
-            if k in _TRUE_WORDS:
-                correct_polarity = True
-                break
-            if k in _FALSE_WORDS:
-                correct_polarity = False
-                break
-    if correct_polarity is None:
-        return None
-    return (["True", "False"], "True" if correct_polarity else "False")
+        return ["True", "False"], "True"
+    if key in _FALSE_WORDS:
+        return ["True", "False"], "False"
+    return None
 
 
 def _dedupe_options(options: list[str]) -> list[str]:
     seen: set[str] = set()
-    out: list[str] = []
+    cleaned: list[str] = []
     for option in options:
-        option = option.strip()
-        if not option:
-            continue
-        key = option.casefold()
-        if key in seen:
+        value = option.strip()
+        key = normalize_question_text(value)
+        if not key or key in seen:
             continue
         seen.add(key)
-        out.append(option)
-    return out
+        cleaned.append(value)
+    return cleaned
 
 
 def normalize_candidate(
@@ -314,68 +330,51 @@ def normalize_candidate(
     page_count: int,
     included_pages: set[int],
 ) -> AIQuizQuestion | None:
-    """Repair + validate one raw LLM candidate; return None when unusable."""
-    qtype = _TYPE_ALIASES.get(raw.type.strip().lower().replace("_", " ").replace(" ", "-").replace("--", "-"))
-    if qtype is None:
-        qtype = _TYPE_ALIASES.get(raw.type.strip().lower())
+    """Basic public-shape normalization; production applies blueprint gates next."""
+    qtype = _canonical_type(raw.type)
     if qtype is None or (allowed_types and qtype not in allowed_types):
         return None
-
-    prompt = (raw.prompt or "").strip()
-    correct = (raw.correct_answer or "").strip()
-    explanation = (raw.explanation or "").strip()
-    if not prompt or not correct or not explanation:
+    prompt = raw.prompt.strip()
+    correct = raw.correct_answer.strip()
+    explanation = raw.explanation.strip()
+    if not prompt or not correct or len(explanation) < 10 or len(prompt) > 700:
         return None
-    if len(prompt) > 700 or len(explanation) < 10:
+    if is_trivial_question(prompt) or _SOURCE_REFERENCE.search(prompt):
         return None
-    if is_trivial_question(prompt):
-        return None
-    # Deterministic boilerplate rejection: a candidate built on copyright,
-    # legal, publisher, ISBN/DOI/URL, or page-folio text is unusable no matter
-    # what the LLM (or the scoring layer) would say about it.
-    if (
-        is_boilerplate_text(prompt)
-        or is_boilerplate_text(correct)
-        or is_boilerplate_text(explanation)
-    ):
+    if any(is_boilerplate_text(value) for value in (prompt, correct, explanation)):
         return None
     if qtype == "fill-blank" and not is_valid_fill_blank(prompt, correct):
         return None
 
-    difficulty = (raw.difficulty or "").strip().lower()
-    if difficulty not in {"easy", "medium", "hard"}:
-        difficulty = "medium"
-
-    # Pages are validated against the pages actually present in the extracted
-    # text (which may be an allowed subset of the whole PDF), not the total
-    # PDF page count.
-    upper_page = max(included_pages) if included_pages else page_count
-    pages = _coerce_pages(raw.source_pages, upper_page)
-    if not pages:
-        return None
-    if included_pages and not (set(pages) & included_pages):
+    pages = _coerce_pages(raw.source_pages, max(included_pages) if included_pages else page_count)
+    if not pages or (included_pages and not set(pages).issubset(included_pages)):
         return None
 
     options: list[str] | None = None
     if qtype == "true-false":
-        tf = _normalize_true_false(raw.options, correct)
-        if tf is None:
+        normalized = _normalize_true_false(raw.options, correct)
+        if normalized is None:
             return None
-        options, correct = tf
+        options, correct = normalized
     elif qtype == "mcq":
         cleaned = _dedupe_options(raw.options or [])
-        if len(cleaned) < 2:
-            return None
-        if not any(option.casefold() == correct.casefold() for option in cleaned):
+        correct_key = normalize_question_text(correct)
+        if correct_key not in {normalize_question_text(option) for option in cleaned} and len(cleaned) == 3:
             cleaned.append(correct)
+        # Exactly four is a hard contract now; never truncate six arbitrary
+        # options or silently return a two-choice "MCQ".
+        if len(cleaned) != 4 or sum(normalize_question_text(option) == correct_key for option in cleaned) != 1:
+            return None
         if any(is_boilerplate_text(option) for option in cleaned):
             return None
-        options = cleaned[:6]
+        options = cleaned
 
-    qid = (raw.id or "").strip()[:100] or f"q{index}"
+    difficulty = raw.difficulty.strip().lower()
+    if difficulty not in {"easy", "medium", "hard"}:
+        difficulty = "medium"
     try:
         return AIQuizQuestion(
-            id=qid,
+            id=(raw.id.strip()[:100] or f"q{index}"),
             type=qtype,  # type: ignore[arg-type]
             prompt=prompt,
             options=options,
@@ -388,9 +387,291 @@ def normalize_candidate(
         return None
 
 
-# --------------------------------------------------------------------------- #
-# Pipeline entry point
-# --------------------------------------------------------------------------- #
+def _answer_is_supported(question: AIQuizQuestion, blueprint: QuestionBlueprint) -> bool:
+    if question.type == "true-false":
+        return True
+    answer = normalize_question_text(question.correct_answer)
+    evidence = normalize_question_text(blueprint.evidence)
+    if answer and answer in evidence:
+        return True
+    answer_tokens = content_tokens(question.correct_answer)
+    evidence_tokens = content_tokens(blueprint.evidence)
+    if not answer_tokens:
+        return False
+    # Every substantive answer token—not merely a majority—must be present in
+    # exact verified evidence. For Arabic, the lightweight tokenizer can emit
+    # a different inflected form (for example تحويل / يحول); permit only a
+    # close same-script character stem, never an arbitrary extra assertion.
+    unsupported = answer_tokens - evidence_tokens
+    for token in unsupported:
+        if not re.search(r"[\u0600-\u06ff]", token):
+            return False
+        token_chars = set(token)
+        if not any(
+            re.search(r"[\u0600-\u06ff]", evidence_token)
+            and len(token_chars & set(evidence_token)) / max(1, len(token_chars | set(evidence_token))) >= 0.70
+            for evidence_token in evidence_tokens
+        ):
+            return False
+    answer_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", question.correct_answer))
+    evidence_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", blueprint.evidence))
+    return answer_numbers.issubset(evidence_numbers)
+
+
+def _meaningful_fill_blank(question: AIQuizQuestion, blueprint: QuestionBlueprint) -> bool:
+    blanks = re.findall(r"_{3,}", question.prompt)
+    answer_key = normalize_question_text(question.correct_answer)
+    if len(blanks) != 1 or not answer_key or answer_key in _GENERIC_BLANK_ANSWERS:
+        return False
+    if not (1 <= len(content_tokens(question.correct_answer)) <= 6):
+        return False
+    if answer_key not in normalize_question_text(blueprint.evidence):
+        return False
+    if len(content_tokens(question.prompt)) < 4:
+        return False
+    return blueprint.category in {
+        "core_concept",
+        "important_definition",
+        "process_mechanism",
+        "formula_rule",
+    }
+
+
+def _meaningful_true_false(raw: _RawCandidate, question: AIQuizQuestion, blueprint: QuestionBlueprint) -> bool:
+    prompt_tokens = content_tokens(question.prompt)
+    evidence_tokens = content_tokens(blueprint.evidence)
+    if len(prompt_tokens) < 4 or question.prompt.rstrip().endswith("?"):
+        return False
+    if normalize_question_text(question.prompt) == normalize_question_text(blueprint.evidence):
+        return False
+    # A true/false statement may paraphrase the source or alter one relation,
+    # but cannot use a shared topic word to introduce an unrelated assertion.
+    unsupported = prompt_tokens - evidence_tokens
+    if len(prompt_tokens & evidence_tokens) / max(1, len(prompt_tokens)) < 0.65 or len(unsupported) > 2:
+        return False
+    correct = normalize_question_text(question.correct_answer)
+    if correct == "false":
+        basis = raw.false_statement_basis.strip()
+        basis_tokens = content_tokens(basis)
+        if (
+            len(basis) < 8
+            or not basis_tokens
+            or len(basis_tokens & evidence_tokens) / len(basis_tokens) < 0.70
+        ):
+            return False
+    return blueprint.cognitive_skill != "factual_recall"
+
+
+_APPLICATION_TASK_PATTERNS = (
+    "what would happen",
+    "how would",
+    "predict",
+    "which outcome",
+    "likely outcome",
+    "most likely",
+    "which result",
+    "demonstrate",
+    "demonstrates",
+    "which example",
+    "best illustrates",
+    "calculate",
+    "which action",
+    "best course",
+    "ماذا يحدث لو",
+    "كيف سيتغير",
+    "توقع",
+    "اي نتيجه",
+    "النتيجه الاكثر احتمالا",
+    "يطبق",
+    "اي مثال",
+)
+
+
+def _is_substantive_application_prompt(prompt: str) -> bool:
+    """Reject scenario labels that merely wrap an unchanged recall question.
+
+    Application requires an observable transfer task: predict a consequence,
+    choose an outcome/action, use a process or rule under changed conditions,
+    or calculate from stated conditions. A prefix such as ``Suppose`` or
+    ``Given`` is context only and
+    cannot, by itself, upgrade factual recall to application.
+    """
+    normalized = normalize_question_text(prompt)
+    return any(pattern in normalized for pattern in _APPLICATION_TASK_PATTERNS)
+
+
+def _matches_cognitive_shape(question: AIQuizQuestion, blueprint: QuestionBlueprint) -> bool:
+    classified = classify_cognitive_skill(question.prompt)
+    if blueprint.cognitive_skill == "application":
+        # Process vocabulary ("produce", "work", "generate") may win the
+        # generic classifier's first-match rules. Inspect the task directly,
+        # but never let a bare hypothetical marker bypass the application gate.
+        return _is_substantive_application_prompt(question.prompt)
+    if blueprint.cognitive_skill == "comparison":
+        return classified == "comparison"
+    if blueprint.cognitive_skill == "cause_effect":
+        return classified == "cause_effect"
+    if blueprint.cognitive_skill == "process_order":
+        return classified == "process_order"
+    if blueprint.cognitive_skill == "analysis":
+        return classified == "analysis"
+    if blueprint.cognitive_skill == "misconception":
+        return question.type == "true-false" or classified == "misconception"
+    return True
+
+
+def normalize_blueprinted_candidate(
+    raw: _RawCandidate,
+    *,
+    index: int,
+    blueprints: dict[str, QuestionBlueprint],
+    page_count: int,
+    included_pages: set[int],
+    page_text: dict[int, str],
+    vocab: set[str],
+) -> CandidateRecord | None:
+    """Authoritative backend gates for objective, evidence, and question type."""
+    blueprint = blueprints.get(raw.blueprint_id.strip())
+    if blueprint is None:
+        return None
+    question = normalize_candidate(
+        raw,
+        index=index,
+        allowed_types={blueprint.question_type},
+        page_count=page_count,
+        included_pages=included_pages,
+    )
+    if question is None or question.type != blueprint.question_type:
+        return None
+    if not set(question.source_pages).issubset(set(blueprint.pages)):
+        return None
+    quote = re.sub(r"\s+", " ", raw.source_quote.strip())
+    if not quotes_equivalent(quote, blueprint.evidence):
+        return None
+    if not quote_is_grounded(
+        quote,
+        pages=question.source_pages,
+        page_text=page_text,
+        category=blueprint.category,
+    ):
+        return None
+
+    # The backend—not an LLM assertion—checks that prompt, answer, and
+    # explanation resolve to the planned evidence.
+    evidence_tokens = content_tokens(blueprint.evidence)
+    prompt_tokens = content_tokens(question.prompt)
+    explanation_tokens = content_tokens(question.explanation)
+    if not (prompt_tokens & (evidence_tokens | content_tokens(blueprint.concept))):
+        return None
+    if (
+        len(explanation_tokens & evidence_tokens) < min(2, len(evidence_tokens))
+        or len(explanation_tokens & evidence_tokens) / max(1, len(explanation_tokens)) < 0.45
+    ):
+        return None
+    if not _answer_is_supported(question, blueprint):
+        return None
+    if not _matches_cognitive_shape(question, blueprint):
+        return None
+
+    if question.type == "mcq":
+        rationales = tuple(value.strip() for value in raw.distractor_rationales if value.strip())
+        if len(rationales) != 3 or any(len(value) < 8 for value in rationales):
+            return None
+        if distractor_quality_score(question, vocab) < _MIN_DISTRACTORS:
+            return None
+    else:
+        rationales = ()
+    if question.type == "fill-blank" and not _meaningful_fill_blank(question, blueprint):
+        return None
+    if question.type == "true-false" and not _meaningful_true_false(raw, question, blueprint):
+        return None
+    if blueprint.cognitive_skill == "application":
+        # Transfer-task scaffolding may be novel, but the subject matter and
+        # asserted condition must still come predominantly from exact evidence.
+        substantive = prompt_tokens - {
+            "scenario",
+            "suppose",
+            "predict",
+            "given",
+            "would",
+            "happen",
+            "outcome",
+            "likely",
+            "result",
+            "action",
+            "course",
+            "calculate",
+            "demonstrate",
+            "example",
+            "illustrates",
+            "سيناريو",
+            "لنفترض",
+            "توقع",
+            "نتيجه",
+            "احتمالا",
+            "احسب",
+            "مثال",
+        }
+        unsupported = substantive - evidence_tokens
+        if (
+            len(substantive & evidence_tokens) / max(1, len(substantive)) < 0.65
+            or len(unsupported) > 2
+        ):
+            return None
+
+    # Difficulty is planned from source/cognitive level, not trusted from prose.
+    question = question.model_copy(update={"difficulty": blueprint.difficulty})
+    return CandidateRecord(
+        question=question,
+        blueprint=blueprint,
+        source_quote=quote,
+        distractor_rationales=rationales,
+    )
+
+
+def _records_are_duplicates(left: CandidateRecord, right: CandidateRecord) -> bool:
+    if left.blueprint.objective_key == right.blueprint.objective_key:
+        return True
+    if (
+        normalize_question_text(left.blueprint.concept)
+        == normalize_question_text(right.blueprint.concept)
+        and normalize_question_text(left.blueprint.knowledge_target)
+        == normalize_question_text(right.blueprint.knowledge_target)
+    ):
+        return True
+    if exact_duplicate_key(left.question.prompt) == exact_duplicate_key(right.question.prompt):
+        return True
+    # Different targets/skills remain legitimate even with shared concept
+    # vocabulary.  Collapse only near-identical wording + answer + same skill.
+    return (
+        left.blueprint.cognitive_skill == right.blueprint.cognitive_skill
+        and content_jaccard(left.question.prompt, right.question.prompt) >= 0.84
+        and content_jaccard(left.question.correct_answer, right.question.correct_answer) >= 0.70
+    )
+
+
+def _dedupe_scored(candidates: list[ScoredCandidate]) -> list[ScoredCandidate]:
+    """Keep the highest-quality candidate for each objective/prompt duplicate."""
+    kept: list[ScoredCandidate] = []
+    for candidate in sorted(candidates, key=lambda value: value.score, reverse=True):
+        if candidate.objective_key and any(
+            existing.objective_key == candidate.objective_key for existing in kept
+        ):
+            continue
+        if candidate.concept and candidate.knowledge_target and any(
+            normalize_question_text(existing.concept) == normalize_question_text(candidate.concept)
+            and normalize_question_text(existing.knowledge_target)
+            == normalize_question_text(candidate.knowledge_target)
+            for existing in kept
+        ):
+            continue
+        if any(
+            exact_duplicate_key(existing.question.prompt) == exact_duplicate_key(candidate.question.prompt)
+            for existing in kept
+        ):
+            continue
+        kept.append(candidate)
+    return kept
 
 
 def generate_quiz(
@@ -408,18 +689,43 @@ def generate_quiz(
     quality_threshold: float = _DEFAULT_THRESHOLD,
 ) -> QuizGenerationResult:
     context = build_quiz_context(source)
-    allowed_types = set(question_types)
-
-    # Sufficiency is based on meaningful, cleaned content—not raw PDF page or
-    # line count, and not on whether a narrow concept detector happened to
-    # match. This accepts concise definitions/formulas while still rejecting
-    # metadata-only documents.
     if not has_educational_content(context.units):
         raise AIUnavailableError("The source contains no educational content to build questions from.")
 
-    candidate_count = min(32, max(count * 4, 20))
+    cleaned_block = cleaned_source_block(
+        context.units, title=source.title, page_count=source.page_count
+    )
+    planner_prompt = build_content_map_prompt(
+        source_block=cleaned_block,
+        suggested_concepts=context.concepts,
+        max_items=min(36, max(16, count * 2)),
+    )
+    shared_system_prompt = f"{system_prompt}\n\n{quiz_language_guidance(language)}"
+    map_completion = service.complete_structured(
+        response_model=_RawContentMap,
+        system_prompt=shared_system_prompt,
+        user_prompt=planner_prompt,
+        temperature=0.1,
+        max_tokens=6500,
+    )
+    context.content_map = normalize_content_map(map_completion.value, context.units)
+    if not any(item.primary for item in context.content_map):
+        context.content_map = fallback_content_map(context.concepts, context.units)
 
-    user_prompt = build_candidate_prompt(
+    context.blueprints = build_question_blueprints(
+        context.content_map,
+        count=count,
+        question_types=question_types,
+        difficulty=difficulty,
+        seed=seed,
+    )
+    if not context.blueprints:
+        raise AIUnavailableError(
+            "The source has readable text, but not enough supported important content for these question types."
+        )
+
+    candidate_count = min(36, max(20, len(context.blueprints) * 2, count * 2))
+    writer_prompt = build_candidate_prompt(
         source=source,
         concepts=context.concepts,
         count=count,
@@ -429,76 +735,97 @@ def generate_quiz(
         kind=kind,
         language=language,
         previous_questions=previous_questions,
-        source_block=cleaned_source_block(
-            context.units, title=source.title, page_count=source.page_count
-        ),
+        blueprints=context.blueprints,
+        content_items=[item for item in context.content_map if item.eligible_for_questions],
     )
-    system_prompt = f"{system_prompt}\n\n{quiz_language_guidance(language)}"
-
     completion = service.complete_structured(
         response_model=_RawQuizPool,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=0.7,
-        max_tokens=12000,
+        system_prompt=shared_system_prompt,
+        user_prompt=writer_prompt,
+        temperature=0.45,
+        max_tokens=14000,
     )
 
-    candidates: list[AIQuizQuestion] = []
+    blueprint_by_id = {blueprint.id: blueprint for blueprint in context.blueprints}
+    records: list[CandidateRecord] = []
     used_ids: set[str] = set()
     for index, raw in enumerate(completion.value.questions):
-        question = normalize_candidate(
+        record = normalize_blueprinted_candidate(
             raw,
             index=index,
-            allowed_types=allowed_types,
+            blueprints=blueprint_by_id,
             page_count=source.page_count,
             included_pages=context.included_pages,
+            page_text=context.page_text,
+            vocab=context.vocab,
         )
-        if question is None:
+        if record is None or is_repeat_of_history(record.question, previous_questions):
             continue
-        # Ensure globally unique ids (the frontend keys QuizRunner by id).
-        if question.id in used_ids:
-            question = question.model_copy(update={"id": f"{question.id}-{index}"})
-        used_ids.add(question.id)
-        candidates.append(question)
+        if record.question.id in used_ids:
+            record.question = record.question.model_copy(
+                update={"id": f"{record.question.id}-{index}"}
+            )
+        used_ids.add(record.question.id)
+        if any(_records_are_duplicates(record, existing) for existing in records):
+            # Keep variants until scoring when they share an objective; only
+            # exact/near-exact duplicate prose is discarded here.
+            if any(
+                record.blueprint.objective_key != existing.blueprint.objective_key
+                and _records_are_duplicates(record, existing)
+                for existing in records
+            ):
+                continue
+        records.append(record)
 
-    # Duplicate removal (exact + paraphrase) then previous-question filtering.
-    candidates = duplicates_within(candidates)
-    candidates = [
-        q for q in candidates if not is_repeat_of_history(q, previous_questions)
-    ]
-
-    # Multi-factor quality scoring + threshold.
     scored: list[ScoredCandidate] = []
-    for question in candidates:
-        result = score_candidate(
-            question,
-            concepts=context.concepts,
+    for record in records:
+        result = score_blueprinted_candidate(
+            record.question,
+            importance=record.blueprint.importance,
+            cognitive_skill=record.blueprint.cognitive_skill,
+            evidence=record.blueprint.evidence,
+            source_quote=record.source_quote,
             vocab=context.vocab,
             page_text=context.page_text,
             included_pages=context.included_pages,
             requested_difficulty=difficulty,
             history=previous_questions,
         )
-        if result.total >= quality_threshold:
-            scored.append(
-                ScoredCandidate(
-                    question=question,
-                    score=result.total,
-                    concept=match_concept(question, context.concepts)[0].name,
-                    skill=classify_cognitive_skill(question.prompt),
-                    pattern=classify_pattern(question.prompt),
-                )
+        # Hard gates prevent a high score in clarity/difficulty from rescuing a
+        # weak or ungrounded objective.
+        if (
+            result.educational_importance < 0.50
+            or result.source_grounding < _MIN_GROUNDING
+            or result.clarity < 0.70
+            or result.conceptual_understanding < 0.58
+            or result.distractor_quality < _MIN_DISTRACTORS
+            or result.total < quality_threshold
+        ):
+            continue
+        scored.append(
+            ScoredCandidate(
+                question=record.question,
+                score=result.total,
+                concept=record.blueprint.concept,
+                skill=record.blueprint.cognitive_skill,
+                pattern=classify_pattern(record.question.prompt),
+                objective_key=record.blueprint.objective_key,
+                blueprint_id=record.blueprint.id,
+                category=record.blueprint.category,
+                knowledge_target=record.blueprint.knowledge_target,
             )
+        )
 
+    scored = _dedupe_scored(scored)
     if not scored:
-        raise AIUnavailableError("The provider did not return usable quiz questions.")
+        raise AIUnavailableError("The provider did not return usable source-grounded quiz questions.")
 
     rng = random.Random(seed)
     selected = select_diverse(scored, count, rng=rng)
-    questions = [randomize_answer_positions(q, rng) for q in selected]
+    questions = [randomize_answer_positions(question, rng) for question in selected]
     return QuizGenerationResult(
         questions=questions,
         provider=completion.provider,
         model=completion.model,
-        fallback_used=completion.fallback_used,
+        fallback_used=map_completion.fallback_used or completion.fallback_used,
     )
