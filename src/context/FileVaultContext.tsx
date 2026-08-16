@@ -451,7 +451,13 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
           allowedPages: [...allowedPages],
         })
         return generated.questions
-      } catch {
+      } catch (error) {
+        // Never silently replace a failed server-side, teacher-planned quiz
+        // with the much weaker sentence-transformation generator. Local-only
+        // uploads cannot be sent to the backend, so they retain explicit
+        // offline capability; stored File Vault PDFs surface the error and the
+        // quiz panel offers a retry instead of showing low-quality questions.
+        if (!id.startsWith('file-')) throw error
         const seed = hashString(id) + file.pagesRead.length
         return generateQuestions(file.pagesText, allowedPages, seed, count)
       }
