@@ -1,0 +1,208 @@
+"""Authorisation and exposure contract for the STEP 9 benchmark endpoints.
+
+The benchmark can spend real provider quota, so the important properties are
+negative ones: without a token the routes must not exist, with a wrong token
+they must refuse, and in no case may a response or a stored record reveal a
+provider credential.
+"""
+
+from __future__ import annotations
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import sessionmaker
+
+from app.core.config import Settings, get_settings
+from app.core.db import Base, get_db
+from app.models.benchmark import BenchmarkBatch, BenchmarkPhrasing, BenchmarkRun
+
+TOKEN = "benchmark-token-for-tests-only"
+
+
+@pytest.fixture(autouse=True)
+def _provider_configured(monkeypatch):
+    """Satisfy the MSEMAX credential gate, as the Vercel environment does.
+
+    A placeholder is enough: the injected provider double raises before any
+    network call, so no real credential is required or used.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "test-placeholder-not-a-real-key")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture()
+def client():
+    """A minimal app mounting only the benchmark router, with a live SQLite DB."""
+    from app.api import benchmark
+
+    # StaticPool keeps ONE in-memory connection alive for the whole test, so
+    # every session sees the same tables; the default pool would hand each
+    # session a fresh (empty) database.
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            BenchmarkBatch.__table__,
+            BenchmarkRun.__table__,
+            BenchmarkPhrasing.__table__,
+        ],
+    )
+    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    app = FastAPI()
+    app.include_router(benchmark.router, prefix="/api/v1")
+
+    def _db():
+        session = TestingSession()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def _settings():
+        return Settings(_env_file=None, BENCHMARK_TOKEN=TOKEN)
+
+    app.dependency_overrides[get_db] = _db
+    app.dependency_overrides[get_settings] = _settings
+    # A provider double: the benchmark must never need a real key to be tested.
+    from app.services.ai_service import AIServiceError, get_ai_service
+
+    class _Down:
+        def complete_structured(self, **kwargs):
+            raise AIServiceError("provider unavailable")
+
+    app.dependency_overrides[get_ai_service] = lambda: _Down()
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+# --------------------------------------------------------------------------- #
+# A. Authorisation
+# --------------------------------------------------------------------------- #
+
+
+def test_request_without_a_token_is_rejected(client) -> None:
+    assert client.post("/api/v1/benchmark/runs").status_code == 401
+
+
+def test_request_with_a_wrong_token_is_rejected(client) -> None:
+    response = client.post(
+        "/api/v1/benchmark/runs", headers={"X-Benchmark-Token": "wrong"}
+    )
+    assert response.status_code == 401
+
+
+def test_routes_do_not_exist_when_no_token_is_configured() -> None:
+    """The default deployment must not expose the benchmark at all."""
+    from app.main import app as production_app
+
+    paths = {getattr(route, "path", "") for route in production_app.routes}
+    assert not [path for path in paths if "benchmark" in path], (
+        "benchmark routes must stay unmounted unless BENCHMARK_TOKEN is set"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# B. Authorised lifecycle
+# --------------------------------------------------------------------------- #
+
+
+def test_authorised_caller_can_create_and_advance_a_run(client) -> None:
+    auth = {"X-Benchmark-Token": TOKEN}
+
+    created = client.post(
+        "/api/v1/benchmark/runs", headers=auth, json={"seeds": [1], "count": 8}
+    )
+    assert created.status_code == 200
+    progress = created.json()
+    run_id = progress["run_id"]
+    assert progress["total_batches"] > 0
+    assert progress["completed"] == 0
+
+    # Phrasing is bounded per request, so a unit takes several calls.
+    for _ in range(200):
+        advanced = client.post(f"/api/v1/benchmark/runs/{run_id}/next", headers=auth)
+        assert advanced.status_code == 200
+        body = advanced.json()
+        if body["batch"] is None or body["batch"]["status"] == "completed":
+            break
+    assert body["batch"]["status"] == "completed"
+    assert body["progress"]["completed"] == 1
+    # The provider is down, so MSEMAX contributed nothing and the deterministic
+    # arm carried the batch. Coverage is preserved.
+    assert body["batch"]["baseline_questions"] > 0
+    assert body["batch"]["generations_accepted"] == 0
+
+
+def test_report_withholds_comparison_until_the_run_finishes(client) -> None:
+    auth = {"X-Benchmark-Token": TOKEN}
+    run_id = client.post(
+        "/api/v1/benchmark/runs", headers=auth, json={"seeds": [1], "count": 8}
+    ).json()["run_id"]
+    client.post(f"/api/v1/benchmark/runs/{run_id}/next", headers=auth)
+
+    report = client.get(f"/api/v1/benchmark/runs/{run_id}/report", headers=auth).json()
+
+    assert report["status"] == "in_progress"
+    assert "comparison" not in report
+
+
+def test_advancing_a_finished_run_is_a_no_op(client) -> None:
+    """Re-triggering must not duplicate work or corrupt totals."""
+    auth = {"X-Benchmark-Token": TOKEN}
+    created = client.post(
+        "/api/v1/benchmark/runs", headers=auth, json={"seeds": [1], "count": 8}
+    ).json()
+    run_id = created["run_id"]
+
+    for _ in range(5000):
+        body = client.post(f"/api/v1/benchmark/runs/{run_id}/next", headers=auth).json()
+        if body["batch"] is None:
+            break
+
+    extra = client.post(f"/api/v1/benchmark/runs/{run_id}/next", headers=auth).json()
+    assert extra["batch"] is None
+    assert extra["progress"]["remaining"] == 0
+    assert extra["progress"]["completed"] == created["total_batches"]
+
+
+def test_unknown_run_is_a_404(client) -> None:
+    response = client.get(
+        "/api/v1/benchmark/runs/does-not-exist", headers={"X-Benchmark-Token": TOKEN}
+    )
+    assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# C. No credential ever leaves the server
+# --------------------------------------------------------------------------- #
+
+
+def test_responses_never_contain_credentials(client, monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "super-secret-value-abc123")
+    auth = {"X-Benchmark-Token": TOKEN}
+
+    created = client.post(
+        "/api/v1/benchmark/runs", headers=auth, json={"seeds": [1], "count": 8}
+    )
+    run_id = created.json()["run_id"]
+    client.post(f"/api/v1/benchmark/runs/{run_id}/next", headers=auth)
+    report = client.get(f"/api/v1/benchmark/runs/{run_id}/report", headers=auth)
+    detail = client.get(f"/api/v1/benchmark/runs/{run_id}", headers=auth)
+
+    for response in (created, report, detail):
+        body = response.text
+        assert "super-secret-value-abc123" not in body
+        assert "api_key" not in body.lower()
+        assert TOKEN not in body

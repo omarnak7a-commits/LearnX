@@ -19,7 +19,7 @@ import type {
 import { readingPercent, isFullyRead } from '../types/fileVault'
 import { getFileVaultStorage } from '../lib/fileVault/storage'
 import { extractPdf, estimateReadingMinutes, loadPdfDocument } from '../lib/fileVault/pdfEngine'
-import { analyzeDocument, generateQuestions, hashString } from '../lib/fileVault/textAnalysis'
+import { analyzeDocument, hashString } from '../lib/fileVault/textAnalysis'
 import { weekKeyFor, weekLabelFor } from '../lib/fileVault/weeks'
 import { vaultApi, apiVaultFileToFrontend, vaultFileToPatch } from '../lib/fileVault/apiClient'
 import { aiApi } from '../lib/ai/apiClient'
@@ -443,24 +443,19 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
       // generate questions from unread sections, per the spec.
       const allowedPages = new Set(file.pagesRead)
       if (allowedPages.size === 0) return []
-      try {
-        const generated = await aiApi.quiz({
-          fileId: id,
-          count,
-          kind: 'practice',
-          allowedPages: [...allowedPages],
-        })
-        return generated.questions
-      } catch (error) {
-        // Never silently replace a failed server-side, teacher-planned quiz
-        // with the much weaker sentence-transformation generator. Local-only
-        // uploads cannot be sent to the backend, so they retain explicit
-        // offline capability; stored File Vault PDFs surface the error and the
-        // quiz panel offers a retry instead of showing low-quality questions.
-        if (!id.startsWith('file-')) throw error
-        const seed = hashString(id) + file.pagesRead.length
-        return generateQuestions(file.pagesText, allowedPages, seed, count)
-      }
+      // No client-side fallback. The backend understands the document before
+      // it writes anything, and when it cannot verify enough content it
+      // returns a controlled "unavailable" state. Substituting the old
+      // sentence-transformation generator here is exactly how shallow
+      // questions came back, so a failure surfaces as an error and the quiz
+      // panel offers a retry instead.
+      const generated = await aiApi.quiz({
+        fileId: id,
+        count,
+        kind: 'practice',
+        allowedPages: [...allowedPages],
+      })
+      return generated.questions
     },
     [files]
   )
@@ -474,22 +469,16 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
       const file = files.find((f) => f.id === id)
       if (!file || !file.analysis || !isFullyRead(file)) return []
       const pageNumbers = Array.from({ length: file.pageCount }, (_, i) => i + 1)
-      const allowedPages = new Set(pageNumbers)
-      try {
-        const generated = await aiApi.quiz({
-          fileId: id,
-          count,
-          questionTypes: types,
-          kind: 'exam',
-          allowedPages: pageNumbers,
-        })
-        return generated.questions
-      } catch {
-        const seed = hashString(id) + 7
-        const all = generateQuestions(file.pagesText, allowedPages, seed, count * 2)
-        const filtered = types.length > 0 ? all.filter((q) => types.includes(q.type)) : all
-        return filtered.slice(0, count)
-      }
+      // As with the practice quiz: an exam is either genuinely grounded in the
+      // backend's semantic study map or it is not offered at all.
+      const generated = await aiApi.quiz({
+        fileId: id,
+        count,
+        questionTypes: types,
+        kind: 'exam',
+        allowedPages: pageNumbers,
+      })
+      return generated.questions
     },
     [files]
   )

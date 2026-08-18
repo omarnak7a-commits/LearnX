@@ -11,7 +11,8 @@ import type {
 } from '../../types/fileVault'
 
 export interface AIProviderMetadata {
-  provider: 'gemini' | 'groq'
+  /** 'deterministic' = LearnX's provider-free study-map writer (same quality gates). */
+  provider: 'gemini' | 'groq' | 'deterministic'
   model: string
   fallbackUsed: boolean
 }

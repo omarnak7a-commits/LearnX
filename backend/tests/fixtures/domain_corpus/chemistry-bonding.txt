@@ -1,0 +1,13 @@
+Introductory Chemistry: Chemical Bonding and Reactions
+
+Electronegativity is the tendency of an atom to attract shared electrons in a bond. Electronegativity increases across a period and decreases down a group, because atomic radius shrinks across a period and grows down a group.
+
+An ionic bond forms when one atom transfers electrons to another, producing oppositely charged ions held together by electrostatic attraction. A covalent bond forms when two atoms share electrons instead. Ionic bonds differ from covalent bonds in that ionic compounds conduct electricity when molten, while most covalent compounds do not.
+
+A catalyst is a substance that increases the rate of a reaction without being consumed. A catalyst works by providing an alternative pathway with a lower activation energy, so a larger fraction of collisions has enough energy to react.
+
+Le Chatelier's principle states that a system at equilibrium responds to a disturbance by shifting in the direction that partially offsets the change. Increasing the pressure on a gaseous equilibrium shifts the position toward the side with fewer moles of gas.
+
+Oxidation is the loss of electrons and reduction is the gain of electrons. These processes always occur together, because the electrons lost by one species must be gained by another.
+
+Activation energy is the minimum energy that colliding particles must possess for a reaction to occur. Raising the temperature increases the average kinetic energy of the particles, which increases the reaction rate.

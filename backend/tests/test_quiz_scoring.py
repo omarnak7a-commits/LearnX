@@ -5,7 +5,6 @@ from __future__ import annotations
 import random
 
 from app.schemas.ai import AIQuizQuestion
-from app.services.quiz_concepts import Concept
 from app.services.quiz_scoring import (
     ScoredCandidate,
     classify_cognitive_skill,
@@ -16,7 +15,7 @@ from app.services.quiz_scoring import (
     is_semantic_duplicate,
     is_trivial_question,
     randomize_answer_positions,
-    score_candidate,
+    score_blueprinted_candidate,
     select_diverse,
     semantic_similarity,
 )
@@ -33,12 +32,12 @@ PAGE_TEXT = {
     3: "The Calvin cycle fixes carbon dioxide into glucose using ATP and NADPH.",
 }
 
-CONCEPTS = [
-    Concept(name="Photosynthesis", kind="definition", pages=[1], evidence="Photosynthesis converts light energy into chemical energy.", importance=0.85, reasons=["explicit definition"]),
-    Concept(name="Light Reactions", kind="process", pages=[2, 3], evidence="The light reactions produce ATP and NADPH.", importance=0.70, reasons=["process/mechanism"]),
-    Concept(name="Calvin Cycle", kind="process", pages=[3], evidence="The Calvin cycle fixes carbon dioxide into glucose.", importance=0.65, reasons=["process/mechanism"]),
-    Concept(name="Cellular Respiration", kind="definition", pages=[1], evidence="Cellular respiration releases energy from glucose.", importance=0.60, reasons=["explicit definition"]),
-]
+EVIDENCE = "Photosynthesis converts light energy into chemical energy stored in glucose."
+
+
+def score_candidate(question: AIQuizQuestion, **kwargs):
+    """Score a question against a single verified concept's evidence."""
+    return score_blueprinted_candidate(question, **kwargs)
 
 
 def make_question(
@@ -68,7 +67,10 @@ def make_question(
 
 def scoring_kwargs(**overrides):
     base = dict(
-        concepts=CONCEPTS,
+        importance=0.85,
+        cognitive_skill="understanding",
+        evidence=EVIDENCE,
+        source_quote=EVIDENCE,
         vocab=VOCAB,
         page_text=PAGE_TEXT,
         included_pages={1, 2, 3},

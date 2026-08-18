@@ -19,17 +19,15 @@ The module is split into four concerns:
 
 from __future__ import annotations
 
+import hashlib
+
 import re
 import random
 from dataclasses import dataclass, field
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from app.schemas.ai import AIQuizQuestion
 from app.services.quiz_boilerplate import question_boilerplate_fields
-
-if TYPE_CHECKING:  # pragma: no cover - only used for type hints
-    from app.services.quiz_concepts import Concept
 
 _DEFAULT_QUALITY_THRESHOLD = 0.55
 
@@ -331,45 +329,6 @@ def is_repeat_of_history(question: AIQuizQuestion, history: list[str], threshold
 
 
 # --------------------------------------------------------------------------- #
-# Concept matching
-# --------------------------------------------------------------------------- #
-
-def match_concept(
-    question: AIQuizQuestion,
-    concepts: list["Concept"],
-) -> tuple["Concept", float]:
-    """Best-matching concept and the 0..1 overlap score for a question.
-
-    The concept name is weighted more heavily than its (longer) evidence text
-    so a question such as "What is X?" cleanly matches concept X rather than
-    being diluted by unrelated evidence tokens.
-    """
-    if not concepts:
-        fallback: Any = SimpleNamespace(name="General Overview", importance=0.3, evidence="")
-        return fallback, 0.0
-    q_tokens = content_tokens(f"{question.prompt} {question.correct_answer}")
-    best: "Concept" | None = None
-    best_overlap = 0.0
-    for concept in concepts:
-        name_tokens = content_tokens(concept.name)
-        evidence_tokens = content_tokens(" ".join(concept.evidence.split()[:40]))
-        overlap = 0.75 * _jaccard(q_tokens, name_tokens) + 0.25 * _jaccard(q_tokens, evidence_tokens)
-        if overlap > best_overlap:
-            best, best_overlap = concept, overlap
-    # A question with no token overlap still maps to the most important concept
-    # rather than nothing, keeping scoring well-defined.
-    if best is None:
-        best, best_overlap = concepts[0], 0.0
-    return best, best_overlap
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
-
-
-# --------------------------------------------------------------------------- #
 # Quality scoring
 # --------------------------------------------------------------------------- #
 
@@ -572,9 +531,24 @@ def score_blueprinted_candidate(
     evidence_key = " ".join(content_token_list(evidence))
 
     valid_pages = [page for page in question.source_pages if page in included_pages]
-    quote_on_page = bool(quote_key) and any(
-        quote_key in " ".join(content_token_list(page_text.get(page, ""))) for page in valid_pages
-    )
+
+    def _page_contains(page: int) -> bool:
+        if quote_key in " ".join(content_token_list(page_text.get(page, ""))):
+            return True
+        # A sentence broken by a page break is on neither page in full. The
+        # sentence reader rejoins those halves, so check the join as well —
+        # the quote must still occur contiguously in the document's text.
+        for first, second in ((page, page + 1), (page - 1, page)):
+            joined = " ".join(
+                content_token_list(
+                    f"{page_text.get(first, '')} {page_text.get(second, '')}"
+                )
+            )
+            if joined and quote_key in joined:
+                return True
+        return False
+
+    quote_on_page = bool(quote_key) and any(_page_contains(page) for page in valid_pages)
     quote_matches_evidence = bool(quote_key and evidence_key) and (
         quote_key == evidence_key or quote_key in evidence_key or evidence_key in quote_key
     )
@@ -627,44 +601,6 @@ def score_blueprinted_candidate(
     )
 
 
-def score_candidate(
-    question: AIQuizQuestion,
-    *,
-    concepts: list["Concept"],
-    vocab: set[str],
-    page_text: dict[int, str],
-    included_pages: set[int],
-    requested_difficulty: str,
-    history: list[str],
-) -> CandidateScore:
-    """Compatibility scorer for callers without blueprints.
-
-    The production pipeline uses :func:`score_blueprinted_candidate`; this
-    adapter keeps the deterministic utility useful in tests and older code
-    while using the same eight weights.
-    """
-    boilerplate = question_boilerplate_fields(question)
-    if boilerplate:
-        return CandidateScore(total=0.0, boilerplate=boilerplate)
-    concept, overlap = match_concept(question, concepts)
-    skill = classify_cognitive_skill(question.prompt)
-    # Legacy candidates have no exact quote, so use their matched evidence and
-    # pages as a diagnostic estimate—not as production-grade grounding.
-    score = score_blueprinted_candidate(
-        question,
-        importance=_clamp(concept.importance * (0.5 + overlap)),
-        cognitive_skill=skill,
-        evidence=concept.evidence,
-        source_quote=concept.evidence,
-        vocab=vocab,
-        page_text=page_text,
-        included_pages=included_pages,
-        requested_difficulty=requested_difficulty,
-        history=history,
-    )
-    return score
-
-
 # --------------------------------------------------------------------------- #
 # Diversity selection and randomization
 # --------------------------------------------------------------------------- #
@@ -696,6 +632,84 @@ def randomize_answer_positions(question: AIQuizQuestion, rng: random.Random) -> 
     return question
 
 
+def _symmetric_pair_key(candidate) -> tuple[str, ...] | None:
+    """An order-independent key for a comparison question.
+
+    "How does waiting time differ from turnaround time?" and "How does
+    turnaround time differ from waiting time?" test one distinction, so the
+    exam must contain at most one of them. Sorting the two names makes both
+    phrasings collapse to the same key.
+    """
+    match = re.search(
+        r"how (?:does|do) (?P<left>.+?) differ from (?P<right>.+?)\?"
+        r"|explain how (?P<left2>.+?) differs from (?P<right2>.+?)\.",
+        candidate.question.prompt,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    groups = match.groupdict()
+    left = groups.get("left") or groups.get("left2") or ""
+    right = groups.get("right") or groups.get("right2") or ""
+    if not left or not right:
+        return None
+    pair = sorted(
+        (normalize_question_text(left), normalize_question_text(right))
+    )
+    return ("comparison", *pair)
+
+
+# Seed variation must choose among *comparable* candidates, never trade a
+# relationship for a definition. Real quality gaps between a reasoning question
+# and a recognition question are often only a few hundredths, so jitter wide
+# enough to cross that gap silently promotes the weaker question. Keep the
+# noise below the smallest gap that carries educational meaning.
+_JITTER_RANGE = 0.008
+
+
+def _stable_jitter(seed_token: int, candidate) -> float:
+    """Seeded tie-breaking noise that does not depend on evaluation order.
+
+    Derived from the candidate's identity rather than drawn in loop order, so
+    the same seed yields the same quiz no matter how many candidates were
+    skipped before it.
+    """
+    digest = hashlib.blake2b(
+        f"{seed_token}:{candidate.question.id}".encode(), digest_size=8
+    ).digest()
+    return (int.from_bytes(digest, "big") / float(1 << 64)) * _JITTER_RANGE
+
+
+def _claim_signature(candidate) -> frozenset[str] | None:
+    """The asserted claim, ignoring which concept it is attributed to.
+
+    Two true/false questions that assert the same relationship — one correctly,
+    one with a swapped subject — test a single piece of knowledge. Dropping the
+    concept tokens and keeping the predicate exposes that equivalence, which a
+    concept+target+skill key cannot see because the skills differ.
+
+    Compared by overlap rather than equality: the swapped-in concept leaves its
+    own tokens behind, so the two signatures are near-identical but never equal.
+
+    The claim carrier depends on the type. A true/false question states it in
+    the prompt; a multiple-choice question states it in the correct option,
+    with the prompt carrying only a stem. Reading the prompt for both would
+    miss the case that matters most: an MCQ whose right answer *is* the claim
+    another question asks the student to judge hands over that answer.
+    """
+    question = candidate.question
+    if question.type == "true-false":
+        claim = question.prompt
+    elif question.type == "mcq":
+        claim = question.correct_answer or ""
+    else:
+        return None
+    tokens = content_tokens(claim) - content_tokens(candidate.concept)
+    if len(tokens) < 4:
+        return None
+    return frozenset(tokens)
+
+
 def select_diverse(
     candidates: list[ScoredCandidate],
     count: int,
@@ -712,7 +726,15 @@ def select_diverse(
     selected: list[AIQuizQuestion] = []
     seen_objectives: set[str] = set()
     seen_concept_targets: set[tuple[str, str]] = set()
+    seen_pairs: set[tuple[str, ...]] = set()
+    seen_claims: set[frozenset[str]] = set()
+    # One draw fixes this quiz's variation; per-candidate jitter is then derived
+    # from it, so the result never depends on evaluation order.
+    seed_token = rng.getrandbits(32)
     concept_counts: dict[str, int] = {}
+    # Distinct concepts the candidate pool can cover; breadth is enforced only
+    # until each has been used once.
+    concepts_available = len({c.concept.casefold() for c in candidates if c.concept})
     category_counts: dict[str, int] = {}
     page_counts: dict[int, int] = {}
     skill_counts: dict[str, int] = {}
@@ -732,23 +754,81 @@ def select_diverse(
                 continue
             if all(concept_target) and concept_target in seen_concept_targets:
                 continue
+            # A comparison is symmetric: asking it from each side is one
+            # knowledge target wearing two prompts.
+            pair_key = _symmetric_pair_key(candidate)
+            if pair_key and pair_key in seen_pairs:
+                continue
+            # A misconception question restates a relationship with the wrong
+            # concept attached, so it carries almost the same words as the
+            # true version of that same claim. Asking both ("Friction opposes
+            # relative motion" / "Inertial mass opposes relative motion")
+            # tests one fact twice and hands the student the answer to the
+            # other. Compare the *claim*, independent of the concept named.
+            claim_key = _claim_signature(candidate)
+            if claim_key and any(
+                len(claim_key & seen) / max(1, len(claim_key | seen)) >= 0.70
+                for seen in seen_claims
+            ):
+                continue
             penalty = 0.0
             penalty += 0.18 * skill_counts.get(candidate.skill, 0)
             penalty += 0.08 * pattern_counts.get(candidate.pattern, 0)
-            penalty += 0.12 * concept_counts.get(candidate.concept.casefold(), 0)
+            # Concept breadth dominates. While untested concepts remain, a
+            # repeat must lose outright: quality differences between two valid
+            # questions are small compared with the educational cost of leaving
+            # a whole concept unexamined, and a soft penalty lets a marginally
+            # better duplicate crowd out an untouched concept. Once every
+            # concept has been covered, repeats compete normally.
+            repeats = concept_counts.get(candidate.concept.casefold(), 0)
+            if repeats:
+                if len(concept_counts) < concepts_available:
+                    continue
+                penalty += 0.45 * repeats
             if candidate.category:
                 penalty += 0.05 * category_counts.get(candidate.category, 0)
             for page in candidate.question.source_pages:
                 penalty += 0.035 * page_counts.get(page, 0)
             if candidate.question.type == "true-false":
+                # A quiz whose true/false answers are all "True" is answerable
+                # without reading the questions. The penalty scales with the
+                # imbalance so it cannot be out-competed by a marginally higher
+                # quality score, which is what previously let an all-True set
+                # through.
                 answer = normalize_question_text(candidate.question.correct_answer)
-                if answer in {"true", "صح", "صحيح"} and true_count > false_count:
-                    penalty += 0.16
-                if answer in {"false", "خطا"} and false_count > true_count:
-                    penalty += 0.16
+                is_true = answer in {"true", "صح", "صحيح"}
+                is_false = answer in {"false", "خطا"}
+                skew = abs(true_count - false_count)
+                # Once one polarity is present, the *other* polarity is what a
+                # balanced quiz needs. Using ">" meant the penalty only fired
+                # after an imbalance already existed, so a quiz with exactly two
+                # true/false slots could take True twice: at the second slot
+                # true_count(1) > false_count(0) was true only for the first
+                # comparison, and the second True paid nothing. ">=" charges a
+                # repeat of the polarity already on the page, which is the case
+                # that produces a uniform set.
+                if is_true and true_count >= max(1, false_count):
+                    penalty += 0.16 + 0.30 * skew
+                if is_false and false_count >= max(1, true_count):
+                    penalty += 0.16 + 0.30 * skew
+                # A fixed entry cost on the first "False" used to stand in for
+                # the missing repeat penalty above. With the symmetric ">="
+                # rule it is not only redundant but harmful: when a concept's
+                # true and false candidates score equally, the surcharge hands
+                # every first slot to True, which is exactly the uniform-
+                # polarity defect it was meant to prevent, mirrored. Polarity
+                # is now decided only by merit plus the repeat penalty.
             # Seeds vary only candidates that have already cleared every hard
             # gate and the quality floor; jitter can never rescue weak content.
-            adjusted = candidate.score - penalty + rng.random() * 0.035
+            #
+            # The jitter is derived from the seed and the candidate's identity
+            # rather than drawn from the generator in loop order. Drawing in
+            # order made the result depend on how many candidates were skipped
+            # before it, and skip decisions consult sets whose iteration order
+            # varies between runs — so the same seed could produce two
+            # different quizzes. Deriving it per candidate keeps the same
+            # seeded variation while making it reproducible.
+            adjusted = candidate.score - penalty + _stable_jitter(seed_token, candidate)
             if adjusted > best_score:
                 best_score = adjusted
                 best_index = index
@@ -765,6 +845,12 @@ def select_diverse(
         )
         if all(chosen_concept_target):
             seen_concept_targets.add(chosen_concept_target)
+        chosen_pair = _symmetric_pair_key(chosen)
+        if chosen_pair:
+            seen_pairs.add(chosen_pair)
+        chosen_claim = _claim_signature(chosen)
+        if chosen_claim:
+            seen_claims.add(chosen_claim)
         concept_key = chosen.concept.casefold()
         concept_counts[concept_key] = concept_counts.get(concept_key, 0) + 1
         if chosen.category:

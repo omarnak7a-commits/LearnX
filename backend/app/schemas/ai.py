@@ -20,7 +20,11 @@ class AIBaseModel(BaseModel):
 
 
 class AIProviderMetadata(AIBaseModel):
-    provider: Literal["gemini", "groq"]
+    # "deterministic" identifies LearnX's provider-free study-map writer, which
+    # produces the quiz from the same semantic understanding and the same
+    # quality gates when Gemini/Groq are unavailable. The response shape is
+    # unchanged; this is an additive value so existing clients keep working.
+    provider: Literal["gemini", "groq", "deterministic"]
     model: str
     fallback_used: bool = False
 

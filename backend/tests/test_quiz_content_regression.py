@@ -8,7 +8,7 @@ from app.services.ai_documents import AIDocumentSource, _extract_pdf
 from app.services.ai_service import AIUnavailableError
 from app.services.quiz_pipeline import _RawQuizPool, build_quiz_context, generate_quiz
 from tests.test_pdf_extraction import _build_pdf
-from tests.test_quiz_pipeline import FakeQuizService, default_kwargs, make_pool
+from tests.quiz_fakes import FakeQuizService, default_kwargs, make_pool
 
 
 def biology_pool() -> _RawQuizPool:
@@ -77,7 +77,7 @@ def test_real_multi_page_pdf_with_flattened_footers_generates_questions() -> Non
 
     context = build_quiz_context(source)
     assert len(context.units) == 3
-    assert context.concepts  # explanations work even without formal definition syntax
+    assert context.sentences  # explanatory prose survives cleaning
     cleaned = " ".join(unit.text for unit in context.units)
     assert "Photosynthesis converts" in cleaned
     assert "Calvin cycle fixes" in cleaned
@@ -118,7 +118,11 @@ def test_short_meaningful_pdf_generates_a_question() -> None:
             )
         ]
     )
-    result = generate_quiz(FakeQuizService(pool), source, **default_kwargs(count=1))
+    result = generate_quiz(
+        FakeQuizService(pool),
+        source,
+        **default_kwargs(count=1, question_types=["mcq", "short-answer", "fill-blank"]),
+    )
     assert len(result.questions) == 1
 
 

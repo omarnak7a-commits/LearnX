@@ -26,7 +26,9 @@ def _candidate(
     score: float,
     objective: str,
     concept: str = "recursion",
-    target: str = "base case stops calls",
+    # Deduplication is keyed on the knowledge-target *identity*, so tests pass
+    # target ids exactly as the pipeline does.
+    target: str = "recursion--understanding",
     skill: str = "understanding",
     category: str = "core_concept",
     page: int = 1,
@@ -90,20 +92,61 @@ def test_same_concept_requires_a_different_knowledge_target_to_recur() -> None:
             "reduce",
             "How does the recursive case reduce the problem?",
             score=0.92,
-            objective="recursion::recursive case reduces problem::understanding",
-            target="recursive case reduces problem",
+            objective="recursion::recursive-case::understanding",
+            concept="recursive-case",
+            target="recursive-case--understanding",
         ),
         _candidate(
             "apply",
             "Suppose the base case is missing; predict what happens.",
             score=0.91,
             objective="recursion::base case stops calls::application",
+            target="recursion--application",
             skill="application",
         ),
     ]
 
     kept = _dedupe_scored(candidates)
-    assert {candidate.question.id for candidate in kept} == {"base", "reduce"}
+    # A concept may legitimately recur for a *different* knowledge target
+    # (understanding vs. application), so all three survive deduplication.
+    assert {candidate.question.id for candidate in kept} == {"base", "reduce", "apply"}
+
+    # Selection, however, prefers breadth: with room for two questions it takes
+    # the two different concepts rather than two views of the same one.
+    selected = select_diverse(kept, 2, rng=random.Random(4))
+    assert {question.id for question in selected} == {"base", "reduce"}
+
+
+def test_identical_target_is_deduplicated_regardless_of_wording() -> None:
+    candidates = [
+        _candidate(
+            "worded-a",
+            "What is the function of the mitochondrion?",
+            score=0.90,
+            objective="mitochondria::mitochondria--understanding::understanding",
+            concept="mitochondria",
+            target="mitochondria--understanding",
+        ),
+        _candidate(
+            "worded-b",
+            "Which role does the mitochondrion perform in the cell?",
+            score=0.86,
+            objective="mitochondria::mitochondria--understanding::understanding",
+            concept="mitochondria",
+            target="mitochondria--understanding",
+        ),
+        _candidate(
+            "worded-c",
+            "Why are mitochondria important to a cell?",
+            score=0.84,
+            objective="mitochondria::mitochondria--understanding::understanding",
+            concept="mitochondria",
+            target="mitochondria--understanding",
+        ),
+    ]
+
+    kept = _dedupe_scored(candidates)
+    assert [candidate.question.id for candidate in kept] == ["worded-a"]
 
 
 def test_selection_prefers_cognitive_diversity_from_an_already_valid_pool() -> None:

@@ -19,7 +19,6 @@ import type {
   VaultDefinition,
   VaultFlashcard,
   VaultMindMapNode,
-  VaultQuizQuestion,
   VaultTimelineEntry,
 } from '../../types/fileVault'
 
@@ -216,16 +215,6 @@ function cleanPages(pages: FilePageText[]): FilePageText[] {
 }
 
 /** True when ANY field of a generated question carries boilerplate. */
-function isBoilerplateQuestion(q: VaultQuizQuestion): boolean {
-  return (
-    isBoilerplateText(q.prompt) ||
-    isBoilerplateText(q.correctAnswer) ||
-    isBoilerplateText(q.explanation) ||
-    (q.options ?? []).some((option) => isBoilerplateText(option))
-  )
-}
-
-/** Tiny seeded PRNG (mulberry32) so quiz distractor order is deterministic per file, not random each render. */
 function seededRandom(seed: number): () => number {
   let a = seed >>> 0 || 1
   return function () {
@@ -635,148 +624,21 @@ function sentencesWithPages(pages: FilePageText[]): Array<{ sentence: string; pa
 }
 
 /**
- * Generates quiz/exam questions ONLY from the provided page range — this
- * is what enforces "never generate questions from unread sections" and
- * "questions must come only from the uploaded PDF" from the spec.
+ * NOTE: quiz generation deliberately does NOT live here.
+ *
+ * Questions are produced exclusively by the backend pipeline, which first
+ * builds a semantic study map of the document (what it teaches, which
+ * concepts matter, and why) and only then writes questions from knowledge
+ * targets. The client-side sentence-transformation generator that used to
+ * live in this file was removed: transforming arbitrary sentences into
+ * prompts is what produced shallow, repetitive, unimportant questions, and
+ * keeping it around as a "fallback" silently reintroduced them whenever the
+ * backend was unavailable.
+ *
+ * When the backend cannot verify enough content to build a meaningful quiz it
+ * returns a controlled "unavailable" state, and the quiz panel offers a retry.
+ * See backend/app/services/quiz_understanding.py and quiz_pipeline.py.
  */
-export function generateQuestions(
-  rawPages: FilePageText[],
-  allowedPages: Set<number>,
-  seed: number,
-  count = 8
-): VaultQuizQuestion[] {
-  // Boilerplate lines and repeated headers/footers are stripped BEFORE any
-  // question is built, so copyright/legal/publisher text can never feed the
-  // offline generator.
-  const pages = cleanPages(normalizePages(rawPages))
-  const scopedPages = pages.filter((p) => allowedPages.has(p.page))
-  if (scopedPages.length === 0) return []
-
-  const definitions = extractDefinitions(scopedPages, 12)
-  const swp = sentencesWithPages(scopedPages)
-  const rand = seededRandom(seed)
-  const questions: VaultQuizQuestion[] = []
-
-  // MCQ from definitions: correct answer = real definition, distractors = other real definitions from this doc.
-  const allDefTexts = definitions.map((d) => d.definition)
-  for (let i = 0; i < definitions.length && questions.length < count; i++) {
-    const d = definitions[i]
-    const distractorPool = allDefTexts.filter((t) => t !== d.definition)
-    const distractors = shuffle(distractorPool, rand).slice(0, 3)
-    if (distractors.length < 2) continue
-    const options = shuffle([d.definition, ...distractors], rand)
-    questions.push({
-      id: `q-mcq-${i}`,
-      type: 'mcq',
-      prompt: `Which of the following best defines "${d.term}"?`,
-      options,
-      correctAnswer: d.definition,
-      explanation: `"${d.term}" is defined as: ${d.definition}`,
-      difficulty: 'medium',
-      sourcePages: [d.sourcePage],
-    })
-  }
-
-  // True/False from definitions: sometimes swap the term with another to create a false statement.
-  for (let i = 0; i < definitions.length && questions.length < count; i++) {
-    const d = definitions[i]
-    const makeFalse = rand() > 0.5 && definitions.length > 1
-    const swapWith = makeFalse ? definitions[(i + 1) % definitions.length] : null
-    const statement = swapWith
-      ? `${d.term} is defined as: ${swapWith.definition}`
-      : `${d.term} is defined as: ${d.definition}`
-    questions.push({
-      id: `q-tf-${i}`,
-      type: 'true-false',
-      prompt: statement,
-      options: ['True', 'False'],
-      correctAnswer: swapWith ? 'False' : 'True',
-      explanation: `The correct definition of "${d.term}" is: ${d.definition}`,
-      difficulty: 'easy',
-      sourcePages: [d.sourcePage],
-    })
-  }
-
-  // Fill-in-the-blank: pick a key sentence, blank out its most frequent non-stopword term.
-  const freq = termFrequencies(tokenize(scopedPages.map((p) => p.text).join(' ')))
-  const scoredSentences = scoreSentences(
-    swp.map((s) => s.sentence),
-    freq
-  )
-    .map((s, i) => ({ ...s, page: swp[i].page }))
-    .sort((a, b) => b.score - a.score)
-
-  for (let i = 0; i < scoredSentences.length && questions.length < count; i++) {
-    const { sentence, page } = scoredSentences[i]
-    // Never blank out a boilerplate sentence (copyright footers etc.).
-    if (isBoilerplateText(sentence)) continue
-    const tokens = tokenize(sentence)
-    if (tokens.length === 0) continue
-    const target = [...tokens].sort((a, b) => (freq.get(b) ?? 0) - (freq.get(a) ?? 0))[0]
-    if (!target || target.length < 4) continue
-    const re = new RegExp(`\\b${escapeRegExp(target)}\\b`, 'i')
-    if (!re.test(sentence)) continue
-    const blanked = sentence.replace(re, '_____').slice(0, 220)
-    questions.push({
-      id: `q-fb-${i}`,
-      type: 'fill-blank',
-      prompt: blanked,
-      correctAnswer: target,
-      explanation: `The missing word is "${target}" — full sentence: ${sentence}`,
-      difficulty: 'medium',
-      sourcePages: [page],
-    })
-  }
-
-  // Short answer: from explicit review-question sentences within the allowed pages.
-  const questionSentences = swp.filter((s) => /review question[:.]?/i.test(s.sentence))
-  for (let i = 0; i < questionSentences.length && questions.length < count; i++) {
-    const cleaned = questionSentences[i].sentence.replace(/.*?review question[:.]?\s*/i, '').trim()
-    questions.push({
-      id: `q-sa-${i}`,
-      type: 'short-answer',
-      prompt: cleaned,
-      correctAnswer: '(open-ended — reviewed manually or against the source material)',
-      explanation: `This question is drawn directly from the review section on page ${questionSentences[i].page}.`,
-      difficulty: 'hard',
-      sourcePages: [questionSentences[i].page],
-    })
-  }
-
-  // Final deterministic gate: reject boilerplate and repeated/paraphrased
-  // prompts. Keep the first grounded form so a sparse source cannot fill the
-  // quiz with the same fact phrased as MCQ, T/F, and fill-in-the-blank.
-  const unique: VaultQuizQuestion[] = []
-  for (const question of questions) {
-    if (isBoilerplateQuestion(question)) continue
-    const tokens = new Set(tokenize(question.prompt))
-    const repeated = unique.some((existing) => {
-      const other = new Set(tokenize(existing.prompt))
-      if (tokens.size === 0 || other.size === 0) {
-        return question.prompt.trim().toLowerCase() === existing.prompt.trim().toLowerCase()
-      }
-      const intersection = [...tokens].filter((token) => other.has(token)).length
-      const union = new Set([...tokens, ...other]).size
-      return intersection / union >= 0.8
-    })
-    if (!repeated) unique.push(question)
-    if (unique.length >= count) break
-  }
-  return unique
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function shuffle<T>(arr: T[], rand: () => number): T[] {
-  const copy = [...arr]
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1))
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-  }
-  return copy
-}
 
 /**
  * Runs the full analysis pipeline against the real extracted text of a

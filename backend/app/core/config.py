@@ -4,10 +4,11 @@ Application settings loaded from environment variables.
 
 import os
 from functools import lru_cache
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     # --- App ---
     environment: str = os.getenv("ENVIRONMENT", "production")
@@ -36,6 +37,33 @@ class Settings(BaseSettings):
     ai_provider: str = os.getenv("AI_PROVIDER", "gemini")
     ai_fallback_provider: str = os.getenv("AI_FALLBACK_PROVIDER", "groq")
     ai_timeout_seconds: float = float(os.getenv("AI_TIMEOUT_SECONDS", "25"))
+    # --- MSEMAX: optional constrained LLM phrasing layer ---
+    # Off by default so the deterministic engine stays the reproducible
+    # baseline. When true, MSEMAX phrases blueprints the deterministic planner
+    # has already decided; its output still passes every existing validator.
+    # Parsed from the raw string rather than typed as bool: pydantic-settings
+    # re-reads the environment for a declared field, and MSEMAX_ENABLED=""
+    # (a common way to "unset" a variable in shell scripts and CI) is not a
+    # boolean it accepts, which crashed startup. Keeping the field a string and
+    # normalising it here means an empty or malformed value degrades to "off"
+    # instead of taking the whole API down.
+    msemax_enabled_raw: str = Field(default="false", alias="MSEMAX_ENABLED")
+
+    # --- STEP 9 benchmark authorisation ---
+    # A dedicated shared secret for the batched MSEMAX A/B benchmark, entirely
+    # separate from the provider credentials: it authorises *triggering* a
+    # benchmark, and grants no access to GEMINI_API_KEY or GROQ_API_KEY.
+    # Empty by default, which leaves the benchmark routes unmounted entirely.
+    benchmark_token: str = Field(default="", alias="BENCHMARK_TOKEN")
+
+    @property
+    def msemax_enabled(self) -> bool:
+        return (self.msemax_enabled_raw or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     ai_max_document_bytes: int = int(os.getenv("AI_MAX_DOCUMENT_BYTES", str(15 * 1024 * 1024)))
     ai_max_document_characters: int = int(os.getenv("AI_MAX_DOCUMENT_CHARACTERS", "100000"))
 

@@ -19,9 +19,10 @@ const typeLabel: Record<VaultQuestionType, string> = {
 
 /**
  * Runs any list of VaultQuizQuestion — used for both "Practice Quiz
- * (Covered Topics Only)" and the "Take AI Exam" flow. Every question was
- * generated from the file's real content by `generateQuestions()`, so
- * this component is purely presentational/scoring logic.
+ * (Covered Topics Only)" and the "Take AI Exam" flow. Every question comes
+ * from the backend's understanding-first pipeline (semantic study map ->
+ * knowledge targets -> blueprint -> validated question), so this component is
+ * purely presentational/scoring logic.
  */
 export default function QuizRunner({
   title,
