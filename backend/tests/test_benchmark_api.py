@@ -237,3 +237,94 @@ def test_malformed_authorization_header_is_rejected(client) -> None:
         "/api/v1/benchmark/runs", headers={"Authorization": TOKEN}
     )
     assert response.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# E. Provider pre-flight check
+# --------------------------------------------------------------------------- #
+
+
+def test_provider_check_requires_the_token(client) -> None:
+    """The pre-flight spends real quota, so it must not be open."""
+    assert client.post("/api/v1/benchmark/provider-check").status_code == 401
+    assert (
+        client.post(
+            "/api/v1/benchmark/provider-check",
+            headers={"X-Benchmark-Token": "wrong"},
+        ).status_code
+        == 401
+    )
+
+
+def test_provider_check_reports_a_category_not_a_generic_error(client) -> None:
+    """A failing pre-flight must say *why*, which is what STEP 9 could not."""
+    from app.services.ai_providers import ErrorCategory
+    from app.services.ai_service import AIUnavailableError, ProviderFailure, get_ai_service
+
+    class Broken:
+        def complete_structured(self, **_: object):
+            raise AIUnavailableError(
+                "The AI service is temporarily unavailable. Please try again shortly.",
+                failures=[
+                    ProviderFailure(
+                        provider="gemini",
+                        category=ErrorCategory.AUTHENTICATION.value,
+                        status_code=401,
+                        detail="UNAUTHENTICATED",
+                        model="gemini-2.5-flash",
+                    ),
+                    ProviderFailure(
+                        provider="groq",
+                        category=ErrorCategory.MODEL_NOT_FOUND.value,
+                        status_code=400,
+                        detail="model_decommissioned",
+                        model="retired-model",
+                    ),
+                ],
+            )
+
+    client.app.dependency_overrides[get_ai_service] = lambda: Broken()
+    try:
+        response = client.post(
+            "/api/v1/benchmark/provider-check", headers={"X-Benchmark-Token": TOKEN}
+        )
+    finally:
+        client.app.dependency_overrides.pop(get_ai_service, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["category"] == "authentication"
+    assert "model_not_found" in body["diagnosis"]
+    assert len(body["attempts"]) == 2
+
+
+def test_provider_check_never_returns_a_credential(client) -> None:
+    """Only booleans and model names; never any part of a key."""
+    from app.services.ai_service import get_ai_service
+
+    secret = "AIzaSyNEVER_RETURN_THIS_VALUE_123456"
+
+    class Echoing:
+        def complete_structured(self, **_: object):
+            raise RuntimeError(f"upstream said: {secret}")
+
+    def _settings_with_key():
+        return Settings(_env_file=None, BENCHMARK_TOKEN=TOKEN, GEMINI_API_KEY=secret)
+
+    client.app.dependency_overrides[get_settings] = _settings_with_key
+    client.app.dependency_overrides[get_ai_service] = lambda: Echoing()
+    try:
+        response = client.post(
+            "/api/v1/benchmark/provider-check", headers={"X-Benchmark-Token": TOKEN}
+        )
+    finally:
+        client.app.dependency_overrides[get_settings] = lambda: Settings(
+            _env_file=None, BENCHMARK_TOKEN=TOKEN
+        )
+        client.app.dependency_overrides.pop(get_ai_service, None)
+
+    body = response.text
+    assert secret not in body
+    assert response.json()["credentials_present"]["gemini"] is True
+    assert response.json()["category"] == "unknown"

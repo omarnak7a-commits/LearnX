@@ -195,3 +195,86 @@ def get_report(run_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     """The STEP 9 report, once every batch has genuinely completed."""
     run = _load_run(db, run_id)
     return build_report(db, run)
+
+
+@router.post("/provider-check", dependencies=[Depends(require_benchmark_token)])
+def provider_check(
+    settings: Settings = Depends(get_settings),
+    service: AIService = Depends(get_ai_service),
+) -> dict[str, Any]:
+    """Make ONE real MSEMAX-shaped provider call and report the outcome.
+
+    This is the cheap pre-flight for STEP 9: it exercises the exact path the
+    benchmark uses -- same schema, same structured-output call, same
+    Gemini-then-Groq fallback -- so a misconfiguration surfaces after one call
+    instead of after hundreds.
+
+    Returns provider and model *names* plus a sanitized error category. It never
+    returns, logs or accepts a provider key, and never stores anything.
+    """
+    from app.services.ai_providers import ErrorCategory
+    from app.services.ai_service import AIUnavailableError
+    from app.services.quiz_msemax import MsemaxQuestion
+
+    configured = {
+        "gemini": bool((settings.gemini_api_key or "").strip()),
+        "groq": bool((settings.groq_api_key or "").strip()),
+    }
+    result: dict[str, Any] = {
+        "primary": settings.ai_provider,
+        "fallback": settings.ai_fallback_provider,
+        "gemini_model": settings.gemini_model,
+        "groq_model": settings.groq_model,
+        # Booleans only: whether a key exists, never any part of its value.
+        "credentials_present": configured,
+        "timeout_seconds": settings.ai_timeout_seconds,
+    }
+    if not any(configured.values()):
+        result.update(
+            ok=False,
+            category=ErrorCategory.CONFIGURATION.value,
+            diagnosis="no provider credentials are configured in this environment",
+        )
+        return result
+
+    try:
+        completion = service.complete_structured(
+            response_model=MsemaxQuestion,
+            system_prompt=(
+                "You write exam questions. Reply with one JSON object only."
+            ),
+            user_prompt=(
+                "Evidence: 'Water boils at 100 degrees Celsius at sea level.'\n"
+                "Write one multiple-choice question with four options about this "
+                "evidence. Return JSON with keys stem, options, correct_option, "
+                "answer, explanation."
+            ),
+            temperature=0.2,
+            max_tokens=900,
+        )
+    except AIUnavailableError as exc:
+        result.update(
+            ok=False,
+            category=exc.category,
+            diagnosis=exc.diagnosis(),
+            attempts=[failure.summary for failure in exc.failures],
+        )
+        return result
+    except Exception as exc:  # never leak an unexpected traceback to the caller
+        result.update(
+            ok=False,
+            category=ErrorCategory.UNKNOWN.value,
+            diagnosis=type(exc).__name__,
+        )
+        return result
+
+    result.update(
+        ok=True,
+        provider_used=completion.provider,
+        model_used=completion.model,
+        fallback_used=completion.fallback_used,
+        # Proof a real generation came back, without echoing a whole answer.
+        sample_stem_length=len(completion.value.stem),
+        sample_option_count=len(completion.value.options),
+    )
+    return result

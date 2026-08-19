@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
-    groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    # llama-3.3-70b-versatile was shut down by Groq on 2026-08-16 and now
+    # returns HTTP 400 model_decommissioned. Override with GROQ_MODEL if a
+    # different model is preferred.
+    groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     ai_provider: str = os.getenv("AI_PROVIDER", "gemini")
     ai_fallback_provider: str = os.getenv("AI_FALLBACK_PROVIDER", "groq")
     ai_timeout_seconds: float = float(os.getenv("AI_TIMEOUT_SECONDS", "25"))

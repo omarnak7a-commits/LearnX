@@ -57,6 +57,26 @@ from app.services.quiz_scoring import content_tokens, normalize_question_text
 logger = logging.getLogger(__name__)
 
 
+def describe_provider_failure(exc: BaseException) -> str:
+    """Sanitized one-line cause for a failed MSEMAX generation.
+
+    Returns the error *category* (and per-provider detail when available) so
+    aggregated benchmark output distinguishes an expired key from a retired
+    model from a real timeout. Imports are local to keep this module decoupled
+    from the concrete AI service: MSEMAX only depends on a backend Protocol.
+    """
+    from app.services.ai_providers import ProviderError
+    from app.services.ai_service import AIUnavailableError
+
+    if isinstance(exc, AIUnavailableError):
+        return exc.diagnosis()
+    if isinstance(exc, ProviderError):
+        return exc.summary()
+    if isinstance(exc, TimeoutError):
+        return "category=timeout"
+    return f"category=unknown detail={type(exc).__name__}"
+
+
 #: Marks output produced by the MSEMAX layer. Carried on the candidate dict so
 #: provenance stays honest end to end: a question is only ever attributed to
 #: MSEMAX when a real provider actually wrote it.
@@ -77,6 +97,29 @@ class MsemaxConfigurationError(MsemaxError):
     must be told it is not actually available rather than being handed
     deterministic output wearing an LLM label.
     """
+
+
+_CATEGORY_PATTERN = re.compile(r"(?:category=|:\s*)([a-z_]+)")
+
+
+def rejection_bucket(reason: str) -> str:
+    """Group rejection reasons for reporting.
+
+    Provider failures keep their category ("provider error: authentication"),
+    which is what turns an opaque {"provider error": 210} into an actionable
+    diagnosis. Non-provider reasons keep the previous first-segment grouping.
+    """
+    if reason.startswith("provider error"):
+        from app.services.ai_providers import ErrorCategory
+
+        known = {member.value for member in ErrorCategory}
+        categories = sorted(
+            {match for match in _CATEGORY_PATTERN.findall(reason) if match in known}
+        )
+        if categories:
+            return f"provider error: {'+'.join(categories)}"
+        return "provider error"
+    return reason.split(":", 1)[0].strip()
 
 
 @dataclass(frozen=True)
@@ -107,8 +150,9 @@ class MsemaxStats:
 
     def note_rejection(self, reason: str) -> None:
         self.rejected += 1
-        key = reason.split(":", 1)[0].strip()
-        self.reasons[key] = self.reasons.get(key, 0) + 1
+        self.reasons[rejection_bucket(reason)] = (
+            self.reasons.get(rejection_bucket(reason), 0) + 1
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -543,14 +587,19 @@ def generate_candidate(
             max_tokens=900,
         )
     except Exception as exc:  # provider error, timeout, malformed JSON
+        # Record the sanitized *category* (authentication, model_not_found,
+        # quota_rate_limit, ...) rather than a generic label, so an aggregated
+        # run says why it failed instead of only that it failed. Never contains
+        # credentials: the detail comes from the provider's own error code.
+        diagnosis = describe_provider_failure(exc)
         logger.warning(
-            "MSEMAX provider failure for blueprint %s: %s", blueprint.id, exc
+            "MSEMAX provider failure for blueprint %s (%s)", blueprint.id, diagnosis
         )
         return None, MsemaxRejection(
             blueprint_id=blueprint.id,
             concept_id=blueprint.concept_id,
             cognitive_skill=blueprint.cognitive_skill,
-            reason=f"provider error: {type(exc).__name__}: {exc}",
+            reason=f"provider error [{diagnosis}]",
         )
 
     value = getattr(completion, "value", completion)

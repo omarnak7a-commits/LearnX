@@ -63,7 +63,14 @@ param(
 
     # Retries for transient network/5xx failures on a single request. The run
     # itself is resumable regardless, this just avoids needless restarts.
-    [int] $RetryAttempts = 5
+    [int] $RetryAttempts = 5,
+
+    # Run only the single-call provider pre-flight and exit. Use this first.
+    [switch] $CheckOnly,
+
+    # Skip the pre-flight (not recommended: a misconfigured provider would
+    # otherwise only be discovered after hundreds of failed calls).
+    [switch] $SkipCheck
 )
 
 # NOTE: Set-StrictMode is deliberately NOT enabled. The API returns optional
@@ -167,6 +174,46 @@ Write-Host "MSEMAX STEP 9 benchmark" -ForegroundColor Cyan
 Write-Host "  target : $($script:api)"
 Write-Host "  auth   : X-Benchmark-Token (provider keys stay in Vercel)"
 Write-Host ""
+
+if (-not $SkipCheck) {
+    Write-Host "pre-flight: one real provider call..." -ForegroundColor Cyan
+    $check = Invoke-Api -Method 'Post' -Path '/benchmark/provider-check'
+    Write-Host ("  primary   : {0} ({1})  key present: {2}" -f `
+            $check.primary, $check.gemini_model, $check.credentials_present.gemini)
+    Write-Host ("  fallback  : {0} ({1})  key present: {2}" -f `
+            $check.fallback, $check.groq_model, $check.credentials_present.groq)
+    if (-not $check.ok) {
+        Write-Host ("  FAILED    : {0}" -f $check.category) -ForegroundColor Red
+        Write-Host ("  diagnosis : {0}" -f $check.diagnosis) -ForegroundColor Red
+        Write-Host ""
+        switch ($check.category) {
+            'authentication' {
+                Write-Host "Fix: the provider key in Vercel is missing, expired or revoked. Rotate it in the Vercel dashboard and redeploy. Do not paste it anywhere else." -ForegroundColor Yellow
+            }
+            'model_not_found' {
+                Write-Host "Fix: the configured model no longer exists. Set GEMINI_MODEL / GROQ_MODEL in Vercel to a current model and redeploy." -ForegroundColor Yellow
+            }
+            'quota_rate_limit' {
+                Write-Host "Fix: quota or rate limit reached. Wait, or raise the provider quota, then retry." -ForegroundColor Yellow
+            }
+            'configuration' {
+                Write-Host "Fix: no provider credentials are set in this deployment's environment." -ForegroundColor Yellow
+            }
+            default {
+                Write-Host "Resolve the issue above before running the benchmark." -ForegroundColor Yellow
+            }
+        }
+        throw "Provider pre-flight failed ($($check.category)). Not starting the benchmark."
+    }
+    Write-Host ("  OK        : {0} via {1} (fallback_used={2})" -f `
+            $check.model_used, $check.provider_used, $check.fallback_used) -ForegroundColor Green
+    Write-Host ""
+}
+
+if ($CheckOnly) {
+    Write-Host "pre-flight only; not starting a run." -ForegroundColor Cyan
+    return
+}
 
 if ([string]::IsNullOrWhiteSpace($RunId)) {
     $start = Invoke-Api -Method 'Post' -Path '/benchmark/runs' `
