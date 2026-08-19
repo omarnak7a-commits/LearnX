@@ -219,10 +219,21 @@ class AIProvider:
 class GeminiProvider(AIProvider):
     name = "gemini"
 
-    def __init__(self, *, api_key: str, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        timeout_seconds: float,
+        thinking_budget: int = 0,
+    ) -> None:
         self.api_key = api_key.strip()
         self.model = model.strip()
         self.timeout_seconds = timeout_seconds
+        #: Gemini 2.5 charges thinking tokens against maxOutputTokens. 0
+        #: disables thinking; a negative value omits the field so the model
+        #: applies its own default (needed for models that cannot disable it).
+        self.thinking_budget = thinking_budget
 
     def generate(
         self,
@@ -248,6 +259,13 @@ class GeminiProvider(AIProvider):
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
+        if self.thinking_budget >= 0:
+            # Without this, 2.5 Flash uses dynamic thinking and can spend the
+            # entire maxOutputTokens budget reasoning, returning MAX_TOKENS with
+            # no text at all.
+            generation_config["thinkingConfig"] = {
+                "thinkingBudget": self.thinking_budget
+            }
         if json_schema is not None:
             generation_config.update(
                 {

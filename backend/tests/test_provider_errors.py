@@ -425,3 +425,169 @@ def test_diagnosis_never_leaks_credentials(routed) -> None:
     assert secret_groq not in blob
     # The status code is preferred over the provider's free-text message.
     assert "authentication" in blob
+
+
+# --------------------------------------------------------------------------- #
+# F. Gemini 2.5 thinking budget (why Gemini fell back to Groq in production)
+# --------------------------------------------------------------------------- #
+
+
+def _capture_gemini(thinking_budget: int, response: dict[str, Any]) -> dict[str, Any]:
+    """Run one Gemini call against a scripted response; return the sent payload."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.clear()
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json=response)
+
+    transport = httpx.MockTransport(handler)
+    original = httpx.Client
+    try:
+        class Patched(original):  # type: ignore[misc,valid-type]
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                kwargs["transport"] = transport
+                super().__init__(*args, **kwargs)
+
+        httpx.Client = Patched  # type: ignore[misc]
+        provider = GeminiProvider(
+            api_key="k",
+            model="gemini-2.5-flash",
+            timeout_seconds=25,
+            thinking_budget=thinking_budget,
+        )
+        try:
+            provider.generate(
+                system_prompt="s",
+                user_prompt="u",
+                temperature=0.2,
+                max_tokens=900,
+                json_schema={"type": "object"},
+            )
+        except ProviderError:
+            pass
+    finally:
+        httpx.Client = original  # type: ignore[misc]
+    return captured
+
+
+def test_thinking_is_disabled_by_default_for_structured_calls() -> None:
+    """2.5 Flash bills thinking against maxOutputTokens; 900 is not enough."""
+    payload = _capture_gemini(0, _gemini_ok())
+    assert payload["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+    # The output budget itself must be untouched.
+    assert payload["generationConfig"]["maxOutputTokens"] == 900
+
+
+def test_negative_budget_omits_the_field_entirely() -> None:
+    """Escape hatch for models that refuse to disable thinking (2.5 Pro)."""
+    payload = _capture_gemini(-1, _gemini_ok())
+    assert "thinkingConfig" not in payload["generationConfig"]
+
+
+def test_explicit_budget_is_forwarded_unchanged() -> None:
+    payload = _capture_gemini(1024, _gemini_ok())
+    assert payload["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 1024}
+
+
+def test_reproduces_the_production_thinking_starvation() -> None:
+    """The exact pre-fix response: MAX_TOKENS, no content, thoughts consumed all."""
+    starved = {
+        "candidates": [{"finishReason": "MAX_TOKENS", "content": {}}],
+        "usageMetadata": {
+            "promptTokenCount": 420,
+            "thoughtsTokenCount": 900,
+            "totalTokenCount": 1320,
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=starved)
+
+    transport = httpx.MockTransport(handler)
+    original = httpx.Client
+    try:
+        class Patched(original):  # type: ignore[misc,valid-type]
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                kwargs["transport"] = transport
+                super().__init__(*args, **kwargs)
+
+        httpx.Client = Patched  # type: ignore[misc]
+        with pytest.raises(ProviderError) as excinfo:
+            GeminiProvider(
+                api_key="k", model="gemini-2.5-flash", timeout_seconds=25,
+                thinking_budget=-1,
+            ).generate(
+                system_prompt="s", user_prompt="u", temperature=0.2, max_tokens=900
+            )
+    finally:
+        httpx.Client = original  # type: ignore[misc]
+    assert excinfo.value.detail == "finish_reason=MAX_TOKENS"
+
+
+def test_service_wires_the_configured_thinking_budget() -> None:
+    """A default Settings must disable thinking on the real provider object."""
+    service = AIService(Settings(_env_file=None, GEMINI_API_KEY="k"))
+    assert service.providers["gemini"].thinking_budget == 0
+    assert service.providers["gemini"].model == "gemini-2.5-flash"
+
+
+# --------------------------------------------------------------------------- #
+# G. Sanitizer must not weaken validation
+# --------------------------------------------------------------------------- #
+
+
+def test_sanitizer_preserves_every_meaningful_constraint() -> None:
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["a", "b"],
+        "properties": {
+            "a": {"type": "string", "enum": ["x", "y"], "default": "x", "minLength": 2},
+            "b": {"type": "array", "items": {"type": "integer", "minimum": 1}, "default": []},
+            "c": {"type": "string", "format": "date-time", "pattern": "^A", "default": ""},
+        },
+        "additionalProperties": False,
+    }
+    clean = sanitize_gemini_schema(schema)
+    assert clean["required"] == ["a", "b"]
+    assert clean["properties"]["a"]["enum"] == ["x", "y"]
+    assert clean["properties"]["a"]["minLength"] == 2
+    assert clean["properties"]["b"]["items"] == {"type": "integer", "minimum": 1}
+    assert clean["properties"]["c"]["format"] == "date-time"
+    assert clean["properties"]["c"]["pattern"] == "^A"
+    assert "default" not in _all_keys(clean)
+    assert "$schema" not in clean
+
+
+# --------------------------------------------------------------------------- #
+# H. Silent degradation must stay visible
+# --------------------------------------------------------------------------- #
+
+
+def test_fallback_success_still_reports_the_primary_failure(routed) -> None:
+    """A Groq rescue must not look identical to a healthy Gemini call."""
+    service, contacted = routed(
+        (200, {"candidates": [{"finishReason": "MAX_TOKENS", "content": {}}]}),
+        (200, _groq_ok()),
+    )
+    result = service.complete_structured(
+        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+    )
+    assert contacted == ["gemini", "groq"]
+    assert result.provider == "groq"
+    assert result.fallback_used is True
+    # The reason the primary failed survives on the successful result.
+    assert len(result.failures) == 1
+    assert result.failures[0].provider == "gemini"
+    assert result.failures[0].category == ErrorCategory.RESPONSE_SCHEMA.value
+
+
+def test_clean_primary_success_reports_no_failures(routed) -> None:
+    service, contacted = routed((200, _gemini_ok()), (500, {}))
+    result = service.complete_structured(
+        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+    )
+    assert contacted == ["gemini"]
+    assert result.failures == ()
+    assert result.fallback_used is False

@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # --- Online AI (backend-only secrets; never VITE_ variables) ---
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    # Gemini 2.5 models charge internal "thinking" tokens against
+    # maxOutputTokens and default to dynamic thinking, so a small budget can be
+    # consumed entirely by reasoning and return zero visible output. Structured
+    # extraction does not need reasoning, so thinking is disabled by default.
+    # Range for 2.5 Flash is 0-24576; use -1 to omit the field entirely and let
+    # the model decide (required for 2.5 Pro, which cannot disable thinking).
+    gemini_thinking_budget: int = int(os.getenv("GEMINI_THINKING_BUDGET", "0"))
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     # llama-3.3-70b-versatile was shut down by Groq on 2026-08-16 and now
     # returns HTTP 400 model_decommissioned. Override with GROQ_MODEL if a

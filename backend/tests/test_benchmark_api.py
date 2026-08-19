@@ -328,3 +328,83 @@ def test_provider_check_never_returns_a_credential(client) -> None:
     assert secret not in body
     assert response.json()["credentials_present"]["gemini"] is True
     assert response.json()["category"] == "unknown"
+
+
+def test_provider_check_flags_a_fallback_rescue_as_degraded(client) -> None:
+    """A Groq rescue must not be reported as a plain OK.
+
+    This is what hid the broken Gemini primary: the pre-flight said "OK ...
+    via groq" without saying why gemini failed.
+    """
+    from app.services.ai_providers import ErrorCategory
+    from app.services.ai_service import (
+        AIStructuredCompletion,
+        ProviderFailure,
+        get_ai_service,
+    )
+    from app.services.quiz_msemax import MsemaxQuestion
+
+    class Rescued:
+        def complete_structured(self, **_: object):
+            return AIStructuredCompletion(
+                value=MsemaxQuestion(
+                    stem="Why?", options=["a", "b", "c", "d"], correct_option=0,
+                    answer="", explanation="Because.",
+                ),
+                provider="groq",
+                model="openai/gpt-oss-120b",
+                fallback_used=True,
+                failures=(
+                    ProviderFailure(
+                        provider="gemini",
+                        category=ErrorCategory.RESPONSE_SCHEMA.value,
+                        status_code=None,
+                        detail="finish_reason=MAX_TOKENS",
+                        model="gemini-2.5-flash",
+                    ),
+                ),
+            )
+
+    client.app.dependency_overrides[get_ai_service] = lambda: Rescued()
+    try:
+        response = client.post(
+            "/api/v1/benchmark/provider-check", headers={"X-Benchmark-Token": TOKEN}
+        )
+    finally:
+        client.app.dependency_overrides.pop(get_ai_service, None)
+
+    body = response.json()
+    assert body["ok"] is True
+    assert body["degraded"] is True
+    assert body["primary_failure_category"] == "response_schema"
+    assert "MAX_TOKENS" in body["primary_failures"][0]
+
+
+def test_provider_check_reports_not_degraded_on_a_clean_primary(client) -> None:
+    from app.services.ai_service import AIStructuredCompletion, get_ai_service
+    from app.services.quiz_msemax import MsemaxQuestion
+
+    class Healthy:
+        def complete_structured(self, **_: object):
+            return AIStructuredCompletion(
+                value=MsemaxQuestion(
+                    stem="Why?", options=["a", "b", "c", "d"], correct_option=0,
+                    answer="", explanation="Because.",
+                ),
+                provider="gemini",
+                model="gemini-2.5-flash",
+                fallback_used=False,
+            )
+
+    client.app.dependency_overrides[get_ai_service] = lambda: Healthy()
+    try:
+        response = client.post(
+            "/api/v1/benchmark/provider-check", headers={"X-Benchmark-Token": TOKEN}
+        )
+    finally:
+        client.app.dependency_overrides.pop(get_ai_service, None)
+
+    body = response.json()
+    assert body["ok"] is True
+    assert body["degraded"] is False
+    assert body["provider_used"] == "gemini"

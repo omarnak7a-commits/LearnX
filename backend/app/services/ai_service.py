@@ -129,6 +129,8 @@ class AITextCompletion:
     provider: str
     model: str
     fallback_used: bool
+    #: Failures of any providers tried before the successful one.
+    failures: tuple["ProviderFailure", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,6 +139,10 @@ class AIStructuredCompletion(Generic[T]):
     provider: str
     model: str
     fallback_used: bool
+    #: Failures of the providers tried before the one that succeeded. Empty on
+    #: a clean primary success. Without this a silent degradation to the
+    #: fallback looks identical to a healthy run.
+    failures: tuple["ProviderFailure", ...] = ()
 
 
 class AIService:
@@ -155,6 +161,7 @@ class AIService:
                 api_key=settings.gemini_api_key,
                 model=settings.gemini_model,
                 timeout_seconds=settings.ai_timeout_seconds,
+                thinking_budget=getattr(settings, "gemini_thinking_budget", 0),
             ),
             "groq": GroqProvider(
                 api_key=settings.groq_api_key,
@@ -197,7 +204,13 @@ class AIService:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-                return self._text_result(result, index)
+                if failures:
+                    logger.warning(
+                        "AI provider %s succeeded after earlier failures (%s)",
+                        result.provider,
+                        "; ".join(failure.summary for failure in failures),
+                    )
+                return self._text_result(result, index, failures)
             except ProviderContentBlockedError as exc:
                 raise AIContentBlockedError(str(exc)) from exc
             except ProviderError as exc:
@@ -256,11 +269,20 @@ class AIService:
                 value = response_model.model_validate_json(payload)
                 if validator is not None:
                     validator(value)
+                if failures:
+                    # Succeeded, but only after a provider failed: surface it
+                    # so a silent degradation is still visible to operators.
+                    logger.warning(
+                        "AI provider %s succeeded after earlier failures (%s)",
+                        completion.provider,
+                        "; ".join(failure.summary for failure in failures),
+                    )
                 return AIStructuredCompletion(
                     value=value,
                     provider=completion.provider,
                     model=completion.model,
                     fallback_used=index > 0,
+                    failures=tuple(failures),
                 )
             except ProviderContentBlockedError as exc:
                 raise AIContentBlockedError(str(exc)) from exc
@@ -281,12 +303,17 @@ class AIService:
         )
 
     @staticmethod
-    def _text_result(result: ProviderCompletion, index: int) -> AITextCompletion:
+    def _text_result(
+        result: ProviderCompletion,
+        index: int,
+        failures: "list[ProviderFailure] | None" = None,
+    ) -> AITextCompletion:
         return AITextCompletion(
             text=result.text,
             provider=result.provider,
             model=result.model,
             fallback_used=index > 0,
+            failures=tuple(failures or ()),
         )
 
 

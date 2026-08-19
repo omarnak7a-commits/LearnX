@@ -207,6 +207,14 @@ if (-not $SkipCheck) {
     }
     Write-Host ("  OK        : {0} via {1} (fallback_used={2})" -f `
             $check.model_used, $check.provider_used, $check.fallback_used) -ForegroundColor Green
+    if ($check.degraded) {
+        Write-Host ("  DEGRADED  : the primary provider failed and the fallback rescued the call") -ForegroundColor Yellow
+        foreach ($f in $check.primary_failures) {
+            Write-Host ("              {0}" -f $f) -ForegroundColor Yellow
+        }
+        Write-Host ("              category: {0}" -f $check.primary_failure_category) -ForegroundColor Yellow
+        Write-Host "              The benchmark would measure the fallback model, not the primary." -ForegroundColor Yellow
+    }
     Write-Host ""
 }
 

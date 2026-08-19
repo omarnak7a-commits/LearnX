@@ -268,6 +268,7 @@ def provider_check(
         )
         return result
 
+    degraded = [failure.summary for failure in completion.failures]
     result.update(
         ok=True,
         provider_used=completion.provider,
@@ -277,4 +278,15 @@ def provider_check(
         sample_stem_length=len(completion.value.stem),
         sample_option_count=len(completion.value.options),
     )
+    if degraded:
+        # The call succeeded only because a later provider rescued it. Report
+        # the primary's failure rather than a bare "OK", which would hide a
+        # broken primary behind a healthy-looking result.
+        result.update(
+            degraded=True,
+            primary_failures=degraded,
+            primary_failure_category=completion.failures[0].category,
+        )
+    else:
+        result["degraded"] = False
     return result
