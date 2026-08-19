@@ -408,3 +408,72 @@ def test_provider_check_reports_not_degraded_on_a_clean_primary(client) -> None:
     assert body["ok"] is True
     assert body["degraded"] is False
     assert body["provider_used"] == "gemini"
+
+
+def test_provider_check_reports_its_contract_version(client) -> None:
+    """The version marker is how an operator proves what is actually deployed.
+
+    Without it, an old deployment and a new one are indistinguishable from the
+    client, which is exactly how a stale production build went unnoticed.
+    """
+    from app.api.benchmark import PROVIDER_CHECK_VERSION
+    from app.services.ai_service import AIStructuredCompletion, get_ai_service
+    from app.services.quiz_msemax import MsemaxQuestion
+
+    class Healthy:
+        def complete_structured(self, **_: object):
+            return AIStructuredCompletion(
+                value=MsemaxQuestion(
+                    stem="Why?", options=["a", "b", "c", "d"], correct_option=0,
+                    answer="", explanation="Because.",
+                ),
+                provider="gemini",
+                model="gemini-2.5-flash",
+                fallback_used=False,
+            )
+
+    client.app.dependency_overrides[get_ai_service] = lambda: Healthy()
+    try:
+        body = client.post(
+            "/api/v1/benchmark/provider-check", headers={"X-Benchmark-Token": TOKEN}
+        ).json()
+    finally:
+        client.app.dependency_overrides.pop(get_ai_service, None)
+
+    assert body["check_version"] == PROVIDER_CHECK_VERSION
+    assert PROVIDER_CHECK_VERSION >= 2
+
+
+def test_provider_check_exposes_the_effective_thinking_budget(client) -> None:
+    """Confirms GEMINI_THINKING_BUDGET is actually in force in a deployment."""
+    from app.services.ai_service import AIStructuredCompletion, get_ai_service
+    from app.services.quiz_msemax import MsemaxQuestion
+
+    class Healthy:
+        def complete_structured(self, **_: object):
+            return AIStructuredCompletion(
+                value=MsemaxQuestion(
+                    stem="Why?", options=["a", "b", "c", "d"], correct_option=0,
+                    answer="", explanation="Because.",
+                ),
+                provider="gemini",
+                model="gemini-2.5-flash",
+                fallback_used=False,
+            )
+
+    client.app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None, BENCHMARK_TOKEN=TOKEN, GEMINI_THINKING_BUDGET=0
+    )
+    client.app.dependency_overrides[get_ai_service] = lambda: Healthy()
+    try:
+        body = client.post(
+            "/api/v1/benchmark/provider-check", headers={"X-Benchmark-Token": TOKEN}
+        ).json()
+    finally:
+        client.app.dependency_overrides[get_settings] = lambda: Settings(
+            _env_file=None, BENCHMARK_TOKEN=TOKEN
+        )
+        client.app.dependency_overrides.pop(get_ai_service, None)
+
+    assert body["gemini_thinking_budget"] == 0
+    assert body["gemini_model"] == "gemini-2.5-flash"

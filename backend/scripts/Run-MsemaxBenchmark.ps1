@@ -70,7 +70,11 @@ param(
 
     # Skip the pre-flight (not recommended: a misconfigured provider would
     # otherwise only be discovered after hundreds of failed calls).
-    [switch] $SkipCheck
+    [switch] $SkipCheck,
+
+    # Minimum provider-check contract version the deployment must speak. Guards
+    # against pointing a new script at a deployment that was never redeployed.
+    [int] $ExpectedCheckVersion = 2
 )
 
 # NOTE: Set-StrictMode is deliberately NOT enabled. The API returns optional
@@ -178,10 +182,30 @@ Write-Host ""
 if (-not $SkipCheck) {
     Write-Host "pre-flight: one real provider call..." -ForegroundColor Cyan
     $check = Invoke-Api -Method 'Post' -Path '/benchmark/provider-check'
+    # Version handshake: proves whether the DEPLOYMENT actually contains the
+    # latest provider-check contract. Without this, an old server and a new
+    # script are indistinguishable from a healthy run.
+    $checkVersion = 1
+    if ($null -ne $check.check_version) { $checkVersion = [int] $check.check_version }
+    if ($checkVersion -lt $ExpectedCheckVersion) {
+        Write-Host ""
+        Write-Host ("  STALE DEPLOYMENT: this server speaks provider-check v{0}, but v{1} is expected." -f `
+                $checkVersion, $ExpectedCheckVersion) -ForegroundColor Red
+        Write-Host "  The running deployment predates the Gemini thinkingBudget fix, so it cannot" -ForegroundColor Red
+        Write-Host "  report why the primary provider failed. Redeploy the current commit first." -ForegroundColor Red
+        Write-Host ""
+        throw "Deployed provider-check is v$checkVersion; expected v$ExpectedCheckVersion. Redeploy before benchmarking."
+    }
+
+    Write-Host ("  server    : provider-check v{0}" -f $checkVersion)
     Write-Host ("  primary   : {0} ({1})  key present: {2}" -f `
             $check.primary, $check.gemini_model, $check.credentials_present.gemini)
     Write-Host ("  fallback  : {0} ({1})  key present: {2}" -f `
             $check.fallback, $check.groq_model, $check.credentials_present.groq)
+    Write-Host ("  thinking  : GEMINI_THINKING_BUDGET={0}{1}" -f `
+            $check.gemini_thinking_budget, `
+            $(if ($check.gemini_thinking_budget -eq 0) { " (thinking disabled - correct)" } `
+              else { " (WARNING: not 0; 2.5 Flash may spend the whole output budget thinking)" }))
     if (-not $check.ok) {
         Write-Host ("  FAILED    : {0}" -f $check.category) -ForegroundColor Red
         Write-Host ("  diagnosis : {0}" -f $check.diagnosis) -ForegroundColor Red

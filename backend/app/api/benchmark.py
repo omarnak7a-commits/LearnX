@@ -50,6 +50,14 @@ from app.services.quiz_msemax import MsemaxConfigurationError
 
 router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 
+#: Contract version of the provider-check response. Returned on every call so
+#: an operator can prove which revision production is serving. Bump whenever
+#: the provider-check payload gains or changes a field.
+#:   1 = initial pre-flight (ok/category/diagnosis)
+#:   2 = adds degraded/primary_failures/primary_failure_category,
+#:       gemini_thinking_budget and this marker
+PROVIDER_CHECK_VERSION = 2
+
 
 def require_benchmark_token(
     x_benchmark_token: str = Header(default=""),
@@ -221,10 +229,17 @@ def provider_check(
         "groq": bool((settings.groq_api_key or "").strip()),
     }
     result: dict[str, Any] = {
+        # Build marker: lets an operator confirm which revision is actually
+        # serving, without shell access to the deployment. Bump when the
+        # provider-check contract changes.
+        "check_version": PROVIDER_CHECK_VERSION,
         "primary": settings.ai_provider,
         "fallback": settings.ai_fallback_provider,
         "gemini_model": settings.gemini_model,
         "groq_model": settings.groq_model,
+        # The effective thinking budget actually in force. 0 = thinking off,
+        # negative = field omitted so the model uses its own default.
+        "gemini_thinking_budget": getattr(settings, "gemini_thinking_budget", None),
         # Booleans only: whether a key exists, never any part of its value.
         "credentials_present": configured,
         "timeout_seconds": settings.ai_timeout_seconds,
