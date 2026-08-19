@@ -206,3 +206,34 @@ def test_responses_never_contain_credentials(client, monkeypatch) -> None:
         assert "super-secret-value-abc123" not in body
         assert "api_key" not in body.lower()
         assert TOKEN not in body
+
+
+# --------------------------------------------------------------------------- #
+# D. Bearer-token convenience form
+# --------------------------------------------------------------------------- #
+
+
+def test_bearer_authorization_header_is_accepted(client) -> None:
+    """PowerShell/curl users can send the standard Authorization header."""
+    response = client.post(
+        "/api/v1/benchmark/runs",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"seeds": [1], "count": 8},
+    )
+    assert response.status_code == 200
+    assert response.json()["total_batches"] > 0
+
+
+def test_bearer_with_a_wrong_token_is_still_rejected(client) -> None:
+    response = client.post(
+        "/api/v1/benchmark/runs", headers={"Authorization": "Bearer nope"}
+    )
+    assert response.status_code == 401
+
+
+def test_malformed_authorization_header_is_rejected(client) -> None:
+    """A bare value without the Bearer scheme must not authenticate."""
+    response = client.post(
+        "/api/v1/benchmark/runs", headers={"Authorization": TOKEN}
+    )
+    assert response.status_code == 401

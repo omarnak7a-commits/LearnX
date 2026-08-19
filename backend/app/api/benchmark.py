@@ -53,9 +53,15 @@ router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 
 def require_benchmark_token(
     x_benchmark_token: str = Header(default=""),
+    authorization: str = Header(default=""),
     settings: Settings = Depends(get_settings),
 ) -> None:
     """Authorise a benchmark request.
+
+    Accepts the token either as ``X-Benchmark-Token`` or as a standard
+    ``Authorization: Bearer <token>`` header. The second form exists purely for
+    client convenience -- it is what curl/PowerShell users reach for by default
+    -- and carries exactly the same value; it is not a second credential.
 
     Deliberately strict: an unset token means the feature is off, not open.
     """
@@ -64,7 +70,15 @@ def require_benchmark_token(
         # Should be unreachable (the router is not mounted), but a defence in
         # depth against a future refactor accidentally exposing it.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+
     provided = (x_benchmark_token or "").strip()
+    if not provided:
+        header = (authorization or "").strip()
+        if header.lower().startswith("bearer "):
+            provided = header[7:].strip()
+
+    # compare_digest needs equal-length inputs to be meaningful; the emptiness
+    # check keeps a missing header from being compared at all.
     if not provided or not secrets.compare_digest(provided, expected):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Invalid or missing benchmark token"
