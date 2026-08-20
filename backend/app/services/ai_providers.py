@@ -73,6 +73,38 @@ def classify_http_status(status_code: int, body_snippet: str = "") -> ErrorCateg
     return ErrorCategory.UNKNOWN
 
 
+#: Failure categories where the request itself was fine and a later identical
+#: attempt may succeed. Everything else (auth, invalid_request, model_not_found,
+#: response_schema, content_blocked, configuration) is a deterministic defect
+#: that retrying would only repeat.
+_TRANSIENT_CATEGORIES = frozenset(
+    {
+        ErrorCategory.QUOTA_RATE_LIMIT,
+        ErrorCategory.TIMEOUT,
+        ErrorCategory.CONNECTION,
+        ErrorCategory.PROVIDER_UNAVAILABLE,
+    }
+)
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Seconds to wait from a Retry-After header, when it is a plain delay.
+
+    Only the numeric form is honoured; an HTTP-date form is ignored in favour
+    of the caller's own backoff, which keeps this dependency-free and avoids
+    trusting a clock skew.
+    """
+    if not value:
+        return None
+    try:
+        seconds = float(value.strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return seconds
+
+
 class ProviderError(RuntimeError):
     """A provider call failed in a way the fallback layer can classify."""
 
@@ -86,6 +118,7 @@ class ProviderError(RuntimeError):
         model: str = "",
         status_code: int | None = None,
         detail: str = "",
+        retry_after: float | None = None,
     ) -> None:
         super().__init__(message)
         self.recoverable = recoverable
@@ -95,6 +128,17 @@ class ProviderError(RuntimeError):
         self.status_code = status_code
         #: Short, sanitized provider-supplied reason (never credentials).
         self.detail = detail
+        #: Server-supplied cooldown in seconds (from Retry-After), when given.
+        self.retry_after = retry_after
+
+    @property
+    def is_transient(self) -> bool:
+        """True when retrying the same request could plausibly succeed.
+
+        Quota/rate limiting is the canonical case: the request is well formed
+        and the credential is valid, the caller merely went too fast.
+        """
+        return self.category in _TRANSIENT_CATEGORIES
 
     def summary(self) -> str:
         """One-line, credential-free description used for logs and metrics."""
@@ -507,6 +551,7 @@ class GeminiProvider(AIProvider):
                 model=self.model,
                 status_code=response.status_code,
                 detail=hint,
+                retry_after=parse_retry_after(response.headers.get("Retry-After")),
                 # Still recoverable: the fallback provider has its own key and
                 # model, so even an auth or model error here may succeed there.
                 recoverable=True,
@@ -648,6 +693,7 @@ class GroqProvider(AIProvider):
                 model=self.model,
                 status_code=response.status_code,
                 detail=hint,
+                retry_after=parse_retry_after(response.headers.get("Retry-After")),
             )
 
         try:

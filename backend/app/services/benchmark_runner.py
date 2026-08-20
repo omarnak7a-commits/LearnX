@@ -79,6 +79,172 @@ PHRASING_BUDGET_SECONDS = float(os.getenv("BENCHMARK_PHRASING_BUDGET", "6"))
 #: burst of fast responses from still overrunning the invocation.
 MAX_CALLS_PER_REQUEST = int(os.getenv("BENCHMARK_MAX_CALLS_PER_REQUEST", "3"))
 
+#: Retries for a *transient* provider failure (429 quota, timeout, connection,
+#: 5xx) on a single blueprint. Free-tier Gemini keys rate-limit aggressively,
+#: and without this a burst of 429s is recorded as if MSEMAX had produced bad
+#: questions. Bounded so a rate-limited run degrades into slow progress rather
+#: than an unbounded stall.
+PHRASING_RETRY_ATTEMPTS = int(os.getenv("BENCHMARK_RETRY_ATTEMPTS", "3"))
+
+#: Base seconds for exponential backoff: sleep = base * 2**(attempt-1), capped.
+#: A provider-supplied Retry-After always wins over this schedule.
+PHRASING_RETRY_BASE_SECONDS = float(os.getenv("BENCHMARK_RETRY_BASE_SECONDS", "1.0"))
+
+#: Never sleep longer than this in one wait. The invocation has a hard ceiling,
+#: so a very long cooldown is better served by ending the request and letting
+#: the next one resume than by blocking until the platform kills us.
+PHRASING_RETRY_MAX_SLEEP_SECONDS = float(
+    os.getenv("BENCHMARK_RETRY_MAX_SLEEP", "8.0")
+)
+
+
+def retry_delay_seconds(
+    attempt: int,
+    retry_after: float | None = None,
+    *,
+    base: float = PHRASING_RETRY_BASE_SECONDS,
+    cap: float = PHRASING_RETRY_MAX_SLEEP_SECONDS,
+) -> float:
+    """Backoff before retry number ``attempt`` (1-based).
+
+    Honours a server-supplied ``Retry-After`` when present, otherwise uses
+    exponential backoff. Always clamped to ``cap`` so one wait cannot overrun
+    the serverless invocation.
+    """
+    if retry_after is not None and retry_after >= 0:
+        return min(retry_after, cap)
+    return min(base * (2 ** max(0, attempt - 1)), cap)
+
+
+#: How many separate requests may defer a unit for transient provider reasons
+#: before the failure is recorded instead. Without a ceiling, a persistently
+#: rate-limited key would defer forever and the run could never complete.
+#: Recorded failures stay classified as provider errors, so they still never
+#: count as MSEMAX quality rejections.
+MAX_TRANSIENT_DEFERRALS = int(os.getenv("BENCHMARK_MAX_DEFERRALS", "6"))
+
+#: Marker prefix for a phrasing that failed for an infrastructure reason
+#: rather than a quality one. Rows carrying it are NOT counted as MSEMAX
+#: rejections and are retried by a later request instead of being final.
+TRANSIENT_PREFIX = "transient:"
+
+
+def is_transient_reason(reason: str | None) -> bool:
+    """True when a stored rejection reason represents a provider/quota failure.
+
+    These must never be read as "MSEMAX wrote a bad question": the model was
+    never given the chance to answer.
+    """
+    return bool(reason) and reason.startswith(TRANSIENT_PREFIX)
+
+
+def classify_generation_failure(exc: BaseException) -> tuple[bool, float | None]:
+    """(is_transient, retry_after) for an exception raised while phrasing.
+
+    Unwraps ``AIUnavailableError``, which aggregates one failure per provider:
+    the attempt is transient only when *every* provider failed transiently,
+    since a deterministic defect (bad schema, retired model) will simply repeat.
+    """
+    from app.services.ai_providers import ProviderError
+    from app.services.ai_service import AIUnavailableError
+    from app.services.ai_providers import ErrorCategory
+
+    if isinstance(exc, AIUnavailableError):
+        failures = exc.failures
+        if not failures:
+            return False, None
+        transient_categories = {
+            ErrorCategory.QUOTA_RATE_LIMIT.value,
+            ErrorCategory.TIMEOUT.value,
+            ErrorCategory.CONNECTION.value,
+            ErrorCategory.PROVIDER_UNAVAILABLE.value,
+        }
+        all_transient = all(f.category in transient_categories for f in failures)
+        waits = [f.retry_after for f in failures if getattr(f, "retry_after", None)]
+        return all_transient, (max(waits) if waits else None)
+    if isinstance(exc, ProviderError):
+        return exc.is_transient, exc.retry_after
+    if isinstance(exc, TimeoutError):
+        return True, None
+    return False, None
+
+
+def phrase_with_retry(
+    blueprint: Any,
+    *,
+    backend: Any,
+    attempts: int = PHRASING_RETRY_ATTEMPTS,
+    sleep: Any = time.sleep,
+) -> tuple[dict | None, Any, bool]:
+    """Phrase one blueprint, retrying transient provider failures.
+
+    Returns ``(candidate, rejection, transient)``. When ``transient`` is True
+    every attempt failed for an infrastructure reason (429/timeout/5xx) and the
+    result must NOT be treated as a quality rejection -- the model never got to
+    answer. Quality rejections return immediately and are never retried, since
+    the deterministic pipeline would produce the identical verdict again.
+    """
+    last_rejection: Any = None
+    for attempt in range(1, max(1, attempts) + 1):
+        candidate, rejection = generate_candidate(blueprint, backend=backend)
+        if candidate is not None:
+            return candidate, None, False
+        last_rejection = rejection
+
+        reason = getattr(rejection, "reason", "") or ""
+        if not reason.startswith("provider error"):
+            # A genuine MSEMAX quality rejection: deterministic, do not retry.
+            return None, rejection, False
+
+        transient, retry_after = _transient_from_reason(reason)
+        if not transient or attempt >= max(1, attempts):
+            return None, rejection, transient
+
+        delay = retry_delay_seconds(attempt, retry_after)
+        logger.info(
+            "benchmark phrasing retry %s/%s for blueprint %s after %.1fs (%s)",
+            attempt,
+            attempts,
+            getattr(blueprint, "id", "?"),
+            delay,
+            reason[:120],
+        )
+        sleep(delay)
+    return None, last_rejection, True
+
+
+def _transient_from_reason(reason: str) -> tuple[bool, float | None]:
+    """Decide transience from a rendered 'provider error [...]' reason string.
+
+    ``generate_candidate`` already converts the exception into a sanitized,
+    category-bearing string, so transience is derived from those categories
+    rather than from re-raising.
+    """
+    from app.services.ai_providers import ErrorCategory
+
+    transient_names = {
+        ErrorCategory.QUOTA_RATE_LIMIT.value,
+        ErrorCategory.TIMEOUT.value,
+        ErrorCategory.CONNECTION.value,
+        ErrorCategory.PROVIDER_UNAVAILABLE.value,
+    }
+    found = {name for name in transient_names if name in reason}
+    if not found:
+        return False, None
+    # Transient only when NO deterministic category also appears: a mixed
+    # result (e.g. gemini model_not_found + groq quota) will not self-heal.
+    deterministic = {
+        ErrorCategory.AUTHENTICATION.value,
+        ErrorCategory.INVALID_REQUEST.value,
+        ErrorCategory.MODEL_NOT_FOUND.value,
+        ErrorCategory.RESPONSE_SCHEMA.value,
+        ErrorCategory.CONTENT_BLOCKED.value,
+        ErrorCategory.CONFIGURATION.value,
+    }
+    if any(name in reason for name in deterministic):
+        return False, None
+    return True, None
+
 
 class BenchmarkError(RuntimeError):
     """A benchmark could not be created or advanced."""
@@ -334,6 +500,7 @@ def phrase_step(
     service: Any,
     budget_seconds: float = PHRASING_BUDGET_SECONDS,
     max_calls: int = MAX_CALLS_PER_REQUEST,
+    sleep: Any = time.sleep,
 ) -> bool:
     """Phrase a few of this unit's blueprints; return True when the unit is done.
 
@@ -368,12 +535,46 @@ def phrase_step(
 
     started = time.perf_counter()
     calls = 0
+    transient_deferrals = 0
     for blueprint in pending:
         if calls >= max_calls or (time.perf_counter() - started) >= budget_seconds:
             break
         call_started = time.perf_counter()
-        candidate, rejection = generate_candidate(blueprint, backend=backend)
+        candidate, rejection, transient = phrase_with_retry(
+            blueprint, backend=backend, sleep=sleep
+        )
         elapsed = time.perf_counter() - call_started
+        calls += 1
+
+        if transient and batch.attempts < MAX_TRANSIENT_DEFERRALS:
+            # Quota/timeout/outage: the model never got to answer, so this is
+            # NOT a quality result. Storing it would freeze the hole in place,
+            # because UniqueConstraint(batch_id, blueprint_id) makes the row
+            # final. Leave the blueprint unphrased so a later request retries
+            # it, and stop early rather than burning the budget on more 429s.
+            logger.warning(
+                "benchmark phrasing deferred for blueprint %s (attempt %s/%s) (%s)",
+                blueprint.id,
+                batch.attempts,
+                MAX_TRANSIENT_DEFERRALS,
+                (getattr(rejection, "reason", "") or "")[:160],
+            )
+            transient_deferrals += 1
+            break
+
+        if transient:
+            # The provider has stayed unhealthy across many separate requests.
+            # Deferring forever would leave the run permanently incomplete, so
+            # record the failure and let the unit finish. It is still tagged
+            # transient, which keeps it OUT of the quality metrics and flips
+            # measurement_reliable to false rather than pretending MSEMAX lost.
+            logger.warning(
+                "benchmark phrasing giving up for blueprint %s after %s attempts (%s)",
+                blueprint.id,
+                batch.attempts,
+                (getattr(rejection, "reason", "") or "")[:160],
+            )
+
         db.add(
             BenchmarkPhrasing(
                 batch_id=batch.id,
@@ -387,7 +588,6 @@ def phrase_step(
         )
         # Commit per call: durability is what makes the unit resumable.
         db.commit()
-        calls += 1
 
     batch.phrased_count = len(_cached_phrasings(db, batch.id))
     db.commit()
@@ -447,6 +647,8 @@ def measure_batch(
     stats.generated = len(phrasings)
     for rejection in rejections:
         if rejection.reason.startswith("provider error"):
+            # Infrastructure failure, not a judgement on the generated text.
+            # Counted separately so it can be excluded from quality metrics.
             stats.provider_errors += 1
         stats.note_rejection(rejection.reason)
 
@@ -493,6 +695,7 @@ def run_batch(
     *,
     service: Any,
     batch: BenchmarkBatch | None = None,
+    sleep: Any = time.sleep,
 ) -> BenchmarkBatch | None:
     """Advance the benchmark by one bounded step.
 
@@ -505,7 +708,7 @@ def run_batch(
         return None
 
     try:
-        finished = phrase_step(db, run, batch, service=service)
+        finished = phrase_step(db, run, batch, service=service, sleep=sleep)
         if not finished:
             # More phrasing needed: release the unit so the next request picks
             # it up, with progress already durable.
@@ -635,15 +838,54 @@ def build_report(db: Session, run: BenchmarkRun) -> dict[str, Any]:
     requested = _sum("generations_requested")
     accepted = _sum("generations_accepted")
 
+    provider_errors = _sum("provider_errors")
+    all_reasons = _merge("rejection_reasons")
+    # Split infrastructure failures away from genuine quality rejections. A
+    # 429 says nothing about whether MSEMAX writes good questions, so mixing
+    # the two produced a valid_rate that measured quota, not quality.
+    provider_reasons = {
+        reason: count
+        for reason, count in all_reasons.items()
+        if reason.startswith("provider error")
+    }
+    quality_reasons = {
+        reason: count
+        for reason, count in all_reasons.items()
+        if not reason.startswith("provider error")
+    }
+    # Attempts where the model actually returned something to judge.
+    evaluated = max(0, requested - provider_errors)
+
     report["status"] = "completed"
     report["baseline"] = baseline
     report["msemax"] = {
         **msemax,
         "generations_requested": requested,
         "generations_accepted": accepted,
-        "valid_rate": round(accepted / requested, 4) if requested else None,
-        "provider_errors": _sum("provider_errors"),
-        "rejection_reasons": _merge("rejection_reasons"),
+        #: Attempts that reached the model and produced a judgeable result.
+        "generations_evaluated": evaluated,
+        #: Quality metric: acceptance among attempts the model answered.
+        #: This is the number to read when judging MSEMAX.
+        "valid_rate": round(accepted / evaluated, 4) if evaluated else None,
+        #: Raw acceptance including infrastructure failures. Operational only.
+        "valid_rate_including_provider_errors": (
+            round(accepted / requested, 4) if requested else None
+        ),
+        "provider_errors": provider_errors,
+        "provider_error_rate": (
+            round(provider_errors / requested, 4) if requested else None
+        ),
+        #: Genuine MSEMAX quality rejections only.
+        "rejection_reasons": quality_reasons,
+        #: Infrastructure failures, kept separate for diagnosis.
+        "provider_error_reasons": provider_reasons,
+        #: All reasons, unsplit, for backwards compatibility.
+        "rejection_reasons_all": all_reasons,
+        #: True when provider failures were common enough that the quality
+        #: comparison should not be trusted without a rerun.
+        "measurement_reliable": (
+            requested > 0 and (provider_errors / requested) <= 0.05
+        ),
     }
     report["comparison"] = {
         "questions_delta": msemax["questions"] - baseline["questions"],
@@ -657,6 +899,20 @@ def build_report(db: Session, run: BenchmarkRun) -> dict[str, Any]:
         "verdict_rule": (
             "MSEMAX is an improvement only if defects do not increase AND "
             "coverage (questions, tier 1) does not decrease."
+        ),
+        #: Guard against reading a quota-crippled run as a quality result.
+        "measurement_reliable": (
+            requested > 0 and (provider_errors / requested) <= 0.05
+        ),
+        "measurement_warning": (
+            None
+            if requested > 0 and (provider_errors / requested) <= 0.05
+            else (
+                f"{provider_errors}/{requested} phrasing attempts failed at the "
+                "provider (quota/timeout/outage). MSEMAX questions were never "
+                "generated for those blueprints, so the comparison understates "
+                "MSEMAX coverage. Rerun once the provider is healthy."
+            )
         ),
     }
     return report

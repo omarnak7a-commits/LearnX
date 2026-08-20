@@ -36,6 +36,8 @@ class ProviderFailure:
     status_code: int | None
     detail: str
     model: str = ""
+    #: Server-supplied cooldown in seconds, when the provider sent Retry-After.
+    retry_after: float | None = None
 
     @property
     def summary(self) -> str:
@@ -58,6 +60,7 @@ def _failure_from(name: str, exc: Exception) -> ProviderFailure:
             status_code=exc.status_code,
             detail=exc.detail,
             model=exc.model,
+            retry_after=exc.retry_after,
         )
     if isinstance(exc, ValidationError):
         return ProviderFailure(

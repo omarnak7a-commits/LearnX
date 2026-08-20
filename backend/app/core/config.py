@@ -31,7 +31,10 @@ class Settings(BaseSettings):
 
     # --- Online AI (backend-only secrets; never VITE_ variables) ---
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    # gemini-3.7-flash was confirmed available and working against the
+    # production key via /benchmark/gemini-models + provider-check;
+    # gemini-2.5-flash returned 404 NOT_FOUND for that same key.
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
     # Gemini 2.5 models charge internal "thinking" tokens against
     # maxOutputTokens and default to dynamic thinking, so a small budget can be
     # consumed entirely by reasoning and return zero visible output. Structured

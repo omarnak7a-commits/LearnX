@@ -476,7 +476,8 @@ def test_provider_check_exposes_the_effective_thinking_budget(client) -> None:
         client.app.dependency_overrides.pop(get_ai_service, None)
 
     assert body["gemini_thinking_budget"] == 0
-    assert body["gemini_model"] == "gemini-2.5-flash"
+    # Default is the model verified as available to the production key.
+    assert body["gemini_model"] == "gemini-3.7-flash"
 
 
 # --------------------------------------------------------------------------- #

@@ -529,7 +529,8 @@ def test_service_wires_the_configured_thinking_budget() -> None:
     """A default Settings must disable thinking on the real provider object."""
     service = AIService(Settings(_env_file=None, GEMINI_API_KEY="k"))
     assert service.providers["gemini"].thinking_budget == 0
-    assert service.providers["gemini"].model == "gemini-2.5-flash"
+    # The default is the model verified as available to the production key.
+    assert service.providers["gemini"].model == "gemini-3.7-flash"
 
 
 # --------------------------------------------------------------------------- #
