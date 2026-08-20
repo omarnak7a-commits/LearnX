@@ -591,3 +591,193 @@ def test_clean_primary_success_reports_no_failures(routed) -> None:
     assert contacted == ["gemini"]
     assert result.failures == ()
     assert result.fallback_used is False
+
+
+# --------------------------------------------------------------------------- #
+# I. Gemini model discovery (choose a real model, never a guessed one)
+# --------------------------------------------------------------------------- #
+
+CATALOGUE = {
+    "models": [
+        {"name": "models/gemini-3.7-flash", "displayName": "Gemini 3.7 Flash",
+         "inputTokenLimit": 1048576, "outputTokenLimit": 65536,
+         "supportedGenerationMethods": ["generateContent", "countTokens"], "thinking": True},
+        {"name": "models/gemini-3.6-flash", "displayName": "Gemini 3.6 Flash",
+         "inputTokenLimit": 1048576, "outputTokenLimit": 65536,
+         "supportedGenerationMethods": ["generateContent"], "thinking": True},
+        {"name": "models/gemini-3.1-pro-preview", "displayName": "Gemini 3.1 Pro Preview",
+         "inputTokenLimit": 1048576, "outputTokenLimit": 65536,
+         "supportedGenerationMethods": ["generateContent"], "thinking": True},
+        {"name": "models/gemini-3.5-flash-lite", "displayName": "Flash Lite",
+         "inputTokenLimit": 1048576, "outputTokenLimit": 65536,
+         "supportedGenerationMethods": ["generateContent"], "thinking": True},
+        {"name": "models/gemini-embedding-001", "displayName": "Embedding",
+         "inputTokenLimit": 2048, "outputTokenLimit": 1,
+         "supportedGenerationMethods": ["embedContent"], "thinking": False},
+        {"name": "models/imagen-4.0-generate-001", "displayName": "Imagen",
+         "inputTokenLimit": 480, "outputTokenLimit": 8192,
+         "supportedGenerationMethods": ["predict"], "thinking": False},
+        {"name": "models/gemini-2.5-flash-image", "displayName": "2.5 Flash Image",
+         "inputTokenLimit": 32768, "outputTokenLimit": 8192,
+         "supportedGenerationMethods": ["generateContent"], "thinking": False},
+    ]
+}
+
+
+def _with_transport(handler):
+    transport = httpx.MockTransport(handler)
+    original = httpx.Client
+
+    class Patched(original):  # type: ignore[misc,valid-type]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    return original, Patched
+
+
+def test_list_models_filters_to_usable_text_models() -> None:
+    from app.services.ai_providers import is_text_generation_model, rank_gemini_models
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=CATALOGUE)
+
+    original, patched = _with_transport(handler)
+    try:
+        httpx.Client = patched  # type: ignore[misc]
+        found = GeminiProvider(
+            api_key="k", model="gemini-2.5-flash", timeout_seconds=5
+        ).list_models()
+    finally:
+        httpx.Client = original  # type: ignore[misc]
+
+    usable = [
+        m for m in found
+        if m.supports_generate_content and is_text_generation_model(m.name)
+    ]
+    names = {m.name for m in usable}
+    assert "gemini-3.7-flash" in names
+    # Non-text endpoints must never be proposed for quiz generation.
+    assert "gemini-embedding-001" not in names
+    assert "imagen-4.0-generate-001" not in names
+    assert "gemini-2.5-flash-image" not in names
+    # Strongest stable model wins; the preview Pro must not outrank it.
+    assert rank_gemini_models(usable)[0].name == "gemini-3.7-flash"
+
+
+def test_preview_models_rank_below_stable_ones() -> None:
+    from app.services.ai_providers import GeminiModelInfo, rank_gemini_models
+
+    ranked = rank_gemini_models([
+        GeminiModelInfo("gemini-3.1-pro-preview", "", 1, 65536, ("generateContent",), True),
+        GeminiModelInfo("gemini-3.6-flash", "", 1, 65536, ("generateContent",), True),
+    ])
+    assert ranked[0].name == "gemini-3.6-flash"
+
+
+def test_list_models_sends_the_key_as_a_header_not_a_query_param() -> None:
+    """A key in the URL would leak into access logs and proxies."""
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["has_header"] = "x-goog-api-key" in request.headers
+        return httpx.Response(200, json=CATALOGUE)
+
+    original, patched = _with_transport(handler)
+    try:
+        httpx.Client = patched  # type: ignore[misc]
+        GeminiProvider(
+            api_key="AIzaSySECRET_VALUE_000", model="m", timeout_seconds=5
+        ).list_models()
+    finally:
+        httpx.Client = original  # type: ignore[misc]
+
+    assert seen["has_header"] is True
+    assert "AIzaSySECRET_VALUE_000" not in seen["url"]
+    assert "key=" not in seen["url"]
+
+
+def test_unavailable_model_is_classified_as_model_not_found() -> None:
+    """The exact production symptom: 404 NOT_FOUND for the configured model."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404, json={"error": {"code": 404, "status": "NOT_FOUND",
+                                 "message": "models/gemini-2.5-flash is not found"}}
+        )
+
+    original, patched = _with_transport(handler)
+    try:
+        httpx.Client = patched  # type: ignore[misc]
+        with pytest.raises(ProviderError) as excinfo:
+            GeminiProvider(
+                api_key="k", model="gemini-2.5-flash", timeout_seconds=5
+            ).generate(system_prompt="s", user_prompt="u", temperature=0.2, max_tokens=900)
+    finally:
+        httpx.Client = original  # type: ignore[misc]
+    assert excinfo.value.category is ErrorCategory.MODEL_NOT_FOUND
+    assert excinfo.value.status_code == 404
+
+
+def test_list_models_errors_are_categorized_not_raw() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED"}})
+
+    original, patched = _with_transport(handler)
+    try:
+        httpx.Client = patched  # type: ignore[misc]
+        with pytest.raises(ProviderError) as excinfo:
+            GeminiProvider(api_key="k", model="m", timeout_seconds=5).list_models()
+    finally:
+        httpx.Client = original  # type: ignore[misc]
+    assert excinfo.value.category is ErrorCategory.AUTHENTICATION
+
+
+# --------------------------------------------------------------------------- #
+# J. Thinking control must match the model generation
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "model,expected",
+    [
+        ("gemini-2.5-flash", {"thinkingBudget": 0}),
+        ("gemini-2.5-pro", {"thinkingBudget": 0}),
+        # Gemini 3 rejects thinkingBudget and uses thinkingLevel instead.
+        ("gemini-3.6-flash", {"thinkingLevel": "low"}),
+        ("gemini-3.7-flash", {"thinkingLevel": "low"}),
+        ("gemini-3.1-pro-preview", {"thinkingLevel": "low"}),
+    ],
+)
+def test_thinking_control_matches_generation(model: str, expected: dict) -> None:
+    payload = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload.update(json.loads(request.content))
+        return httpx.Response(200, json=_gemini_ok())
+
+    original, patched = _with_transport(handler)
+    try:
+        httpx.Client = patched  # type: ignore[misc]
+        GeminiProvider(
+            api_key="k", model=model, timeout_seconds=5, thinking_budget=0
+        ).generate(
+            system_prompt="s", user_prompt="u", temperature=0.2, max_tokens=900,
+            json_schema={"type": "object"},
+        )
+    finally:
+        httpx.Client = original  # type: ignore[misc]
+    assert payload["generationConfig"]["thinkingConfig"] == expected
+
+
+def test_structured_generation_still_works_on_a_gemini_3_model(routed) -> None:
+    """Switching generation must not break the structured contract."""
+    service, contacted = routed((200, _gemini_ok()), (500, {}))
+    service.providers["gemini"].model = "gemini-3.7-flash"
+    result = service.complete_structured(
+        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+    )
+    assert contacted == ["gemini"]
+    assert result.fallback_used is False
+    assert result.value.stem
+    assert len(result.value.options) == 4

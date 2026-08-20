@@ -6,6 +6,7 @@ logs prompts, source documents, authorization headers, or API keys.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -216,6 +217,95 @@ class AIProvider:
         raise NotImplementedError
 
 
+@dataclass(frozen=True)
+class GeminiModelInfo:
+    """Safe, non-sensitive metadata about one discoverable Gemini model."""
+
+    name: str
+    display_name: str
+    input_token_limit: int
+    output_token_limit: int
+    supported_methods: tuple[str, ...]
+    thinking: bool
+
+    @property
+    def supports_generate_content(self) -> bool:
+        return "generateContent" in self.supported_methods
+
+
+#: Model families that are unsuitable for LearnX structured text generation,
+#: matched against the model id. Image/video/audio/embedding endpoints do not
+#: accept the JSON-schema text contract the quiz pipeline depends on.
+_NON_TEXT_MARKERS = (
+    "embedding",
+    "aqa",
+    "imagen",
+    "veo",
+    "lyria",
+    "-tts",
+    "-image",
+    "-live",
+    "robotics",
+    "gemma",
+    "learnlm",
+)
+
+
+def is_text_generation_model(model_id: str) -> bool:
+    """True when the model id looks like a general text-generation model."""
+    lowered = model_id.lower()
+    if not lowered.startswith("gemini"):
+        return False
+    return not any(marker in lowered for marker in _NON_TEXT_MARKERS)
+
+
+def model_generation(model_id: str) -> float:
+    """Numeric generation of a Gemini model id (e.g. 3.6 for gemini-3.6-flash).
+
+    Used to pick the strongest available model and to choose the correct
+    thinking-control parameter, which differs across generations.
+    """
+    match = re.search(r"gemini-(\d+)(?:\.(\d+))?", model_id.lower())
+    if not match:
+        return 0.0
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    return major + minor / 10
+
+
+def rank_gemini_models(models: list[GeminiModelInfo]) -> list[GeminiModelInfo]:
+    """Order candidate models best-first for LearnX structured generation.
+
+    Preference order, strongest first:
+      1. stable over preview/experimental (preview models can change or vanish)
+      2. newer generation over older
+      3. flash tier over pro (the workload is short, high-volume phrasing where
+         latency and quota matter far more than deep reasoning) and both over
+         lite (lite trades away the reasoning quality the quiz gates require)
+      4. larger output capacity
+    """
+
+    def tier(info: GeminiModelInfo) -> int:
+        lowered = info.name.lower()
+        if "lite" in lowered:
+            return 0
+        if "pro" in lowered:
+            return 1
+        return 2  # flash
+
+    def key(info: GeminiModelInfo) -> tuple:
+        lowered = info.name.lower()
+        stable = 0 if ("preview" in lowered or "exp" in lowered) else 1
+        return (
+            stable,
+            model_generation(info.name),
+            tier(info),
+            info.output_token_limit,
+        )
+
+    return sorted(models, key=key, reverse=True)
+
+
 class GeminiProvider(AIProvider):
     name = "gemini"
 
@@ -234,6 +324,99 @@ class GeminiProvider(AIProvider):
         #: disables thinking; a negative value omits the field so the model
         #: applies its own default (needed for models that cannot disable it).
         self.thinking_budget = thinking_budget
+
+    def _thinking_config(self) -> dict[str, Any] | None:
+        """The correct thinking-control field for this model's generation.
+
+        Gemini 2.5 uses ``thinkingBudget`` (0 disables thinking). Gemini 3
+        replaced it with ``thinkingLevel`` and rejects ``thinkingBudget``;
+        thinking cannot be fully disabled there, so the lowest level is used.
+        A negative configured budget means "omit entirely, let the model
+        decide", which stays valid for every generation.
+        """
+        if self.thinking_budget < 0:
+            return None
+        if model_generation(self.model) >= 3:
+            # 3.x: no budget field, and "off" is not offered. "low" minimises
+            # reasoning spend while remaining a supported value.
+            return {"thinkingLevel": "low"}
+        return {"thinkingBudget": self.thinking_budget}
+
+    def list_models(self) -> list[GeminiModelInfo]:
+        """Discover the models this API key can actually use.
+
+        Reads the key from settings exactly as generate() does; the key is sent
+        only as a request header and never returned, logged or stored. Only
+        non-sensitive model metadata is surfaced.
+        """
+        if not self.api_key:
+            raise ProviderConfigurationError(
+                "Gemini is not configured.", provider=self.name
+            )
+
+        discovered: list[GeminiModelInfo] = []
+        page_token = ""
+        try:
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                for _ in range(10):  # bounded: avoid an unbounded pagination loop
+                    params = {"pageSize": 200}
+                    if page_token:
+                        params["pageToken"] = page_token
+                    response = client.get(
+                        "https://generativelanguage.googleapis.com/v1beta/models",
+                        headers={"x-goog-api-key": self.api_key},
+                        params=params,
+                    )
+                    if not response.is_success:
+                        try:
+                            hint = _error_hint(response.json())
+                        except ValueError:
+                            hint = ""
+                        raise ProviderError(
+                            f"Gemini model listing returned HTTP {response.status_code}.",
+                            category=classify_http_status(response.status_code, hint),
+                            provider=self.name,
+                            status_code=response.status_code,
+                            detail=hint,
+                        )
+                    body = response.json()
+                    for entry in body.get("models") or []:
+                        raw_name = str(entry.get("name") or "")
+                        discovered.append(
+                            GeminiModelInfo(
+                                name=raw_name.split("/", 1)[-1],
+                                display_name=str(entry.get("displayName") or ""),
+                                input_token_limit=int(entry.get("inputTokenLimit") or 0),
+                                output_token_limit=int(
+                                    entry.get("outputTokenLimit") or 0
+                                ),
+                                supported_methods=tuple(
+                                    str(method)
+                                    for method in (
+                                        entry.get("supportedGenerationMethods") or []
+                                    )
+                                ),
+                                thinking=bool(entry.get("thinking")),
+                            )
+                        )
+                    page_token = str(body.get("nextPageToken") or "")
+                    if not page_token:
+                        break
+        except ProviderError:
+            raise
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise ProviderError(
+                "Gemini model listing could not reach the API.",
+                category=ErrorCategory.CONNECTION,
+                provider=self.name,
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                "Gemini model listing failed.",
+                category=ErrorCategory.CONNECTION,
+                provider=self.name,
+            ) from exc
+        return discovered
 
     def generate(
         self,
@@ -259,13 +442,12 @@ class GeminiProvider(AIProvider):
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
-        if self.thinking_budget >= 0:
-            # Without this, 2.5 Flash uses dynamic thinking and can spend the
-            # entire maxOutputTokens budget reasoning, returning MAX_TOKENS with
-            # no text at all.
-            generation_config["thinkingConfig"] = {
-                "thinkingBudget": self.thinking_budget
-            }
+        thinking_config = self._thinking_config()
+        if thinking_config is not None:
+            # Without this, thinking models use a dynamic budget and can spend
+            # the entire maxOutputTokens allowance reasoning, returning
+            # MAX_TOKENS with no text at all.
+            generation_config["thinkingConfig"] = thinking_config
         if json_schema is not None:
             generation_config.update(
                 {

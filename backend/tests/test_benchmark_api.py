@@ -477,3 +477,106 @@ def test_provider_check_exposes_the_effective_thinking_budget(client) -> None:
 
     assert body["gemini_thinking_budget"] == 0
     assert body["gemini_model"] == "gemini-2.5-flash"
+
+
+# --------------------------------------------------------------------------- #
+# F. Gemini model discovery endpoint
+# --------------------------------------------------------------------------- #
+
+
+def test_gemini_models_requires_the_token(client) -> None:
+    assert client.get("/api/v1/benchmark/gemini-models").status_code == 401
+    assert client.get(
+        "/api/v1/benchmark/gemini-models", headers={"X-Benchmark-Token": "wrong"}
+    ).status_code == 401
+
+
+def test_gemini_models_never_returns_the_key(client, monkeypatch) -> None:
+    """Discovery uses the deployment's key but must not echo any part of it."""
+    import httpx
+
+    secret = "AIzaSyMUST_NOT_APPEAR_IN_RESPONSE_99"
+    catalogue = {
+        "models": [
+            {
+                "name": "models/gemini-3.7-flash",
+                "displayName": "Gemini 3.7 Flash",
+                "inputTokenLimit": 1048576,
+                "outputTokenLimit": 65536,
+                "supportedGenerationMethods": ["generateContent"],
+                "thinking": True,
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # The key travels as a header only, never in the URL.
+        assert "key=" not in str(request.url)
+        return httpx.Response(200, json=catalogue)
+
+    transport = httpx.MockTransport(handler)
+    original = httpx.Client
+
+    class Patched(original):  # type: ignore[misc,valid-type]
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", Patched)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None,
+        BENCHMARK_TOKEN=TOKEN,
+        GEMINI_API_KEY=secret,
+        GEMINI_MODEL="gemini-2.5-flash",
+    )
+    try:
+        response = client.get(
+            "/api/v1/benchmark/gemini-models", headers={"X-Benchmark-Token": TOKEN}
+        )
+    finally:
+        client.app.dependency_overrides[get_settings] = lambda: Settings(
+            _env_file=None, BENCHMARK_TOKEN=TOKEN
+        )
+
+    assert secret not in response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["recommended_model"] == "gemini-3.7-flash"
+    # The currently configured model is correctly reported as unavailable.
+    assert body["configured_model_available"] is False
+
+
+def test_provider_check_names_the_selected_model(client) -> None:
+    """Requirement: CheckOnly must show exactly which model was tested."""
+    from app.services.ai_service import AIStructuredCompletion, get_ai_service
+    from app.services.quiz_msemax import MsemaxQuestion
+
+    class Healthy:
+        def complete_structured(self, **_: object):
+            return AIStructuredCompletion(
+                value=MsemaxQuestion(
+                    stem="Why?", options=["a", "b", "c", "d"], correct_option=0,
+                    answer="", explanation="Because.",
+                ),
+                provider="gemini",
+                model="gemini-3.7-flash",
+                fallback_used=False,
+            )
+
+    client.app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None, BENCHMARK_TOKEN=TOKEN, GEMINI_MODEL="gemini-3.7-flash"
+    )
+    client.app.dependency_overrides[get_ai_service] = lambda: Healthy()
+    try:
+        body = client.post(
+            "/api/v1/benchmark/provider-check", headers={"X-Benchmark-Token": TOKEN}
+        ).json()
+    finally:
+        client.app.dependency_overrides[get_settings] = lambda: Settings(
+            _env_file=None, BENCHMARK_TOKEN=TOKEN
+        )
+        client.app.dependency_overrides.pop(get_ai_service, None)
+
+    assert body["selected_gemini_model"] == "gemini-3.7-flash"
+    assert body["model_used"] == "gemini-3.7-flash"
+    assert body["degraded"] is False

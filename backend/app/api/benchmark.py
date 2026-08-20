@@ -56,7 +56,9 @@ router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 #:   1 = initial pre-flight (ok/category/diagnosis)
 #:   2 = adds degraded/primary_failures/primary_failure_category,
 #:       gemini_thinking_budget and this marker
-PROVIDER_CHECK_VERSION = 2
+#:   3 = adds selected_gemini_model, gemini_model_available and the
+#:       /benchmark/gemini-models discovery endpoint
+PROVIDER_CHECK_VERSION = 3
 
 
 def require_benchmark_token(
@@ -205,6 +207,118 @@ def get_report(run_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     return build_report(db, run)
 
 
+def _recommend_gemini_model(settings: Settings) -> dict[str, Any]:
+    """Best model actually available to this deployment's key, or the error.
+
+    Sanitized: model names and capability metadata only, never the credential.
+    """
+    from app.services.ai_providers import (
+        GeminiProvider,
+        ProviderError,
+        is_text_generation_model,
+        rank_gemini_models,
+    )
+
+    try:
+        discovered = GeminiProvider(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+            timeout_seconds=settings.ai_timeout_seconds,
+            thinking_budget=settings.gemini_thinking_budget,
+        ).list_models()
+    except ProviderError as exc:
+        return {"ok": False, "category": exc.category.value, "diagnosis": exc.summary()}
+
+    ranked = rank_gemini_models(
+        [
+            info
+            for info in discovered
+            if info.supports_generate_content and is_text_generation_model(info.name)
+        ]
+    )
+    return {
+        "ok": True,
+        "recommended_model": ranked[0].name if ranked else None,
+        "available_text_models": [info.name for info in ranked[:8]],
+        "hint": (
+            "Set GEMINI_MODEL to the recommended model in Vercel and redeploy."
+            if ranked
+            else "This key exposes no text-generation model."
+        ),
+    }
+
+
+@router.get("/gemini-models", dependencies=[Depends(require_benchmark_token)])
+def gemini_models(
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """List the Gemini models this deployment's API key can actually use.
+
+    Uses the GEMINI_API_KEY already present in the environment; the key is sent
+    only as a request header to Google and is never returned, logged or stored.
+    The response contains model names and public capability metadata only.
+
+    This exists so the model choice is driven by what the production key really
+    has access to, instead of a guessed model name.
+    """
+    from app.services.ai_providers import (
+        GeminiProvider,
+        ProviderError,
+        is_text_generation_model,
+        rank_gemini_models,
+    )
+
+    if not (settings.gemini_api_key or "").strip():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "No Gemini credentials are configured in this environment.",
+        )
+
+    provider = GeminiProvider(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+        timeout_seconds=settings.ai_timeout_seconds,
+        thinking_budget=settings.gemini_thinking_budget,
+    )
+    try:
+        discovered = provider.list_models()
+    except ProviderError as exc:
+        # Sanitized: category and status only, never the key.
+        return {
+            "check_version": PROVIDER_CHECK_VERSION,
+            "ok": False,
+            "category": exc.category.value,
+            "diagnosis": exc.summary(),
+        }
+
+    usable = [
+        info
+        for info in discovered
+        if info.supports_generate_content and is_text_generation_model(info.name)
+    ]
+    ranked = rank_gemini_models(usable)
+    configured = settings.gemini_model.strip()
+    return {
+        "check_version": PROVIDER_CHECK_VERSION,
+        "ok": True,
+        "configured_model": configured,
+        "configured_model_available": any(info.name == configured for info in ranked),
+        "recommended_model": ranked[0].name if ranked else None,
+        "total_models_visible": len(discovered),
+        "usable_text_models": [
+            {
+                "name": info.name,
+                "display_name": info.display_name,
+                "input_token_limit": info.input_token_limit,
+                "output_token_limit": info.output_token_limit,
+                "thinking": info.thinking,
+                "supports_generate_content": info.supports_generate_content,
+            }
+            for info in ranked
+        ],
+    }
+
+
 @router.post("/provider-check", dependencies=[Depends(require_benchmark_token)])
 def provider_check(
     settings: Settings = Depends(get_settings),
@@ -236,6 +350,9 @@ def provider_check(
         "primary": settings.ai_provider,
         "fallback": settings.ai_fallback_provider,
         "gemini_model": settings.gemini_model,
+        # Explicit echo of the model this deployment will actually send to
+        # Gemini, so the CheckOnly output names exactly what was tested.
+        "selected_gemini_model": settings.gemini_model,
         "groq_model": settings.groq_model,
         # The effective thinking budget actually in force. 0 = thinking off,
         # negative = field omitted so the model uses its own default.
@@ -274,6 +391,16 @@ def provider_check(
             diagnosis=exc.diagnosis(),
             attempts=[failure.summary for failure in exc.failures],
         )
+        # If Gemini rejected the configured model, discover what this key can
+        # actually use and name the best one. Diagnostic only: this does not
+        # change what production generates, it just removes a guess-and-
+        # redeploy cycle from the operator's loop.
+        if any(
+            failure.provider == "gemini"
+            and failure.category == ErrorCategory.MODEL_NOT_FOUND.value
+            for failure in exc.failures
+        ):
+            result["model_recommendation"] = _recommend_gemini_model(settings)
         return result
     except Exception as exc:  # never leak an unexpected traceback to the caller
         result.update(
@@ -302,6 +429,15 @@ def provider_check(
             primary_failures=degraded,
             primary_failure_category=completion.failures[0].category,
         )
+        # A rescued call still means the primary model is wrong; recommend a
+        # model this key can actually use so the operator does not have to
+        # guess-and-redeploy.
+        if any(
+            failure.provider == "gemini"
+            and failure.category == ErrorCategory.MODEL_NOT_FOUND.value
+            for failure in completion.failures
+        ):
+            result["model_recommendation"] = _recommend_gemini_model(settings)
     else:
         result["degraded"] = False
     return result

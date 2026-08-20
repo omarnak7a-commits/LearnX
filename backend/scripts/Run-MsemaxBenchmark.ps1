@@ -68,6 +68,10 @@ param(
     # Run only the single-call provider pre-flight and exit. Use this first.
     [switch] $CheckOnly,
 
+    # Only list the Gemini models this deployment's key can use, then exit.
+    # Makes no generation call and spends no quota.
+    [switch] $ListModels,
+
     # Skip the pre-flight (not recommended: a misconfigured provider would
     # otherwise only be discovered after hundreds of failed calls).
     [switch] $SkipCheck,
@@ -174,10 +178,47 @@ function Invoke-Api {
     }
 }
 
+function Show-GeminiModels {
+    <#
+        Ask the deployment which Gemini models its own API key can actually
+        use. The key never leaves Vercel; only model names and public
+        capability metadata come back.
+    #>
+    try {
+        $models = Invoke-Api -Method 'Get' -Path '/benchmark/gemini-models'
+    }
+    catch {
+        Write-Host "  (could not list models: $($_.Exception.Message))" -ForegroundColor DarkYellow
+        return
+    }
+    if (-not $models.ok) {
+        Write-Host ("  model discovery failed: {0}" -f $models.diagnosis) -ForegroundColor Yellow
+        return
+    }
+    Write-Host ""
+    Write-Host ("  Models available to THIS production key ({0} visible, {1} usable for text):" -f `
+            $models.total_models_visible, $models.usable_text_models.Count) -ForegroundColor Cyan
+    Write-Host ("    configured: {0}  available={1}" -f `
+            $models.configured_model, $models.configured_model_available)
+    Write-Host ("    recommended: {0}" -f $models.recommended_model) -ForegroundColor Green
+    Write-Host ""
+    Write-Host ("    {0,-34} {1,10} {2,9}" -f 'model', 'max out', 'thinking')
+    foreach ($m in $models.usable_text_models) {
+        Write-Host ("    {0,-34} {1,10} {2,9}" -f $m.name, $m.output_token_limit, $m.thinking)
+    }
+    Write-Host ""
+    Write-Host ("  Set GEMINI_MODEL={0} in Vercel and redeploy." -f $models.recommended_model) -ForegroundColor Yellow
+}
+
 Write-Host "MSEMAX STEP 9 benchmark" -ForegroundColor Cyan
 Write-Host "  target : $($script:api)"
 Write-Host "  auth   : X-Benchmark-Token (provider keys stay in Vercel)"
 Write-Host ""
+
+if ($ListModels) {
+    Show-GeminiModels
+    return
+}
 
 if (-not $SkipCheck) {
     Write-Host "pre-flight: one real provider call..." -ForegroundColor Cyan
@@ -198,6 +239,8 @@ if (-not $SkipCheck) {
     }
 
     Write-Host ("  server    : provider-check v{0}" -f $checkVersion)
+    Write-Host ("  model     : {0} (what production will actually call)" -f `
+            $(if ($check.selected_gemini_model) { $check.selected_gemini_model } else { $check.gemini_model }))
     Write-Host ("  primary   : {0} ({1})  key present: {2}" -f `
             $check.primary, $check.gemini_model, $check.credentials_present.gemini)
     Write-Host ("  fallback  : {0} ({1})  key present: {2}" -f `
@@ -215,7 +258,17 @@ if (-not $SkipCheck) {
                 Write-Host "Fix: the provider key in Vercel is missing, expired or revoked. Rotate it in the Vercel dashboard and redeploy. Do not paste it anywhere else." -ForegroundColor Yellow
             }
             'model_not_found' {
-                Write-Host "Fix: the configured model no longer exists. Set GEMINI_MODEL / GROQ_MODEL in Vercel to a current model and redeploy." -ForegroundColor Yellow
+                Write-Host "Fix: the configured model is not available to this API key." -ForegroundColor Yellow
+                if ($check.model_recommendation -and $check.model_recommendation.ok) {
+                    Write-Host ("  recommended model for THIS key: {0}" -f `
+                            $check.model_recommendation.recommended_model) -ForegroundColor Green
+                    Write-Host ("  also available: {0}" -f `
+                        ($check.model_recommendation.available_text_models -join ', '))
+                    Write-Host ("  {0}" -f $check.model_recommendation.hint) -ForegroundColor Yellow
+                }
+                else {
+                    Show-GeminiModels
+                }
             }
             'quota_rate_limit' {
                 Write-Host "Fix: quota or rate limit reached. Wait, or raise the provider quota, then retry." -ForegroundColor Yellow
