@@ -628,3 +628,219 @@ def test_a_real_outage_still_maps_to_503() -> None:
 
     exc = _as_http_exception(AIUnavailableError("provider down"))
     assert exc.status_code == 503
+
+
+# --------------------------------------------------------------------------- #
+# Rejection reasons must name the gate that fired
+# --------------------------------------------------------------------------- #
+
+
+def test_a_rejected_candidate_names_the_gate_that_rejected_it() -> None:
+    """"Failed validation" is not a debuggable reason.
+
+    Every gate in normalize_blueprinted_candidate() returns None, so without an
+    explicit reason a dropped question is indistinguishable from a bug in the
+    planner. The log has to say which check failed.
+    """
+    generic = "failed grounding/shape/type validation"
+    seen = 0
+    for name in ("history-ww1.txt", "geography-landforms.txt", "literature-analysis.txt"):
+        result = build(load_corpus(name), count=8)
+        for note in result.rejections:
+            if note.stage != "validation":
+                continue
+            seen += 1
+            assert note.reason != generic, "rejection reason must be specific"
+            assert note.reason.strip()
+    assert seen, "expected at least one validation rejection across the corpus"
+
+
+def test_an_unknown_blueprint_is_reported_precisely() -> None:
+    from app.services.quiz_pipeline import _RawCandidate, normalize_blueprinted_candidate
+
+    reasons: list[str] = []
+    record = normalize_blueprinted_candidate(
+        _RawCandidate(blueprint_id="does-not-exist", prompt="x"),
+        index=0,
+        blueprints={},
+        page_count=3,
+        included_pages={1, 2, 3},
+        page_text={1: "text"},
+        vocab=set(),
+        reasons=reasons,
+    )
+    assert record is None
+    assert "not part of this quiz plan" in reasons[0]
+
+
+# --------------------------------------------------------------------------- #
+# The reported symptom, reproduced through a misbehaving provider
+# --------------------------------------------------------------------------- #
+
+
+class _OneUnrelatedQuestionProvider:
+    """Understanding succeeds; the writer returns a single off-topic question.
+
+    This reproduces the bug report exactly: the student asked for eight
+    questions about their PDF and got one about something else entirely.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete_structured(self, **kwargs):
+        from app.services.ai_service import AIStructuredCompletion
+        from app.services.quiz_pipeline import _RawQuizPool
+        from app.services.quiz_understanding import _RawUnderstanding
+
+        self.calls += 1
+        if kwargs["response_model"] is _RawUnderstanding:
+            raise AIServiceError("understanding unavailable")
+        value = _RawQuizPool.model_validate(
+            {
+                "questions": [
+                    {
+                        "id": "off-1",
+                        "blueprint_id": "bp-1",
+                        "type": "mcq",
+                        "prompt": "Who won the 1998 FIFA World Cup?",
+                        "options": ["France", "Brazil", "Germany", "Italy"],
+                        "correct_answer": "France",
+                        "explanation": "France won the 1998 final.",
+                        "difficulty": "medium",
+                        "source_pages": [1],
+                        "source_quote": "France won the World Cup.",
+                    }
+                ]
+            }
+        )
+        return AIStructuredCompletion(
+            value=value, provider="gemini", model="m", fallback_used=False
+        )
+
+
+def test_a_provider_returning_one_unrelated_question_still_yields_eight_grounded_ones() -> None:
+    source = load_pdf("cell-biology-ch3.pdf")
+    result = generate_quiz(
+        _OneUnrelatedQuestionProvider(),
+        source,
+        count=8,
+        question_types=ALL_TYPES,
+        difficulty="medium",
+        kind="exam",
+        language="en",
+        seed=1,
+        previous_questions=[],
+        system_prompt="Use only the supplied source.",
+    )
+    assert len(result.questions) == 8
+    for question in result.questions:
+        assert "FIFA" not in question.prompt
+        assert "World Cup" not in question.prompt
+    # Deterministic material replaced the provider's output, and says so.
+    assert result.fallback_used is True
+
+
+def test_an_answer_that_contradicts_the_pdf_is_not_returned() -> None:
+    """The PDF is the source of truth, even against a confident provider."""
+    from app.services.quiz_pipeline import _RawQuizPool
+    from tests.quiz_fakes import FakeQuizService
+
+    class Contradicting(FakeQuizService):
+        def _write(self, prompt):
+            return _RawQuizPool.model_validate(
+                {
+                    "questions": [
+                        {
+                            "id": "c1",
+                            "blueprint_id": "bp-1",
+                            "type": "true-false",
+                            "prompt": "The nucleus has no role in storing genetic material.",
+                            "options": ["True", "False"],
+                            "correct_answer": "True",
+                            "explanation": "The nucleus stores nothing.",
+                            "difficulty": "medium",
+                            "source_pages": [1],
+                            "source_quote": (
+                                "The nucleus is defined as the membrane-bound organelle "
+                                "that houses the cell's genetic material."
+                            ),
+                        }
+                    ]
+                }
+            )
+
+    result = generate_quiz(
+        Contradicting(title="cell-biology-ch3"),
+        load_pdf("cell-biology-ch3.pdf"),
+        count=8,
+        question_types=ALL_TYPES,
+        difficulty="medium",
+        kind="exam",
+        language="en",
+        seed=1,
+        previous_questions=[],
+        system_prompt="Use only the supplied source.",
+    )
+    assert len(result.questions) == 8
+    for question in result.questions:
+        assert "no role in storing" not in question.prompt
+
+
+def test_the_retry_limit_is_bounded() -> None:
+    """A thin document must fail fast, never loop."""
+    import app.services.quiz_pipeline as pipeline
+
+    assert pipeline._MAX_TOPUP_ROUNDS >= 1
+    thin = source_from_text(
+        "Evaporation is the process by which liquid water changes into water vapor. "
+        "Heat supplies the energy that causes evaporation.",
+        "note",
+    )
+    with pytest.raises(AIUnavailableError):
+        build(thin, count=50, question_types=["mcq"])
+
+
+# --------------------------------------------------------------------------- #
+# The planner produces a full plan before any question is written
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("name", ALL_SOURCES)
+def test_at_least_count_plans_exist_before_generation(name: str) -> None:
+    result = build(load_pdf(name), count=8)
+    assert result.telemetry["quiz_plans_created"] >= 8
+    # Each planned slot names a concept, a knowledge target and a skill.
+    for blueprint in result.blueprints:
+        assert blueprint.concept_id
+        assert blueprint.knowledge_target_id
+        assert blueprint.cognitive_skill
+        assert blueprint.evidence
+
+
+def test_the_eight_questions_cover_eight_distinct_concepts() -> None:
+    result = build(load_pdf("cell-biology-ch3.pdf"), count=8)
+    concepts = [record.concept_id for record in result.provenance]
+    assert len(set(concepts)) == 8
+
+
+def test_the_document_understanding_is_built_before_questions_exist() -> None:
+    """Concepts carry definitions, types, evidence and real page numbers."""
+    source = load_pdf("cell-biology-ch3.pdf")
+    result = build(source, count=8)
+    understanding = result.understanding
+    assert understanding is not None
+    assert understanding.subject
+    assert understanding.summary
+    assert understanding.main_topics
+    concepts = list(understanding.important_concepts())
+    assert len(concepts) >= 8
+    for concept in concepts:
+        assert concept.name
+        assert concept.knowledge_type
+        assert concept.source_pages
+        for page in concept.source_pages:
+            assert 1 <= page <= source.page_count
+        for evidence in concept.evidence:
+            assert evidence.text.strip()
+            assert 1 <= evidence.page <= source.page_count

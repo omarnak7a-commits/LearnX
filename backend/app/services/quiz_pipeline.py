@@ -663,6 +663,12 @@ def _matches_cognitive_shape(question: AIQuizQuestion, blueprint: QuestionBluepr
     return True
 
 
+def _note(reasons: list[str] | None, reason: str) -> None:
+    """Record why a gate rejected a candidate, when the caller is collecting."""
+    if reasons is not None:
+        reasons.append(reason)
+
+
 def normalize_blueprinted_candidate(
     raw: _RawCandidate,
     *,
@@ -672,10 +678,18 @@ def normalize_blueprinted_candidate(
     included_pages: set[int],
     page_text: dict[int, str],
     vocab: set[str],
+    reasons: list[str] | None = None,
 ) -> CandidateRecord | None:
-    """Authoritative backend gates: objective, evidence, shape, and type."""
+    """Authoritative backend gates: objective, evidence, shape, and type.
+
+    ``reasons`` optionally collects the specific gate that rejected the
+    candidate. Every gate here returns None, so without it a rejected question
+    is only ever reported as "failed validation" -- which is exactly the kind
+    of unexplained drop that made a short quiz impossible to debug.
+    """
     blueprint = blueprints.get(raw.blueprint_id.strip())
     if blueprint is None:
+        _note(reasons, f"blueprint {raw.blueprint_id.strip()!r} is not part of this quiz plan")
         return None
     question = normalize_candidate(
         raw,
@@ -684,12 +698,25 @@ def normalize_blueprinted_candidate(
         page_count=page_count,
         included_pages=included_pages,
     )
-    if question is None or question.type != blueprint.question_type:
+    if question is None:
+        _note(reasons, "malformed question (shape, options, or page refs invalid)")
+        return None
+    if question.type != blueprint.question_type:
+        _note(
+            reasons,
+            f"type {question.type!r} does not match the planned {blueprint.question_type!r}",
+        )
         return None
     if not set(question.source_pages).issubset(set(blueprint.pages)):
+        _note(
+            reasons,
+            f"cites pages {list(question.source_pages)} outside the concept's "
+            f"evidence pages {list(blueprint.pages)}",
+        )
         return None
     quote = re.sub(r"\s+", " ", raw.source_quote.strip())
     if not quotes_equivalent(quote, blueprint.evidence):
+        _note(reasons, "source quote does not match the planned evidence")
         return None
     if not quote_is_grounded(
         quote,
@@ -697,6 +724,7 @@ def normalize_blueprinted_candidate(
         page_text=page_text,
         category=blueprint.knowledge_type,
     ):
+        _note(reasons, "source quote is not verbatim in the cited page text")
         return None
 
     # The backend—not an LLM assertion—checks that prompt, answer, and
@@ -705,28 +733,39 @@ def normalize_blueprinted_candidate(
     prompt_tokens = content_tokens(question.prompt)
     explanation_tokens = content_tokens(question.explanation)
     if not (prompt_tokens & (evidence_tokens | content_tokens(blueprint.concept))):
+        _note(reasons, "question text shares no content with the concept or its evidence")
         return None
     if (
         len(explanation_tokens & evidence_tokens) < min(2, len(evidence_tokens))
         or len(explanation_tokens & evidence_tokens) / max(1, len(explanation_tokens)) < 0.45
     ):
+        _note(reasons, "explanation is not supported by the cited evidence")
         return None
     if not _answer_is_supported(question, blueprint):
+        _note(reasons, "correct answer is not supported by the evidence")
         return None
     if not _matches_cognitive_shape(question, blueprint):
+        _note(
+            reasons,
+            f"question does not have the shape of a {blueprint.cognitive_skill!r} question",
+        )
         return None
 
     if question.type == "mcq":
         rationales = tuple(value.strip() for value in raw.distractor_rationales if value.strip())
         if len(rationales) != 3 or any(len(value) < 8 for value in rationales):
+            _note(reasons, "MCQ is missing usable rationales for all three distractors")
             return None
         if distractor_quality_score(question, vocab) < _MIN_DISTRACTORS:
+            _note(reasons, "MCQ distractors are too weak to be plausible")
             return None
     else:
         rationales = ()
     if question.type == "fill-blank" and not _meaningful_fill_blank(question, blueprint):
+        _note(reasons, "fill-blank does not remove a meaningful term")
         return None
     if question.type == "true-false" and not _meaningful_true_false(raw, question, blueprint):
+        _note(reasons, "true/false statement is not a checkable claim from the evidence")
         return None
     if blueprint.cognitive_skill == "application":
         # Transfer-task scaffolding may be novel, but the subject matter and
@@ -931,6 +970,7 @@ def _collect_records(
         )
 
     for index, raw in enumerate(candidates):
+        gate_reasons: list[str] = []
         record = normalize_blueprinted_candidate(
             raw,
             index=index,
@@ -939,9 +979,14 @@ def _collect_records(
             included_pages=context.included_pages,
             page_text=context.page_text,
             vocab=context.vocab,
+            reasons=gate_reasons,
         )
         if record is None:
-            note("validation", raw, "failed grounding/shape/type validation")
+            note(
+                "validation",
+                raw,
+                gate_reasons[0] if gate_reasons else "failed grounding/shape/type validation",
+            )
             continue
         if is_repeat_of_history(record.question, previous_questions):
             note("history", raw, "repeats a previously asked question")
