@@ -81,6 +81,9 @@ interface FileVaultContextValue {
   ) => Promise<void>
 }
 
+/** Coalescing window for backend progress writes. */
+const REMOTE_SYNC_DEBOUNCE_MS = 1200
+
 const FileVaultContext = createContext<FileVaultContextValue | null>(null)
 
 function reevaluateStatus(file: VaultFile): VaultFile {
@@ -107,6 +110,9 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({})
   const storage = useMemo(() => getFileVaultStorage(), [])
   const pdfDocCache = useRef<Map<string, PDFDocumentProxy>>(new Map())
+  // Mirrors `files` so callbacks never read a stale snapshot (see mutate).
+  const filesRef = useRef<VaultFile[]>([])
+  filesRef.current = files
 
   useEffect(() => {
     let cancelled = false
@@ -138,16 +144,58 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
     }
   }, [storage])
 
+  /**
+   * Coalesced backend sync.
+   *
+   * Reading progress mutates frequently (every page read, every dwell tick),
+   * and each mutation used to issue its own PATCH. Pending writes are keyed by
+   * file id so only the newest state for a file is sent, and only after the
+   * student stops generating events.
+   */
+  const pendingSync = useRef<Map<string, VaultFile>>(new Map())
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flushRemoteSync = useCallback(() => {
+    if (syncTimer.current) {
+      clearTimeout(syncTimer.current)
+      syncTimer.current = null
+    }
+    const batch = [...pendingSync.current.values()]
+    pendingSync.current.clear()
+    for (const file of batch) {
+      // Fire-and-forget: local state and IndexedDB already hold the truth, so
+      // a failed sync degrades to "offline" rather than losing progress.
+      void vaultApi.update(file.id, vaultFileToPatch(file)).catch(() => undefined)
+    }
+  }, [])
+
+  const scheduleRemoteSync = useCallback(
+    (file: VaultFile) => {
+      pendingSync.current.set(file.id, file)
+      if (syncTimer.current) clearTimeout(syncTimer.current)
+      syncTimer.current = setTimeout(flushRemoteSync, REMOTE_SYNC_DEBOUNCE_MS)
+    },
+    [flushRemoteSync]
+  )
+
+  // Never lose the tail of a reading session: flush on unmount and when the
+  // page is being hidden/closed.
+  useEffect(() => {
+    const onHide = () => flushRemoteSync()
+    window.addEventListener('pagehide', onHide)
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      document.removeEventListener('visibilitychange', onHide)
+      flushRemoteSync()
+    }
+  }, [flushRemoteSync])
+
   const persist = useCallback(
     async (file: VaultFile) => {
-      // Push to the real backend (fire-and-forget; local state wins for UX,
-      // and failures leave the offline mirror intact).
-      try {
-        await vaultApi.update(file.id, vaultFileToPatch(file))
-      } catch {
-        // ignore network failures — keep working offline
-      }
-      await storage.putFile(file)
+      // React state first: the UI must never wait on I/O. Reading progress
+      // updates fire on a timer while the student reads, so awaiting a network
+      // PATCH here used to stall page navigation behind a round trip.
       setFiles((prev) => {
         const idx = prev.findIndex((f) => f.id === file.id)
         if (idx === -1) return [file, ...prev]
@@ -155,8 +203,16 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
         next[idx] = file
         return next
       })
+      // Local mirror is the durable source of truth and is cheap; the backend
+      // PATCH is coalesced so rapid progress updates collapse into one write.
+      try {
+        await storage.putFile(file)
+      } catch {
+        // Storage failure must not break reading; the session stays in memory.
+      }
+      scheduleRemoteSync(file)
     },
-    [storage]
+    [storage, scheduleRemoteSync]
   )
 
   const uploadFile = useCallback(
@@ -300,12 +356,20 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
 
   const mutate = useCallback(
     async (id: string, updater: (file: VaultFile) => VaultFile) => {
-      const current = files.find((f) => f.id === id)
+      // Read through a ref, not the captured `files` array. Reading progress
+      // produces bursts of mutations (page read, page changed, study time);
+      // with a stale closure the second mutation in a burst rebased on the
+      // pre-first-mutation snapshot and silently discarded the first, which
+      // is how read pages went missing.
+      const current = filesRef.current.find((f) => f.id === id)
       if (!current) return
       const next = reevaluateStatus(updater(current))
+      // Keep the ref authoritative immediately so the *next* mutation in the
+      // same tick sees this one, even before React re-renders.
+      filesRef.current = filesRef.current.map((f) => (f.id === id ? next : f))
       await persist(next)
     },
-    [files, persist]
+    [persist]
   )
 
   const toggleFavorite = useCallback(

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { VaultFile, VaultQuestionType, VaultQuizQuestion } from '../../../../types/fileVault'
@@ -60,7 +60,6 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
   const [docError, setDocError] = useState<string | null>(null)
   const [docLoading, setDocLoading] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
-  const sessionStartRef = useRef(Date.now())
 
   useEffect(() => {
     let cancelled = false
@@ -99,11 +98,29 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
   // "Study 30 Minutes" award (spec Feature 2), plus daily/weekly
   // "study-minutes" challenge progress.
   useEffect(() => {
-    sessionStartRef.current = Date.now()
+    // Accrue only while the tab is actually visible. Previously this measured
+    // wall-clock time between mount and unmount, so a workspace left open in a
+    // background tab (or while an AI generation ran) inflated study time.
+    let accrued = 0
+    let since: number | null = document.hidden ? null : Date.now()
+
+    const bank = () => {
+      if (since === null) return
+      accrued += Date.now() - since
+      since = null
+    }
+    const onVisibility = () => {
+      if (document.hidden) bank()
+      else if (since === null) since = Date.now()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
-      const elapsed = Math.round((Date.now() - sessionStartRef.current) / 1000)
+      document.removeEventListener('visibilitychange', onVisibility)
+      bank()
+      const elapsed = Math.round(accrued / 1000)
       if (elapsed > 2) {
-        addStudyTime(file.id, elapsed)
+        void addStudyTime(file.id, elapsed)
         recordStudyMinutes(elapsed / 60)
         recordProgress('study-minutes', elapsed / 60)
       }
@@ -178,10 +195,13 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
             <div className="glass-card overflow-hidden" style={{ height: 640 }}>
               <PdfViewer
                 doc={doc}
-                currentPage={file.currentPage}
-                onPageChange={(page) => setCurrentPage(file.id, page)}
+                initialPage={file.currentPage}
+                active={tab === 'viewer'}
+                onPageChange={(page) => {
+                  void setCurrentPage(file.id, page)
+                }}
                 onPageRead={(page) => {
-                  markPageRead(file.id, page)
+                  void markPageRead(file.id, page)
                   recordProgress('pdf-read')
                 }}
                 color={file.color}
