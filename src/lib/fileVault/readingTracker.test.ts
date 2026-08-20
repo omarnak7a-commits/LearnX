@@ -1,155 +1,178 @@
 /**
  * Reading-tracker correctness.
  *
- * These encode the behaviour the product actually needs: a student who flips
- * through pages has NOT read them, a student who dwells has, and progress is
- * computed from the set of distinct pages rather than the highest page seen.
+ * The rule under test: a page is read the moment it becomes the viewer's
+ * ACTIVE page. There is no dwell time. Pages that are merely preloaded,
+ * cached or rendered in the background never become active and so are never
+ * read — which is what keeps a jump from page 3 to page 20 from marking the
+ * seventeen pages in between.
  */
 
 import { describe, expect, it } from 'vitest'
 import {
-  READ_PAGE_THRESHOLD_MS,
   ReadingTracker,
   mergePagesRead,
   readingProgressPercent,
+  visitActivePage,
 } from './readingTracker'
 
-const T = READ_PAGE_THRESHOLD_MS
-
 describe('ReadingTracker', () => {
-  it('does not mark a page read before the dwell threshold', () => {
+  it('marks the active page read immediately, with no waiting', () => {
     const tracker = new ReadingTracker()
-    tracker.enter(1, 0)
-    tracker.tick(T - 1)
-    expect(tracker.pagesRead).toEqual([])
-    expect(tracker.hasRead(1)).toBe(false)
-  })
-
-  it('marks a page read once the threshold is reached', () => {
-    const tracker = new ReadingTracker()
-    tracker.enter(1, 0)
-    tracker.tick(T)
+    tracker.visit(1)
     expect(tracker.pagesRead).toEqual([1])
+    expect(tracker.hasRead(1)).toBe(true)
   })
 
-  it('does not mark pages read when the student flips through them', () => {
-    // The exact regression: 1 -> 2 -> 3 -> 4 -> 5 -> 20 in ~1.2s total.
+  it('records sequential navigation as it happens', () => {
     const tracker = new ReadingTracker()
-    let now = 0
-    for (const page of [1, 2, 3, 4, 5]) {
-      tracker.enter(page, now)
-      now += 200
-    }
-    tracker.enter(20, now)
-    expect(tracker.pagesRead).toEqual([])
+    tracker.visit(1)
+    tracker.visit(2)
+    tracker.visit(3)
+    expect(tracker.pagesRead).toEqual([1, 2, 3])
   })
 
-  it('marks only the page the student actually settled on', () => {
+  it('jumping 3 -> 20 records only 3 and 20, never the pages skipped', () => {
     const tracker = new ReadingTracker()
-    let now = 0
-    for (const page of [1, 2, 3]) {
-      tracker.enter(page, now)
-      now += 100
+    tracker.visit(3)
+    tracker.visit(20)
+    expect(tracker.pagesRead).toEqual([3, 20])
+    for (let skipped = 4; skipped <= 19; skipped++) {
+      expect(tracker.hasRead(skipped)).toBe(false)
     }
-    tracker.enter(20, now)
-    tracker.tick(now + T)
-    expect(tracker.pagesRead).toEqual([20])
+  })
+
+  it('records backward navigation too', () => {
+    const tracker = new ReadingTracker()
+    tracker.visit(20)
+    tracker.visit(5)
+    expect(tracker.pagesRead).toEqual([5, 20])
   })
 
   it('tracks non-sequential reading as distinct pages', () => {
     const tracker = new ReadingTracker()
-    let now = 0
-    for (const page of [1, 2, 7, 15]) {
-      tracker.enter(page, now)
-      now += T
-      tracker.tick(now)
-    }
+    for (const page of [1, 2, 7, 15]) tracker.visit(page)
     expect(tracker.pagesRead).toEqual([1, 2, 7, 15])
   })
 
   it('never double counts a page visited twice', () => {
     const tracker = new ReadingTracker()
-    tracker.enter(3, 0)
-    tracker.tick(T)
-    tracker.enter(4, T)
-    tracker.enter(3, T + 100)
-    tracker.tick(T + 100 + T)
-    expect(tracker.pagesRead).toEqual([3])
+    tracker.visit(3)
+    tracker.visit(4)
+    tracker.visit(3)
+    expect(tracker.pagesRead).toEqual([3, 4])
   })
 
-  it('re-entering the active page does not reset accumulated dwell', () => {
-    // Zoom changes and strict-mode double effects re-fire enter() for the
-    // same page; that must not prevent the page from ever being read.
+  it('reports whether a visit was newly read, so writes can be skipped', () => {
     const tracker = new ReadingTracker()
-    tracker.enter(2, 0)
-    tracker.enter(2, T - 500)
-    tracker.tick(T)
+    expect(tracker.visit(5)).toBe(true)
+    expect(tracker.visit(5)).toBe(false)
+  })
+
+  it('re-visiting the active page is idempotent', () => {
+    // Zoom changes and strict-mode double effects re-fire for the same page.
+    const tracker = new ReadingTracker()
+    tracker.visit(2)
+    tracker.visit(2)
+    tracker.visit(2)
     expect(tracker.pagesRead).toEqual([2])
+    expect(tracker.drainNewlyRead()).toEqual([2])
   })
 
-  it('does not accrue dwell while paused (hidden tab)', () => {
+  it('exposes the active page', () => {
     const tracker = new ReadingTracker()
-    tracker.enter(1, 0)
-    tracker.pause(1000)
-    // A long time passes with the tab hidden.
-    tracker.tick(1000 + T * 10)
-    expect(tracker.pagesRead).toEqual([])
-
-    tracker.resume(1000 + T * 10)
-    tracker.tick(1000 + T * 10 + (T - 1000))
-    expect(tracker.pagesRead).toEqual([1])
-  })
-
-  it('banks dwell time across a pause/resume cycle', () => {
-    const tracker = new ReadingTracker()
-    tracker.enter(5, 0)
-    tracker.pause(T / 2) // half the threshold accrued
-    tracker.resume(10_000) // long gap, not counted
-    tracker.tick(10_000 + T / 2) // remaining half
-    expect(tracker.pagesRead).toEqual([5])
-  })
-
-  it('promotes the page when navigating away after enough dwell', () => {
-    const tracker = new ReadingTracker()
-    tracker.enter(1, 0)
-    tracker.enter(2, T) // leaving page 1 exactly at threshold
-    expect(tracker.hasRead(1)).toBe(true)
-    expect(tracker.hasRead(2)).toBe(false)
+    tracker.visit(12)
+    expect(tracker.activePage).toBe(12)
   })
 
   it('drains newly read pages exactly once', () => {
     const tracker = new ReadingTracker()
-    tracker.enter(1, 0)
-    tracker.tick(T)
+    tracker.visit(1)
     expect(tracker.drainNewlyRead()).toEqual([1])
     expect(tracker.drainNewlyRead()).toEqual([])
   })
 
-  it('restores previously read pages without re-earning them', () => {
+  it('restores previously read pages without re-reporting them', () => {
     const tracker = new ReadingTracker({ initialPagesRead: [4, 9] })
     expect(tracker.pagesRead).toEqual([4, 9])
-    // Restored pages are not reported as newly read, so no redundant writes.
     expect(tracker.drainNewlyRead()).toEqual([])
+    // Revisiting a restored page must not produce a redundant write.
+    expect(tracker.visit(4)).toBe(false)
   })
 
-  it('reports the active page separately from read pages', () => {
-    const tracker = new ReadingTracker()
-    tracker.enter(12, 0)
-    expect(tracker.activePage).toBe(12)
+  it('rejects page numbers outside the document', () => {
+    const tracker = new ReadingTracker({ pageCount: 10 })
+    expect(tracker.visit(0)).toBe(false)
+    expect(tracker.visit(-3)).toBe(false)
+    expect(tracker.visit(11)).toBe(false)
+    expect(tracker.visit(Number.NaN)).toBe(false)
     expect(tracker.pagesRead).toEqual([])
   })
 
-  it('honours a custom threshold', () => {
-    const tracker = new ReadingTracker({ thresholdMs: 50 })
-    tracker.enter(1, 0)
-    tracker.tick(50)
-    expect(tracker.pagesRead).toEqual([1])
+  it('accepts every page of the document', () => {
+    const tracker = new ReadingTracker({ pageCount: 3 })
+    for (const page of [1, 2, 3]) expect(tracker.visit(page)).toBe(true)
+    expect(tracker.pagesRead).toEqual([1, 2, 3])
+  })
+
+  it('forceRead marks a page without making it active', () => {
+    const tracker = new ReadingTracker()
+    tracker.forceRead(8)
+    expect(tracker.hasRead(8)).toBe(true)
+    expect(tracker.activePage).toBeNull()
+  })
+
+  it('has no dwell-based API left', () => {
+    // Guards against the 3-second threshold being reintroduced.
+    const tracker = new ReadingTracker() as unknown as Record<string, unknown>
+    for (const removed of ['enter', 'leave', 'tick', 'pause', 'resume', 'dwell']) {
+      expect(tracker[removed]).toBeUndefined()
+    }
+  })
+})
+
+describe('visitActivePage (the step PdfViewer performs)', () => {
+  it('returns the page to persist the first time it becomes active', () => {
+    const tracker = new ReadingTracker()
+    expect(visitActivePage(tracker, 1, 20)).toEqual([1])
+  })
+
+  it('returns nothing when the active page was already read', () => {
+    const tracker = new ReadingTracker()
+    visitActivePage(tracker, 4, 20)
+    expect(visitActivePage(tracker, 4, 20)).toEqual([])
+  })
+
+  it('clamps a page beyond the document to the last page', () => {
+    const tracker = new ReadingTracker()
+    expect(visitActivePage(tracker, 99, 12)).toEqual([12])
+  })
+
+  it('clamps a page below 1 to the first page', () => {
+    const tracker = new ReadingTracker()
+    expect(visitActivePage(tracker, 0, 12)).toEqual([1])
+  })
+
+  it('does nothing before the document reports a page count', () => {
+    const tracker = new ReadingTracker()
+    expect(visitActivePage(tracker, 3, 0)).toEqual([])
+    expect(tracker.pagesRead).toEqual([])
+  })
+
+  it('records every page of a rapid sequence, in order of first sight', () => {
+    const tracker = new ReadingTracker()
+    const persisted: number[] = []
+    for (const page of [1, 9, 2, 9, 3]) {
+      persisted.push(...visitActivePage(tracker, page, 20))
+    }
+    expect(persisted).toEqual([1, 9, 2, 3])
+    expect(tracker.pagesRead).toEqual([1, 2, 3, 9])
   })
 })
 
 describe('readingProgressPercent', () => {
   it('counts distinct pages, not the furthest page reached', () => {
-    // The spec example: 20 pages, read {1,2,3,7,8} => 25%, never 40%.
+    // 20 pages, read {1,2,3,7,8} => 25%, never 40%.
     expect(readingProgressPercent([1, 2, 3, 7, 8], 20)).toBe(25)
   })
 

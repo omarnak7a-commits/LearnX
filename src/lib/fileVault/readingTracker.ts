@@ -1,69 +1,55 @@
 /**
- * Reading tracker: decides which pages a student has genuinely *read*.
+ * Reading tracker: records which pages a student has actually visited.
  *
  * This is deliberately a small, pure, framework-free module so the rule
  * "what counts as read" lives in exactly one place and can be tested without
  * React, pdf.js, IndexedDB or a browser.
  *
- * The distinction it enforces:
+ * The rule:
  *
- *   viewed — the page became the active page (or was preloaded next to it)
- *   read   — the page rendered, was actually on screen, and the student
- *            stayed on it for at least READ_PAGE_THRESHOLD_MS
+ *   read     — the page became the viewer's ACTIVE page through navigation,
+ *              i.e. the student is looking at it now. Marked immediately.
+ *   not read — the page was only decoded ahead of time for the preload
+ *              window, or rendered in the background. Never marked.
  *
- * Why this matters: previously a page was marked read the instant its canvas
- * finished painting, so flipping 1 -> 2 -> 3 -> 4 -> 5 -> 20 marked six pages
- * read in about a second, and reading progress (and every feature derived from
- * it, including practice-quiz page selection) was wrong.
+ * There is no dwell time and no timer: `visit()` is called by the viewer at
+ * the moment a page becomes active, and the page is read from that instant.
+ * Preloaded neighbours never reach this module, which is what keeps a jump
+ * from page 3 to page 20 from marking pages 4-19.
  *
- * Rendering is a separate concern and lives in the viewer; this module only
- * receives "page N became visible at time T" / "page N stopped being visible"
- * signals and answers "which pages are read".
+ * Rendering remains a separate concern owned by the viewer; this module only
+ * receives "page N is now the active page" and answers "which pages are read".
  */
-
-/**
- * How long a page must remain the visible page before it counts as read.
- *
- * Chosen as a deliberately modest dwell time: long enough that flipping
- * through pages does not mark them read, short enough that genuinely
- * skimming a light page still counts.
- */
-export const READ_PAGE_THRESHOLD_MS = 3000
-
-/** A page becoming visible, or ceasing to be visible. */
-export interface PageVisibilityEvent {
-  page: number
-  /** Monotonic-ish timestamp in ms (Date.now() or performance.now()). */
-  at: number
-}
 
 export interface ReadingTrackerOptions {
-  thresholdMs?: number
   /** Pages already known to be read (restored from persistence). */
   initialPagesRead?: Iterable<number>
+  /** Upper bound used to reject nonsense page numbers. */
+  pageCount?: number
 }
 
 /**
- * Tracks dwell time per page and reports pages that cross the read threshold.
+ * Records visited pages and reports the ones that are newly read.
  *
  * Usage is intentionally imperative and side-effect free: the caller drives it
- * with `enter`/`leave`/`tick` and reads `pagesRead`. It never touches storage.
+ * with `visit()` and reads `pagesRead` / `drainNewlyRead()`. It never touches
+ * storage, so persistence policy stays with the caller.
  */
 export class ReadingTracker {
-  private readonly thresholdMs: number
   private readonly read: Set<number>
-  /** The page currently on screen, and when it became visible. */
-  private active: { page: number; since: number } | null = null
-  /** Dwell accumulated for the active page across pause/resume cycles. */
-  private accumulated = 0
-  /** Pages that crossed the threshold since the last `drainNewlyRead()`. */
+  private readonly pageCount?: number
+  /** Pages newly marked read since the last `drainNewlyRead()`. */
   private pending: number[] = []
-  /** True while the document is hidden (tab in background, viewer closed). */
-  private paused = false
+  /** The page currently being viewed. */
+  private active: number | null = null
 
   constructor(options: ReadingTrackerOptions = {}) {
-    this.thresholdMs = options.thresholdMs ?? READ_PAGE_THRESHOLD_MS
-    this.read = new Set(options.initialPagesRead ?? [])
+    this.pageCount = options.pageCount
+    this.read = new Set()
+    for (const page of options.initialPagesRead ?? []) {
+      const normalized = this.normalize(page)
+      if (normalized !== null) this.read.add(normalized)
+    }
   }
 
   /** Every page considered read, ascending. */
@@ -72,78 +58,39 @@ export class ReadingTracker {
   }
 
   hasRead(page: number): boolean {
-    return this.read.has(page)
+    const normalized = this.normalize(page)
+    return normalized !== null && this.read.has(normalized)
   }
 
-  /** The page currently being dwelled on, if any. */
+  /** The page currently being viewed, if any. */
   get activePage(): number | null {
-    return this.active?.page ?? null
+    return this.active
   }
 
   /**
-   * The page became the visible page.
+   * The page became the viewer's active page: mark it read immediately.
    *
-   * Calling this with the page that is already active is a no-op, so repeated
-   * renders of the same page (zoom changes, re-mounts, React strict-mode
-   * double effects) do not reset or double-count dwell time.
+   * Idempotent. Re-visiting the active page (zoom change, re-mount, React
+   * strict-mode double effect, revisiting later) never double counts, so
+   * progress cannot be inflated by repeat visits.
+   *
+   * Returns true only when this call newly marked the page as read, which
+   * lets the caller skip redundant persistence writes.
    */
-  enter(page: number, at: number): void {
-    if (this.active?.page === page) return
-    if (this.active) this.leave(at)
-    this.active = { page, since: at }
-    this.accumulated = 0
+  visit(page: number): boolean {
+    const normalized = this.normalize(page)
+    if (normalized === null) return false
+    this.active = normalized
+    if (this.read.has(normalized)) return false
+    this.read.add(normalized)
+    this.pending.push(normalized)
+    return true
   }
 
   /**
-   * The active page stopped being visible (navigation away, viewer closed).
-   * Banks the dwell time accrued so far and promotes the page if it qualifies.
-   */
-  leave(at: number): void {
-    if (!this.active) return
-    this.settle(at)
-    this.active = null
-    this.accumulated = 0
-  }
-
-  /**
-   * Stop accruing dwell time without giving up the active page.
-   * Used when the tab is hidden or the viewer is not the visible tab.
-   */
-  pause(at: number): void {
-    if (this.paused || !this.active) {
-      this.paused = true
-      return
-    }
-    this.accumulated += Math.max(0, at - this.active.since)
-    this.paused = true
-  }
-
-  /** Resume accruing dwell time for the still-active page. */
-  resume(at: number): void {
-    if (!this.paused) return
-    this.paused = false
-    if (this.active) this.active.since = at
-  }
-
-  /**
-   * Advance the clock, promoting the active page if it has now been visible
-   * long enough. Safe to call as often as you like.
-   */
-  tick(at: number): void {
-    this.settle(at, { keepActive: true })
-  }
-
-  /** Total dwell accrued on the active page as of `at`, in ms. */
-  dwell(at: number): number {
-    if (!this.active) return 0
-    const live = this.paused ? 0 : Math.max(0, at - this.active.since)
-    return this.accumulated + live
-  }
-
-  /**
-   * Pages that became read since the last drain. The caller persists these;
-   * draining keeps persistence writes proportional to real reading rather
-   * than to render or scroll events.
+   * Pages that became read since the last drain. The caller persists these,
+   * so storage writes stay proportional to genuinely new pages rather than to
+   * navigation, render or scroll events.
    */
   drainNewlyRead(): number[] {
     const drained = this.pending
@@ -151,31 +98,46 @@ export class ReadingTracker {
     return drained
   }
 
-  /** Mark a page read regardless of dwell (e.g. restoring persisted state). */
+  /** Mark a page read without treating it as the active page. */
   forceRead(page: number): void {
-    if (!this.read.has(page)) this.read.add(page)
+    const normalized = this.normalize(page)
+    if (normalized === null || this.read.has(normalized)) return
+    this.read.add(normalized)
+    this.pending.push(normalized)
   }
 
-  private settle(at: number, opts: { keepActive?: boolean } = {}): void {
-    if (!this.active) return
-    const total = this.dwell(at)
-    if (total >= this.thresholdMs && !this.read.has(this.active.page)) {
-      this.read.add(this.active.page)
-      this.pending.push(this.active.page)
-    }
-    if (opts.keepActive && !this.paused) {
-      // Fold elapsed time into the accumulator so repeated ticks do not
-      // double count the same interval.
-      this.accumulated = total
-      this.active.since = at
-    }
+  private normalize(page: number): number | null {
+    if (!Number.isFinite(page)) return null
+    const value = Math.trunc(page)
+    if (value < 1) return null
+    if (this.pageCount && value > this.pageCount) return null
+    return value
   }
+}
+
+/**
+ * The exact step the viewer performs when a page becomes active: clamp the
+ * requested page into the document, mark it read immediately, and return the
+ * pages that must be persisted (empty when nothing is new).
+ *
+ * Lives here rather than inline in the component so the "what counts as read"
+ * rule stays in one testable place and cannot drift from the tracker.
+ */
+export function visitActivePage(
+  tracker: ReadingTracker,
+  page: number,
+  pageCount: number
+): number[] {
+  if (!Number.isFinite(page) || !pageCount || pageCount <= 0) return []
+  const target = Math.min(Math.max(1, Math.trunc(page)), pageCount)
+  if (!tracker.visit(target)) return []
+  return tracker.drainNewlyRead()
 }
 
 /**
  * Reading progress as a percentage of distinct pages actually read.
  *
- * Deliberately set-based: a student who reads pages 1, 2, 7 and 15 of a
+ * Deliberately set-based: a student who visits pages 1, 2, 7 and 15 of a
  * 20-page document has read 4 pages (20%), not "up to page 15" (75%).
  */
 export function readingProgressPercent(

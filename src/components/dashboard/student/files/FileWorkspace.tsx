@@ -196,7 +196,6 @@ export default function FileWorkspace({ file, initialTab = 'viewer', onBack }: F
               <PdfViewer
                 doc={doc}
                 initialPage={file.currentPage}
-                active={tab === 'viewer'}
                 onPageChange={(page) => {
                   void setCurrentPage(file.id, page)
                 }}

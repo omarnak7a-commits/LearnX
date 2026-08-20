@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { LruCache, RenderCoordinator, pageWindow } from '../../../../lib/fileVault/pdfPageCache'
-import { ReadingTracker } from '../../../../lib/fileVault/readingTracker'
+import { ReadingTracker, visitActivePage } from '../../../../lib/fileVault/readingTracker'
 
 interface PdfViewerProps {
   doc: PDFDocumentProxy | null
@@ -10,14 +10,12 @@ interface PdfViewerProps {
    * viewer owns the page thereafter so navigation never waits on persistence. */
   initialPage: number
   onPageChange: (page: number) => void
-  /** Fired when a page has genuinely been read (dwell threshold met). */
+  /** Fired when pages become active and are therefore read. */
   onPageRead: (page: number) => void
   color: string
   onRequestReload?: () => void
   errorMessage?: string | null
   loadingMessage?: string | null
-  /** Pauses reading accrual when the viewer tab is not on screen. */
-  active?: boolean
 }
 
 type FitMode = 'width' | 'custom'
@@ -51,7 +49,6 @@ export default function PdfViewer({
   onRequestReload,
   errorMessage,
   loadingMessage,
-  active = true,
 }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -133,50 +130,26 @@ export default function PdfViewer({
   )
 
   // --- Reading tracking ---------------------------------------------------
-  // Dwell-based, and deliberately decoupled from rendering: a page becomes
-  // "read" only after it has been painted AND stayed on screen long enough.
-  // Preloaded neighbours never reach this code path.
+  // A page is read the moment it becomes the ACTIVE page. There is no dwell
+  // timer. Preloaded neighbours are decoded by getPage() in the warming effect
+  // and never routed through here, so jumping 3 -> 20 records only 3 and 20.
   const tracker = useMemo(() => new ReadingTracker(), [])
   const onPageReadRef = useRef(onPageRead)
   onPageReadRef.current = onPageRead
 
-  const markVisible = useCallback(
-    (visiblePage: number) => {
-      tracker.enter(visiblePage, Date.now())
-    },
-    [tracker]
-  )
-
+  // Mark the active page read as soon as it becomes active. Keyed on `page`
+  // (not on render completion) so the mark is immediate and still fires for
+  // the page restored on open. Guarded on `doc` so we never record a page for
+  // a document that failed to load.
   useEffect(() => {
-    // A single interval per mount promotes the dwelling page and reports it
-    // once. No timer is created per page, so navigation cannot leak timers.
-    const id = window.setInterval(() => {
-      tracker.tick(Date.now())
-      for (const readPage of tracker.drainNewlyRead()) {
-        onPageReadRef.current(readPage)
-      }
-    }, 500)
-    return () => {
-      window.clearInterval(id)
-      tracker.leave(Date.now())
-      for (const readPage of tracker.drainNewlyRead()) {
-        onPageReadRef.current(readPage)
-      }
+    if (!doc) return
+    // visitActivePage() marks the page and returns it only the first time it
+    // is seen, so revisits never duplicate progress or trigger a redundant
+    // write. Same helper the pipeline tests drive.
+    for (const readPage of visitActivePage(tracker, page, doc.numPages)) {
+      onPageReadRef.current(readPage)
     }
-  }, [tracker])
-
-  // Stop accruing reading time when the tab is hidden or the viewer is not
-  // the visible workspace tab.
-  useEffect(() => {
-    const sync = () => {
-      const visible = active && (typeof document === 'undefined' || !document.hidden)
-      if (visible) tracker.resume(Date.now())
-      else tracker.pause(Date.now())
-    }
-    sync()
-    document.addEventListener('visibilitychange', sync)
-    return () => document.removeEventListener('visibilitychange', sync)
-  }, [active, tracker])
+  }, [doc, page, tracker])
 
   // Render the visible page. Only the newest generation may touch the canvas,
   // so jumping 1 -> 10 paints page 10 and abandons page 1 rather than letting
@@ -220,11 +193,8 @@ export default function PdfViewer({
         coordinator.attach(token, task)
         await task.promise
         coordinator.settle(token)
-
-        if (disposed || !coordinator.isCurrent(token)) return
-        // Rendering only makes the page *visible*. Whether it counts as read
-        // is decided by dwell time, tracked separately below.
-        markVisible(targetPage)
+        // Reading is recorded when the page becomes active, not here:
+        // rendering also happens for preloaded pages, which must never count.
       } catch (reason) {
         // A cancelled render is the expected outcome of fast navigation and
         // must not surface as an error to the student.

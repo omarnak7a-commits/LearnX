@@ -147,7 +147,7 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
   /**
    * Coalesced backend sync.
    *
-   * Reading progress mutates frequently (every page read, every dwell tick),
+   * Reading progress mutates frequently (every page the student opens),
    * and each mutation used to issue its own PATCH. Pending writes are keyed by
    * file id so only the newest state for a file is sent, and only after the
    * student stops generating events.
