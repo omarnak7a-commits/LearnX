@@ -281,10 +281,9 @@ def run(pdf: Path, seed: int, count: int):
 def inspect_quiz(result) -> list[tuple[str, str, str]]:
     """Every quality finding for one generated quiz.
 
-    Split out of run() so other harnesses -- notably the MSEMAX A/B benchmark
-    -- judge their output by exactly these rules instead of reimplementing
-    them. A single definition of "defect" is what makes the two arms
-    comparable.
+    Split out of run() so other harnesses judge their output by exactly these
+    rules instead of reimplementing them, keeping a single definition of
+    "defect" across the project.
     """
     blueprints = {bp.id: bp for bp in (result.blueprints or [])}
     prov = {t.question_id: t for t in (result.provenance or [])}

@@ -1,13 +1,14 @@
 """Provider failure classification, schema sanitising and fallback behaviour.
 
-STEP 9 produced 210/210 failures reported only as ``{"provider error": 210}``,
-which made the cause unknowable from the results. These tests lock in the two
-fixes: every failure now carries a sanitized *category*, and the two payload
-defects that caused the failures cannot silently return.
+These tests protect the shared AI provider layer used by every production AI
+feature (summaries, topics, flashcards, quizzes): every failure carries a
+sanitized *category*, Gemini 3.x support and its thinking configuration stay
+correct, Pydantic schemas are sanitised into a form Gemini accepts without
+weakening validation, and Gemini -> Groq fallback keeps working.
 
 No test performs a real network call: ``httpx`` is driven through a
 MockTransport so the genuine provider classes, the genuine AIService fallback
-loop and the genuine MSEMAX rejection path all execute unchanged.
+loop and the real error classification all execute unchanged.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import Settings
 from app.services.ai_providers import (
@@ -28,14 +30,26 @@ from app.services.ai_providers import (
     sanitize_gemini_schema,
 )
 from app.services.ai_service import AIService, AIUnavailableError
-from app.services.quiz_msemax import (
-    MsemaxQuestion,
-    MsemaxStats,
-    describe_provider_failure,
-    rejection_bucket,
-)
 
-VALID_MSEMAX_JSON = json.dumps(
+
+class StructuredProbe(BaseModel):
+    """Stand-in response model for exercising the structured-output path.
+
+    Deliberately declares defaults on every field: Pydantic then emits the
+    ``default`` keyword, which Gemini rejects outright, so this doubles as the
+    fixture proving the schema sanitiser is still doing its job.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    stem: str = Field(default="", description="The question sentence.")
+    options: list[str] = Field(default_factory=list, description="Answer options.")
+    correct_option: int = Field(default=0, description="0-based correct index.")
+    answer: str = Field(default="", description="Answer for non-MCQ types.")
+    explanation: str = Field(default="", description="One-sentence justification.")
+
+
+VALID_STRUCTURED_JSON = json.dumps(
     {
         "stem": "Why does increased pressure raise the reaction rate?",
         "options": ["More collisions", "Fewer collisions", "No change", "Lower energy"],
@@ -49,7 +63,7 @@ VALID_MSEMAX_JSON = json.dumps(
 def _groq_ok() -> dict[str, Any]:
     return {
         "choices": [
-            {"finish_reason": "stop", "message": {"content": VALID_MSEMAX_JSON}}
+            {"finish_reason": "stop", "message": {"content": VALID_STRUCTURED_JSON}}
         ]
     }
 
@@ -59,7 +73,7 @@ def _gemini_ok() -> dict[str, Any]:
         "candidates": [
             {
                 "finishReason": "STOP",
-                "content": {"parts": [{"text": VALID_MSEMAX_JSON}]},
+                "content": {"parts": [{"text": VALID_STRUCTURED_JSON}]},
             }
         ]
     }
@@ -196,13 +210,13 @@ def _all_keys(node: Any, acc: set[str] | None = None) -> set[str]:
     return acc
 
 
-def test_msemax_schema_has_defaults_that_gemini_rejects() -> None:
+def test_probe_schema_has_defaults_that_gemini_rejects() -> None:
     """Guards the premise: Pydantic really does emit the rejected keyword."""
-    assert "default" in _all_keys(MsemaxQuestion.model_json_schema(by_alias=True))
+    assert "default" in _all_keys(StructuredProbe.model_json_schema(by_alias=True))
 
 
 def test_sanitized_schema_drops_unsupported_keywords_only() -> None:
-    raw = MsemaxQuestion.model_json_schema(by_alias=True)
+    raw = StructuredProbe.model_json_schema(by_alias=True)
     clean = sanitize_gemini_schema(raw)
     assert "default" not in _all_keys(clean)
     assert "$schema" not in _all_keys(clean)
@@ -245,7 +259,7 @@ def test_gemini_request_sends_sanitized_schema() -> None:
             user_prompt="u",
             temperature=0.2,
             max_tokens=900,
-            json_schema=MsemaxQuestion.model_json_schema(by_alias=True),
+            json_schema=StructuredProbe.model_json_schema(by_alias=True),
         )
     finally:
         httpx.Client = original  # type: ignore[misc]
@@ -297,7 +311,7 @@ def test_groq_json_mode_guarantees_the_word_json_in_messages() -> None:
 def test_gemini_failure_falls_back_to_groq(routed) -> None:
     service, contacted = routed((400, {"error": {"status": "INVALID_ARGUMENT"}}), (200, _groq_ok()))
     result = service.complete_structured(
-        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+        response_model=StructuredProbe, system_prompt="s", user_prompt="u"
     )
     assert contacted == ["gemini", "groq"]
     assert result.provider == "groq"
@@ -307,7 +321,7 @@ def test_gemini_failure_falls_back_to_groq(routed) -> None:
 def test_healthy_primary_is_not_second_guessed(routed) -> None:
     service, contacted = routed((200, _gemini_ok()), (500, {}))
     result = service.complete_structured(
-        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+        response_model=StructuredProbe, system_prompt="s", user_prompt="u"
     )
     assert contacted == ["gemini"]
     assert result.provider == "gemini"
@@ -322,7 +336,7 @@ def test_both_providers_failing_reports_every_category(routed) -> None:
     )
     with pytest.raises(AIUnavailableError) as excinfo:
         service.complete_structured(
-            response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+            response_model=StructuredProbe, system_prompt="s", user_prompt="u"
         )
     assert contacted == ["gemini", "groq"]
     failures = excinfo.value.failures
@@ -339,7 +353,7 @@ def test_malformed_json_is_classified_as_response_schema(routed) -> None:
     service, _ = routed((200, {"candidates": [{"content": {"parts": [{"text": "nope"}]}}]}), (200, bad))
     with pytest.raises(AIUnavailableError) as excinfo:
         service.complete_structured(
-            response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+            response_model=StructuredProbe, system_prompt="s", user_prompt="u"
         )
     assert {failure.category for failure in excinfo.value.failures} == {
         ErrorCategory.RESPONSE_SCHEMA.value
@@ -347,39 +361,8 @@ def test_malformed_json_is_classified_as_response_schema(routed) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# E. The diagnosis reaches the benchmark, and carries no secret
+# E. The diagnosis is sanitized and carries no secret
 # --------------------------------------------------------------------------- #
-
-
-def test_rejection_reason_names_the_category_not_just_provider_error(routed) -> None:
-    service, _ = routed(
-        (401, {"error": {"status": "UNAUTHENTICATED"}}),
-        (401, {"error": {"code": "invalid_api_key"}}),
-    )
-    with pytest.raises(AIUnavailableError) as excinfo:
-        service.complete_structured(
-            response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
-        )
-    reason = f"provider error [{describe_provider_failure(excinfo.value)}]"
-    stats = MsemaxStats()
-    stats.note_rejection(reason)
-    assert list(stats.reasons) == ["provider error: authentication"]
-    assert stats.reasons["provider error: authentication"] == 1
-
-
-def test_distinct_causes_do_not_collapse_into_one_bucket() -> None:
-    stats = MsemaxStats()
-    stats.note_rejection("provider error [gemini: authentication status=401]")
-    stats.note_rejection("provider error [gemini: quota_rate_limit status=429]")
-    stats.note_rejection("provider error [gemini: timeout]")
-    assert len(stats.reasons) == 3
-
-
-def test_provider_error_prefix_is_preserved_for_counting() -> None:
-    """benchmark_runner counts provider errors via this prefix."""
-    reason = "provider error [gemini: timeout]"
-    assert reason.startswith("provider error")
-    assert rejection_bucket(reason) == "provider error: timeout"
 
 
 def test_diagnosis_never_leaks_credentials(routed) -> None:
@@ -407,7 +390,7 @@ def test_diagnosis_never_leaks_credentials(routed) -> None:
         )
         with pytest.raises(AIUnavailableError) as excinfo:
             AIService(settings).complete_structured(
-                response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+                response_model=StructuredProbe, system_prompt="s", user_prompt="u"
             )
     finally:
         httpx.Client = original  # type: ignore[misc]
@@ -416,8 +399,7 @@ def test_diagnosis_never_leaks_credentials(routed) -> None:
         [
             str(excinfo.value),
             excinfo.value.diagnosis(),
-            describe_provider_failure(excinfo.value),
-            rejection_bucket(f"provider error [{describe_provider_failure(excinfo.value)}]"),
+            " ".join(failure.summary for failure in excinfo.value.failures),
             json.dumps([failure.__dict__ for failure in excinfo.value.failures]),
         ]
     )
@@ -573,7 +555,7 @@ def test_fallback_success_still_reports_the_primary_failure(routed) -> None:
         (200, _groq_ok()),
     )
     result = service.complete_structured(
-        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+        response_model=StructuredProbe, system_prompt="s", user_prompt="u"
     )
     assert contacted == ["gemini", "groq"]
     assert result.provider == "groq"
@@ -587,7 +569,7 @@ def test_fallback_success_still_reports_the_primary_failure(routed) -> None:
 def test_clean_primary_success_reports_no_failures(routed) -> None:
     service, contacted = routed((200, _gemini_ok()), (500, {}))
     result = service.complete_structured(
-        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+        response_model=StructuredProbe, system_prompt="s", user_prompt="u"
     )
     assert contacted == ["gemini"]
     assert result.failures == ()
@@ -776,7 +758,7 @@ def test_structured_generation_still_works_on_a_gemini_3_model(routed) -> None:
     service, contacted = routed((200, _gemini_ok()), (500, {}))
     service.providers["gemini"].model = "gemini-3.7-flash"
     result = service.complete_structured(
-        response_model=MsemaxQuestion, system_prompt="s", user_prompt="u"
+        response_model=StructuredProbe, system_prompt="s", user_prompt="u"
     )
     assert contacted == ["gemini"]
     assert result.fallback_used is False

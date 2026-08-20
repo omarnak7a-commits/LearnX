@@ -96,9 +96,9 @@ class AIServiceError(RuntimeError):
 class AIUnavailableError(AIServiceError):
     """Every configured provider failed.
 
-    Carries the sanitized per-provider diagnosis so callers (and the benchmark)
-    can report *why* instead of a generic "provider error". ``str()`` stays the
-    user-safe message; the structured detail lives on the attributes.
+    Carries the sanitized per-provider diagnosis so callers can report *why*
+    instead of a generic "provider error". ``str()`` stays the user-safe
+    message; the structured detail lives on the attributes.
     """
 
     def __init__(

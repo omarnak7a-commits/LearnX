@@ -12,4 +12,3 @@ __pycache__/
 # Generated benchmark output. Produced by backend/scripts/msemax_ab.py and
 # published as a CI artifact instead of being committed, so benchmark numbers
 # are always traceable to the run that measured them.
-QUIZ_MSEMAX_AB.json

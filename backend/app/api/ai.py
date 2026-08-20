@@ -62,7 +62,6 @@ from app.services.ai_service import (
     AIUnavailableError,
     get_ai_service,
 )
-from app.services.quiz_msemax import MsemaxConfigurationError
 from app.services.quiz_pipeline import generate_quiz
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -142,12 +141,6 @@ def _as_http_exception(exc: Exception) -> HTTPException:
         return HTTPException(status.HTTP_404_NOT_FOUND, "File not found.")
     if isinstance(exc, (AIDocumentUnsupportedError, AIContentBlockedError)):
         return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
-    if isinstance(exc, MsemaxConfigurationError):
-        # A deployment asked for MSEMAX without provider credentials. This is
-        # an operator error, not a user error: surface it as "unavailable" with
-        # the actual cause in the message rather than an opaque 500, and never
-        # by quietly serving deterministic output labelled as model output.
-        return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
     if isinstance(exc, (AIUnavailableError, AIServiceError)):
         return HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -348,7 +341,7 @@ def quiz(
             model=result.model,
             fallback_used=result.fallback_used,
         )
-    except (AIDocumentError, AIServiceError, MsemaxConfigurationError) as exc:
+    except (AIDocumentError, AIServiceError) as exc:
         raise _as_http_exception(exc) from exc
 
 

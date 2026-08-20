@@ -69,14 +69,9 @@ from app.services.quiz_knowledge_targets import (
     build_knowledge_targets,
     targets_block,
 )
-from app.services.quiz_msemax import (
-    DETERMINISTIC_ORIGIN,
-    MSEMAX_ORIGIN,
-    MsemaxConfigurationError,
-    MsemaxStats,
-    msemax_candidates,
-    resolve_backend,
-)
+#: Provenance label for questions written by the deterministic engine. Kept so
+#: generated text is always attributable to its writer.
+DETERMINISTIC_ORIGIN = "deterministic"
 from app.services.quiz_scoring import (
     ScoredCandidate,
     classify_cognitive_skill,
@@ -256,9 +251,6 @@ class QuizGenerationResult:
     knowledge_targets: list[KnowledgeTarget] = field(default_factory=list)
     provenance: list[QuestionProvenance] = field(default_factory=list)
     rejections: list[RejectionNote] = field(default_factory=list)
-    #: Per-run MSEMAX counters, or None when MSEMAX did not run. Benchmarks and
-    #: diagnostics read candidate survival from here.
-    msemax_stats: MsemaxStats | None = None
 
 
 def quiz_language_guidance(language: str) -> str:
@@ -963,23 +955,8 @@ def generate_quiz(
     previous_questions: list[str],
     system_prompt: str,
     quality_threshold: float = _DEFAULT_THRESHOLD,
-    msemax_enabled: bool | None = None,
-    msemax_phrasings: dict[str, dict[str, Any]] | None = None,
-    msemax_replayed_rejections: list[Any] | None = None,
-    msemax_replayed_stats: Any | None = None,
 ) -> QuizGenerationResult:
-    """Understand the document, plan the quiz, then write and validate it.
-
-    ``msemax_phrasings`` supplies already-generated MSEMAX prose keyed by
-    blueprint id. When present the layer replays it instead of calling a
-    provider, which is what lets the batched benchmark spread phrasing over
-    several short serverless invocations without changing the result.
-
-    ``msemax_enabled`` opts the run into the constrained LLM phrasing layer.
-    It defaults to the configured setting; passing it explicitly is what lets
-    the A/B harness run both arms against one process without mutating global
-    configuration.
-    """
+    """Understand the document, plan the quiz, then write and validate it."""
     context = build_quiz_context(source)
     if not has_educational_content(context.units):
         raise AIUnavailableError(
@@ -1041,9 +1018,6 @@ def generate_quiz(
 
     blueprint_by_id = {blueprint.id: blueprint for blueprint in context.blueprints}
     rejections: list[RejectionNote] = []
-    #: Set only when the MSEMAX layer actually runs, so a None here means
-    #: "MSEMAX did not participate" rather than "MSEMAX produced nothing".
-    msemax_stats: MsemaxStats | None = None
     records = _collect_records(
         raw_candidates,
         context=context,
@@ -1110,55 +1084,9 @@ def generate_quiz(
             renumbered, language=language, understanding=understanding
         )
         for item in deterministic_raw:
-            # Honest provenance: label the writer before any MSEMAX prose can
-            # replace it, so deterministic text is never reported as model
-            # output.
+            # Honest provenance: label the writer so deterministic text is
+            # never reported as model output.
             item.setdefault("origin", DETERMINISTIC_ORIGIN)
-
-        # --- Stage 3b: MSEMAX (optional constrained LLM phrasing) ---------- #
-        # The planner has already fixed the concept, skill, evidence, facet,
-        # question type and difficulty. MSEMAX only rewrites the natural
-        # language for those same blueprints, and only where it succeeds: a
-        # blueprint it declines keeps its deterministic candidate, so turning
-        # MSEMAX on can never reduce coverage.
-        use_msemax = (
-            get_settings().msemax_enabled if msemax_enabled is None else msemax_enabled
-        )
-        if use_msemax and renumbered:
-            if msemax_phrasings is not None:
-                # Replay mode: phrasing already happened (across earlier
-                # requests) and is supplied here, so this pass makes NO
-                # provider call. Used by the batched benchmark, where a single
-                # serverless invocation is too short to phrase a whole quiz.
-                # The prose is byte-identical to what a one-shot run would use,
-                # so the methodology is unchanged.
-                phrased = dict(msemax_phrasings)
-                msemax_rejections = list(msemax_replayed_rejections or [])
-                msemax_stats = msemax_replayed_stats
-            else:
-                backend = resolve_backend(get_settings(), service)
-                msemax_stats = MsemaxStats()
-                phrased, msemax_rejections = msemax_candidates(
-                    renumbered, backend=backend, stats=msemax_stats
-                )
-            for rejection in msemax_rejections:
-                # Every declined generation is recorded. MSEMAX must never lose
-                # a candidate quietly.
-                rejections.append(
-                    RejectionNote(
-                        stage="msemax_generation",
-                        blueprint_id=rejection.blueprint_id,
-                        concept_id=rejection.concept_id,
-                        cognitive_skill=rejection.cognitive_skill,
-                        prompt=rejection.prompt,
-                        reason=rejection.reason,
-                    )
-                )
-            if phrased:
-                deterministic_raw = [
-                    phrased.get(item.get("blueprint_id", ""), item)
-                    for item in deterministic_raw
-                ]
 
         extra_records = _collect_records(
             [_RawCandidate.model_validate(item) for item in deterministic_raw],
@@ -1258,5 +1186,4 @@ def generate_quiz(
         knowledge_targets=context.knowledge_targets,
         provenance=provenance,
         rejections=rejections,
-        msemax_stats=msemax_stats,
     )

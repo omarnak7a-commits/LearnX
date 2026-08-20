@@ -55,15 +55,6 @@ app.include_router(calendar.router, prefix=settings.api_prefix)
 app.include_router(notifications.router, prefix=settings.api_prefix)
 app.include_router(ai.router, prefix=settings.api_prefix)
 
-# STEP 9 benchmark control plane. Mounted ONLY when BENCHMARK_TOKEN is set, so
-# in a normal deployment (including production today) these routes do not exist
-# at all and any request to them 404s. It is an operator tool: no UI, no
-# unauthenticated access, and it exposes measurement metadata only.
-if (getattr(settings, "benchmark_token", "") or "").strip():
-    from app.api import benchmark
-
-    app.include_router(benchmark.router, prefix=settings.api_prefix)
-
 # Optional routers (loaded safely)
 try:
     from app.api import planner, video, websockets

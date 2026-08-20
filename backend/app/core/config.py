@@ -32,8 +32,7 @@ class Settings(BaseSettings):
     # --- Online AI (backend-only secrets; never VITE_ variables) ---
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     # gemini-3.7-flash was confirmed available and working against the
-    # production key via /benchmark/gemini-models + provider-check;
-    # gemini-2.5-flash returned 404 NOT_FOUND for that same key.
+    # production API key; gemini-2.5-flash returned 404 NOT_FOUND for it.
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
     # Gemini 2.5 models charge internal "thinking" tokens against
     # maxOutputTokens and default to dynamic thinking, so a small budget can be
@@ -50,33 +49,6 @@ class Settings(BaseSettings):
     ai_provider: str = os.getenv("AI_PROVIDER", "gemini")
     ai_fallback_provider: str = os.getenv("AI_FALLBACK_PROVIDER", "groq")
     ai_timeout_seconds: float = float(os.getenv("AI_TIMEOUT_SECONDS", "25"))
-    # --- MSEMAX: optional constrained LLM phrasing layer ---
-    # Off by default so the deterministic engine stays the reproducible
-    # baseline. When true, MSEMAX phrases blueprints the deterministic planner
-    # has already decided; its output still passes every existing validator.
-    # Parsed from the raw string rather than typed as bool: pydantic-settings
-    # re-reads the environment for a declared field, and MSEMAX_ENABLED=""
-    # (a common way to "unset" a variable in shell scripts and CI) is not a
-    # boolean it accepts, which crashed startup. Keeping the field a string and
-    # normalising it here means an empty or malformed value degrades to "off"
-    # instead of taking the whole API down.
-    msemax_enabled_raw: str = Field(default="false", alias="MSEMAX_ENABLED")
-
-    # --- STEP 9 benchmark authorisation ---
-    # A dedicated shared secret for the batched MSEMAX A/B benchmark, entirely
-    # separate from the provider credentials: it authorises *triggering* a
-    # benchmark, and grants no access to GEMINI_API_KEY or GROQ_API_KEY.
-    # Empty by default, which leaves the benchmark routes unmounted entirely.
-    benchmark_token: str = Field(default="", alias="BENCHMARK_TOKEN")
-
-    @property
-    def msemax_enabled(self) -> bool:
-        return (self.msemax_enabled_raw or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
     ai_max_document_bytes: int = int(os.getenv("AI_MAX_DOCUMENT_BYTES", str(15 * 1024 * 1024)))
     ai_max_document_characters: int = int(os.getenv("AI_MAX_DOCUMENT_CHARACTERS", "100000"))
 
