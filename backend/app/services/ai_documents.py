@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import threading
 import uuid
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 from io import BytesIO
 
 from pypdf import PdfReader
@@ -103,7 +106,73 @@ def load_owned_pdf(
     return file, source
 
 
+#: Bounded, in-process cache of extracted PDF text.
+#:
+#: Parsing a PDF is the single most expensive step in a quiz request, and a
+#: student generating a practice quiz, then an exam, then a retry over the same
+#: pages would otherwise pay it every time. The key covers everything that can
+#: change the extracted text, so a different page selection is a different
+#: entry rather than a stale hit.
+_EXTRACT_CACHE_SIZE = 8
+_extract_cache: "OrderedDict[tuple[str, str, int, tuple[int, ...] | None], AIDocumentSource]" = (
+    OrderedDict()
+)
+_extract_cache_lock = threading.Lock()
+
+
+def _extract_cache_key(
+    data: bytes, *, title: str, max_characters: int, allowed_pages: list[int] | None
+) -> tuple[str, str, int, tuple[int, ...] | None]:
+    """Identify an extraction by content, not by file id.
+
+    Hashing the bytes means a re-uploaded or renamed file still hits, and --
+    more importantly -- that a changed file never does.
+    """
+    digest = hashlib.blake2b(data, digest_size=16).hexdigest()
+    pages = tuple(sorted(set(allowed_pages))) if allowed_pages is not None else None
+    return (digest, title[:512], max_characters, pages)
+
+
+def clear_extraction_cache() -> None:
+    """Drop all cached extractions (used by tests)."""
+    with _extract_cache_lock:
+        _extract_cache.clear()
+
+
 def _extract_pdf(
+    data: bytes,
+    *,
+    file_id: str,
+    title: str,
+    max_characters: int,
+    allowed_pages: list[int] | None,
+) -> AIDocumentSource:
+    key = _extract_cache_key(
+        data, title=title, max_characters=max_characters, allowed_pages=allowed_pages
+    )
+    with _extract_cache_lock:
+        cached = _extract_cache.get(key)
+        if cached is not None:
+            _extract_cache.move_to_end(key)
+            # file_id is request scoped; the parsed text is not.
+            return replace(cached, file_id=file_id)
+
+    source = _extract_pdf_uncached(
+        data,
+        file_id=file_id,
+        title=title,
+        max_characters=max_characters,
+        allowed_pages=allowed_pages,
+    )
+    with _extract_cache_lock:
+        _extract_cache[key] = source
+        _extract_cache.move_to_end(key)
+        while len(_extract_cache) > _EXTRACT_CACHE_SIZE:
+            _extract_cache.popitem(last=False)
+    return source
+
+
+def _extract_pdf_uncached(
     data: bytes,
     *,
     file_id: str,

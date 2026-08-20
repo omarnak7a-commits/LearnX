@@ -92,6 +92,12 @@ def test_small_educational_source_still_yields_a_grounded_question() -> None:
         seed=17,
         previous_questions=[],
         system_prompt="Use only the supplied source.",
+        # This two-sentence note cannot honestly support three questions, and
+        # the production contract now says so (see test_quiz_exact_count.py).
+        # What this test protects is the other half of that contract: the
+        # little material the note *does* contain still produces a properly
+        # grounded question rather than an outage.
+        require_exact_count=False,
     )
 
     assert service.calls == 2  # understand first, then write

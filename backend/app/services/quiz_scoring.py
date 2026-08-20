@@ -24,6 +24,7 @@ import hashlib
 import re
 import random
 from dataclasses import dataclass, field
+from collections.abc import Collection
 from typing import Any
 
 from app.schemas.ai import AIQuizQuestion
@@ -710,18 +711,42 @@ def _claim_signature(candidate) -> frozenset[str] | None:
     return frozenset(tokens)
 
 
+#: Redundancy gates that express a *preference* for a better-spread exam.
+#: Each one removes a question that is already grounded, already validated and
+#: already above the quality floor -- it is dropped only because something
+#: similar was picked first. When enforcing them all would return a short quiz,
+#: they are relaxed in the order below (least educational harm first) rather
+#: than handing the student fewer questions than they asked for.
+RELAXABLE_GATES: tuple[str, ...] = (
+    "claim_similarity",
+    "symmetric_pair",
+    "concept_breadth",
+)
+
+#: Never relaxed, and therefore not listed above: the objective-key and
+#: concept+target gates. Those identify the *same* learning objective asked
+#: twice, which is a duplicate question rather than a near neighbour.
+
+
 def select_diverse(
     candidates: list[ScoredCandidate],
     count: int,
     *,
     rng: random.Random,
+    gates: Collection[str] = RELAXABLE_GATES,
 ) -> list[AIQuizQuestion]:
     """Select strong questions with hard objective deduplication and diversity.
 
     The same concept may legitimately recur only for a different knowledge
     target. The same semantic objective may not recur at all, even when its
     wording, cognitive verb, or question type differs.
+
+    ``gates`` names which *relaxable* redundancy gates to enforce. Duplicate
+    objectives are always rejected; the gates in :data:`RELAXABLE_GATES` are
+    quality preferences, and :func:`select_quiz_questions` drops them one at a
+    time when the alternative is returning fewer questions than requested.
     """
+    enforced = set(gates)
     pool = sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
     selected: list[AIQuizQuestion] = []
     seen_objectives: set[str] = set()
@@ -757,7 +782,7 @@ def select_diverse(
             # A comparison is symmetric: asking it from each side is one
             # knowledge target wearing two prompts.
             pair_key = _symmetric_pair_key(candidate)
-            if pair_key and pair_key in seen_pairs:
+            if "symmetric_pair" in enforced and pair_key and pair_key in seen_pairs:
                 continue
             # A misconception question restates a relationship with the wrong
             # concept attached, so it carries almost the same words as the
@@ -766,9 +791,13 @@ def select_diverse(
             # tests one fact twice and hands the student the answer to the
             # other. Compare the *claim*, independent of the concept named.
             claim_key = _claim_signature(candidate)
-            if claim_key and any(
-                len(claim_key & seen) / max(1, len(claim_key | seen)) >= 0.70
-                for seen in seen_claims
+            if (
+                "claim_similarity" in enforced
+                and claim_key
+                and any(
+                    len(claim_key & seen) / max(1, len(claim_key | seen)) >= 0.70
+                    for seen in seen_claims
+                )
             ):
                 continue
             penalty = 0.0
@@ -782,7 +811,10 @@ def select_diverse(
             # concept has been covered, repeats compete normally.
             repeats = concept_counts.get(candidate.concept.casefold(), 0)
             if repeats:
-                if len(concept_counts) < concepts_available:
+                if (
+                    "concept_breadth" in enforced
+                    and len(concept_counts) < concepts_available
+                ):
                     continue
                 penalty += 0.45 * repeats
             if candidate.category:
@@ -867,3 +899,73 @@ def select_diverse(
                 false_count += 1
 
     return selected
+
+
+@dataclass
+class SelectionOutcome:
+    """The chosen questions plus how hard the selector had to work.
+
+    ``relaxed_gates`` records which redundancy preferences had to be dropped to
+    reach the requested count, so the pipeline can log honestly that a quiz is
+    complete but slightly more repetitive than ideal.
+    """
+
+    questions: list[AIQuizQuestion]
+    relaxed_gates: tuple[str, ...] = ()
+    shortfall: int = 0
+
+
+def select_quiz_questions(
+    candidates: list[ScoredCandidate],
+    count: int,
+    *,
+    rng: random.Random,
+) -> SelectionOutcome:
+    """Select ``count`` questions, relaxing soft redundancy gates if needed.
+
+    The selector's redundancy gates are educational preferences: they discard
+    questions that are individually valid and grounded, purely because a
+    similar one was already picked. Enforcing them unconditionally is what
+    turned a request for eight questions into a quiz of six -- the shortfall
+    was never a lack of supported material, only an over-strict spread rule.
+
+    So the gates are applied strongest-first and relaxed one at a time, and
+    only while the quiz is short. Duplicate learning objectives are never
+    admitted; the relaxed gates only ever allow *near* neighbours. If even the
+    fully relaxed pass cannot fill the quiz, the pool genuinely lacks the
+    material and the caller reports that rather than padding it.
+    """
+    if count <= 0:
+        return SelectionOutcome(questions=[])
+
+    attempts: list[tuple[str, ...]] = [RELAXABLE_GATES]
+    for dropped in range(1, len(RELAXABLE_GATES) + 1):
+        attempts.append(RELAXABLE_GATES[dropped:])
+
+    best = SelectionOutcome(questions=[], shortfall=count)
+    for gates in attempts:
+        # Each attempt re-runs from the same seed, so relaxation never depends
+        # on the previous pass and the result stays reproducible.
+        selected = select_diverse(candidates, count, rng=random.Random(rng_seed(rng)), gates=gates)
+        if len(selected) > len(best.questions):
+            best = SelectionOutcome(
+                questions=selected,
+                relaxed_gates=tuple(g for g in RELAXABLE_GATES if g not in set(gates)),
+                shortfall=max(0, count - len(selected)),
+            )
+        if len(selected) >= count:
+            break
+    return best
+
+
+def rng_seed(rng: random.Random) -> int:
+    """A stable per-call seed derived from ``rng`` without consuming its state.
+
+    ``select_quiz_questions`` may run the selector several times; each pass
+    must see the identical random stream so that relaxing a gate is the *only*
+    difference between attempts.
+    """
+    state = rng.getstate()
+    token = rng.getrandbits(64)
+    rng.setstate(state)
+    return token

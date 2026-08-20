@@ -291,6 +291,12 @@ def default_kwargs(**overrides) -> dict:
         seed=1,
         previous_questions=[],
         system_prompt="You are LearnX.",
+        # These fixtures are intentionally tiny -- a few sentences chosen to
+        # probe one gate each. The production contract (exactly `count`
+        # questions or an explicit QuizMaterialError) is asserted separately in
+        # test_quiz_exact_count.py against real documents; enforcing it here
+        # would just mean every unit test failed for lack of material.
+        require_exact_count=False,
     )
     base.update(overrides)
     return base

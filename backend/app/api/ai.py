@@ -62,7 +62,7 @@ from app.services.ai_service import (
     AIUnavailableError,
     get_ai_service,
 )
-from app.services.quiz_pipeline import generate_quiz
+from app.services.quiz_pipeline import QuizMaterialError, generate_quiz
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -139,6 +139,11 @@ def _metadata(completion: Any) -> dict[str, Any]:
 def _as_http_exception(exc: Exception) -> HTTPException:
     if isinstance(exc, AIDocumentNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, "File not found.")
+    # A document that simply cannot support the requested number of questions
+    # is not an outage: the student needs to know it was the PDF, not the
+    # service, and that asking for fewer questions will work.
+    if isinstance(exc, QuizMaterialError):
+        return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
     if isinstance(exc, (AIDocumentUnsupportedError, AIContentBlockedError)):
         return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
     if isinstance(exc, (AIUnavailableError, AIServiceError)):

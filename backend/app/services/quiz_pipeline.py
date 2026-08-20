@@ -26,6 +26,7 @@ backend decides what survives.
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 from dataclasses import dataclass, field, replace
@@ -86,6 +87,7 @@ from app.services.quiz_scoring import (
     randomize_answer_positions,
     score_blueprinted_candidate,
     select_diverse,
+    select_quiz_questions,
 )
 from app.services.quiz_understanding import (
     DocumentUnderstanding,
@@ -95,6 +97,8 @@ from app.services.quiz_understanding import (
     normalize_understanding,
     understanding_block,
 )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_THRESHOLD = 0.68
 _MIN_GROUNDING = 0.72
@@ -251,6 +255,24 @@ class QuizGenerationResult:
     knowledge_targets: list[KnowledgeTarget] = field(default_factory=list)
     provenance: list[QuestionProvenance] = field(default_factory=list)
     rejections: list[RejectionNote] = field(default_factory=list)
+    #: Redundancy preferences that had to be relaxed to fill the quiz.
+    relaxed_gates: tuple[str, ...] = ()
+    #: Stage-by-stage funnel, emitted to the log and kept for tests.
+    telemetry: dict[str, Any] = field(default_factory=dict)
+
+
+class QuizMaterialError(AIUnavailableError):
+    """The source is real and readable but cannot support the requested count.
+
+    Distinct from :class:`AIUnavailableError` so the API can explain that the
+    *document* is the limit -- returning a short quiz silently would hide that
+    from the student, and inventing the difference would break grounding.
+    """
+
+    def __init__(self, message: str, *, requested: int, available: int) -> None:
+        super().__init__(message)
+        self.requested = requested
+        self.available = available
 
 
 def quiz_language_guidance(language: str) -> str:
@@ -942,6 +964,322 @@ def _collect_records(
     return records
 
 
+#: Question types whose answer must be one of the offered options.
+_OPTION_TYPES = {"mcq", "true-false"}
+
+#: How many extra planning rounds may run when the pool is short of the
+#: requested count. Bounded so a thin document fails fast instead of looping.
+_MAX_TOPUP_ROUNDS = 3
+
+
+def _insufficient_material_message(requested: int, available: int) -> str:
+    """Explain a genuine shortfall in the student's terms."""
+    return (
+        f"This PDF does not contain enough clearly explained material for "
+        f"{requested} well-grounded questions -- LearnX could only verify "
+        f"{available}. Try selecting more pages, or ask for {available} "
+        f"questions instead. LearnX will not invent questions the document "
+        f"does not support."
+    )
+
+
+def _top_up_candidates(
+    scored: list[ScoredCandidate],
+    scores: dict[str, float],
+    *,
+    context: QuizContext,
+    source: AIDocumentSource,
+    understanding: DocumentUnderstanding,
+    blueprint_by_id: dict[str, QuestionBlueprint],
+    count: int,
+    question_types: list[str],
+    difficulty: str,
+    language: str,
+    seed: int,
+    previous_questions: list[str],
+    quality_threshold: float,
+    rejections: list[RejectionNote],
+) -> tuple[list[ScoredCandidate], dict[str, float]]:
+    """Plan and write additional questions until the pool can fill the quiz.
+
+    A question that fails validation must not shrink the quiz; it must be
+    replaced. Each round re-plans over the knowledge targets whose concepts are
+    still uncovered (falling back to all targets once every concept has one
+    question), asks the deterministic writer for that material, and puts the
+    results through the identical grounding and scoring gates. Nothing here
+    weakens a gate -- the only thing that changes is how much material has been
+    attempted.
+    """
+    important = {
+        concept.concept_id for concept in understanding.important_concepts()
+    }
+    for round_index in range(_MAX_TOPUP_ROUNDS):
+        covered = {
+            blueprint_by_id[candidate.blueprint_id].concept_id
+            for candidate in scored
+            if candidate.blueprint_id in blueprint_by_id
+        }
+        uncovered = [
+            target
+            for target in context.knowledge_targets
+            if target.concept_id not in covered
+        ]
+        # Two reasons to plan more material. The obvious one is a pool too
+        # small to fill the quiz. The subtler one is a pool that is big enough
+        # but does not reach every important concept: selection then has to
+        # choose between leaving a concept unexamined and repeating one it
+        # already used. Widening the pool first means it rarely has to.
+        missing_concepts = [
+            target for target in uncovered if target.concept_id in important
+        ]
+        if len(scored) >= count and not missing_concepts:
+            break
+        targets = missing_concepts or uncovered or context.knowledge_targets
+        if not targets:
+            break
+        # Ask for more than the shortfall: some plans will not survive the
+        # writer or the gates, and an exhausted pool is what caused the
+        # shortfall in the first place.
+        wanted = max(count - len(scored), len(missing_concepts)) + 4
+        planned = build_question_blueprints(
+            targets,
+            count=wanted,
+            question_types=writable_question_types(question_types, understanding),
+            difficulty=difficulty,
+            # A different seed per round explores different valid material
+            # instead of re-planning the identical slots we already have.
+            seed=seed + 7919 * (round_index + 1),
+            allowed_skills=DETERMINISTIC_SKILLS,
+            type_filter=target_writable_types,
+        )
+        if not planned:
+            break
+        renumbered: list[QuestionBlueprint] = []
+        for index, blueprint in enumerate(planned, start=1):
+            renamed = replace(blueprint, id=f"topup{round_index + 1}-bp-{index}")
+            blueprint_by_id[renamed.id] = renamed
+            renumbered.append(renamed)
+
+        raw = deterministic_candidates(
+            renumbered, language=language, understanding=understanding
+        )
+        for item in raw:
+            item.setdefault("origin", DETERMINISTIC_ORIGIN)
+        records = _collect_records(
+            [_RawCandidate.model_validate(item) for item in raw],
+            context=context,
+            source=source,
+            blueprint_by_id=blueprint_by_id,
+            previous_questions=previous_questions,
+            rejections=rejections,
+        )
+        extra, extra_scores = _score_and_filter(
+            records,
+            context=context,
+            difficulty=difficulty,
+            previous_questions=previous_questions,
+            quality_threshold=quality_threshold,
+            rejections=rejections,
+        )
+        existing = {candidate.objective_key for candidate in scored}
+        added = [
+            candidate
+            for candidate in extra
+            if candidate.objective_key not in existing
+        ]
+        if not added:
+            # Another round would re-plan the same exhausted material.
+            break
+        scored = _dedupe_scored([*scored, *added])
+        scores.update(extra_scores)
+        context.blueprints = [*context.blueprints, *renumbered]
+    return scored, scores
+
+
+def _quiz_telemetry(
+    *,
+    source: AIDocumentSource,
+    context: QuizContext,
+    understanding: DocumentUnderstanding,
+    blueprints: list[QuestionBlueprint],
+    requested: int,
+    generated: int,
+    validated: int,
+    rejections: list[RejectionNote],
+    relaxed_gates: tuple[str, ...],
+) -> dict[str, Any]:
+    """The stage-by-stage funnel, as data so tests can assert on it."""
+    pages_used = sorted(context.included_pages)
+    # Selection leftovers are valid questions the quiz had no room for; they
+    # are not failures and would make the rejected count misleading.
+    real_rejections = [
+        note for note in rejections if note.stage != "diversity_selection"
+    ]
+    return {
+        # Report the pages we can actually build from. For a PDF this is the
+        # extracted (and possibly reading-restricted) set; source.page_count
+        # is only meaningful for real PDFs and reads 1 for pasted text.
+        "pdf_pages_available": max(source.page_count, len(pages_used)),
+        "pages_used": pages_used,
+        "extracted_text": "available" if context.units else "missing",
+        "concepts_found": len(list(understanding.important_concepts())),
+        "quiz_requested": requested,
+        "quiz_plans_created": len(blueprints),
+        "questions_generated": generated,
+        "questions_validated": validated,
+        "questions_rejected": len(real_rejections),
+        "relaxed_gates": list(relaxed_gates),
+    }
+
+
+def _log_quiz_generation(
+    telemetry: dict[str, Any], rejections: list[RejectionNote]
+) -> None:
+    """Emit the funnel and every rejection reason.
+
+    Without this, a short or off-topic quiz can only be guessed at. With it the
+    exact stage that dropped each question is in the log.
+    """
+    pages = telemetry["pages_used"]
+    pages_text = ",".join(str(page) for page in pages) if pages else "none"
+    logger.info(
+        "quiz generation funnel | PDF pages available: %s | Pages used: %s | "
+        "Extracted text: %s | Concepts found: %s | Quiz requested: %s | "
+        "Quiz plans created: %s | Questions generated: %s | Questions validated: %s | "
+        "Questions rejected: %s",
+        telemetry["pdf_pages_available"],
+        pages_text,
+        telemetry["extracted_text"],
+        telemetry["concepts_found"],
+        telemetry["quiz_requested"],
+        telemetry["quiz_plans_created"],
+        telemetry["questions_generated"],
+        telemetry["questions_validated"],
+        telemetry["questions_rejected"],
+    )
+    if telemetry["relaxed_gates"]:
+        logger.info(
+            "quiz generation relaxed redundancy gates to fill the quiz: %s",
+            ", ".join(telemetry["relaxed_gates"]),
+        )
+    for note in rejections:
+        if note.stage == "diversity_selection":
+            continue
+        logger.info(
+            "quiz question rejected | stage=%s | concept=%s | skill=%s | "
+            "blueprint=%s | reason=%s | prompt=%s",
+            note.stage,
+            note.concept_id or "-",
+            note.cognitive_skill or "-",
+            note.blueprint_id or "-",
+            note.reason,
+            (note.prompt or "")[:120],
+        )
+
+
+def validate_final_quiz(
+    questions: list[AIQuizQuestion],
+    *,
+    context: QuizContext,
+    source: AIDocumentSource,
+    understanding: DocumentUnderstanding,
+    provenance_by_id: dict[str, QuestionProvenance],
+    requested_types: list[str],
+) -> tuple[list[AIQuizQuestion], list[RejectionNote]]:
+    """Audit the assembled quiz one last time, independently of how it was built.
+
+    Every earlier stage validates a candidate in isolation, at the moment it is
+    written. This pass re-checks the finished set as a whole, so a question can
+    never reach the student because an intermediate stage forgot to look: the
+    concept must exist in the study map, the pages must exist in the source we
+    actually extracted, the answer must be answerable from the offered options,
+    and the shape must match the question type.
+
+    It is deliberately cheap and purely structural -- it re-verifies decisions
+    rather than re-deriving them, so it cannot itself introduce ungrounded
+    content.
+    """
+    concept_ids = {concept.concept_id for concept in understanding.important_concepts()}
+    concept_names = {
+        normalize_question_text(concept.name)
+        for concept in understanding.important_concepts()
+        if concept.name
+    }
+    allowed_types = {_TYPE_ALIASES.get(t.strip().lower(), t.strip().lower()) for t in requested_types}
+    valid: list[AIQuizQuestion] = []
+    notes: list[RejectionNote] = []
+
+    def reject(question: AIQuizQuestion, reason: str) -> None:
+        record = provenance_by_id.get(question.id)
+        notes.append(
+            RejectionNote(
+                stage="final_validation",
+                blueprint_id=record.blueprint_id if record else "",
+                concept_id=record.concept_id if record else "",
+                cognitive_skill=record.cognitive_skill if record else "",
+                prompt=question.prompt,
+                reason=reason,
+            )
+        )
+
+    for question in questions:
+        record = provenance_by_id.get(question.id)
+        if record is None:
+            reject(question, "no provenance: question is not traceable to a blueprint")
+            continue
+        # The concept must be one the document understanding actually found.
+        if record.concept_id not in concept_ids and (
+            normalize_question_text(record.concept) not in concept_names
+        ):
+            reject(question, f"concept {record.concept_id!r} is not in the document study map")
+            continue
+        if allowed_types and question.type not in allowed_types:
+            reject(question, f"type {question.type!r} was not requested")
+            continue
+        # Pages must exist in the *extracted* source, not merely in the PDF.
+        pages = list(question.source_pages)
+        if not pages:
+            reject(question, "no source page reference")
+            continue
+        # The authority on "which pages exist" is the text we actually
+        # extracted, not source.page_count: a text-pasted source reports a
+        # page_count of 1 while legitimately carrying [Page 2] markers, and a
+        # page-restricted request extracts a subset of a longer PDF. Checking
+        # the extracted set covers both, and is the stricter test -- it also
+        # catches a citation to a real PDF page that was never read.
+        not_extracted = [p for p in pages if p < 1 or p not in context.included_pages]
+        if not_extracted:
+            reject(
+                question,
+                f"cites page(s) {not_extracted} that are not in the extracted source pages "
+                f"{sorted(context.included_pages)}",
+            )
+            continue
+        answer = (question.correct_answer or "").strip()
+        if not answer:
+            reject(question, "empty correct answer")
+            continue
+        if question.type in _OPTION_TYPES:
+            options = [o.strip() for o in (question.options or []) if o and o.strip()]
+            if len(options) < 2:
+                reject(question, f"{question.type} needs at least two options")
+                continue
+            if len(set(normalize_question_text(o) for o in options)) != len(options):
+                reject(question, "duplicate options")
+                continue
+            if normalize_question_text(answer) not in {
+                normalize_question_text(o) for o in options
+            }:
+                reject(question, "correct answer is not among the options")
+                continue
+        if question.type == "fill-blank" and not is_valid_fill_blank(question.prompt):
+            reject(question, "fill-blank prompt has no usable blank")
+            continue
+        valid.append(question)
+
+    return valid, notes
+
+
 def generate_quiz(
     service: Any,
     source: AIDocumentSource,
@@ -955,8 +1293,16 @@ def generate_quiz(
     previous_questions: list[str],
     system_prompt: str,
     quality_threshold: float = _DEFAULT_THRESHOLD,
+    require_exact_count: bool = True,
 ) -> QuizGenerationResult:
-    """Understand the document, plan the quiz, then write and validate it."""
+    """Understand the document, plan the quiz, then write and validate it.
+
+    ``require_exact_count`` enforces the product contract: a request for eight
+    questions yields eight questions or an explicit :class:`QuizMaterialError`
+    naming how many the document could actually support. It is a parameter only
+    so unit tests can drive the pipeline with deliberately tiny fixtures while
+    probing a different invariant; every caller in the application leaves it on.
+    """
     context = build_quiz_context(source)
     if not has_educational_content(context.units):
         raise AIUnavailableError(
@@ -1121,8 +1467,32 @@ def generate_quiz(
     if not scored:
         raise AIUnavailableError(UNAVAILABLE_MESSAGE)
 
+    # --- Stage 4: top-up ---------------------------------------------------- #
+    # If the surviving pool is smaller than the quiz, plan *more* material from
+    # the study map before selecting, rather than discovering the shortfall
+    # after selection when nothing can be done about it. This is the retry
+    # required for a failed question: the slot is refilled from a different
+    # knowledge target for the same document, never by relaxing grounding.
+    scored, scores = _top_up_candidates(
+        scored,
+        scores,
+        context=context,
+        source=source,
+        understanding=understanding,
+        blueprint_by_id=blueprint_by_id,
+        count=count,
+        question_types=question_types,
+        difficulty=difficulty,
+        language=language,
+        seed=seed,
+        previous_questions=previous_questions,
+        quality_threshold=quality_threshold,
+        rejections=rejections,
+    )
+
     rng = random.Random(seed)
-    selected = select_diverse(scored, count, rng=rng)
+    outcome = select_quiz_questions(scored, count, rng=rng)
+    selected = outcome.questions
     chosen_ids = {question.id for question in selected}
     for candidate in scored:
         if candidate.question.id not in chosen_ids:
@@ -1164,12 +1534,63 @@ def generate_quiz(
                 )
             )
 
+    # --- Stage 6: FINAL VALIDATION over the assembled quiz ------------------ #
+    provenance_by_id = {record.question_id: record for record in provenance}
+    questions, final_notes = validate_final_quiz(
+        questions,
+        context=context,
+        source=source,
+        understanding=understanding,
+        provenance_by_id=provenance_by_id,
+        requested_types=question_types,
+    )
+    rejections.extend(final_notes)
+    if final_notes:
+        kept = {question.id for question in questions}
+        provenance = [record for record in provenance if record.question_id in kept]
+
+    telemetry = _quiz_telemetry(
+        source=source,
+        context=context,
+        understanding=understanding,
+        blueprints=context.blueprints,
+        requested=count,
+        generated=len(selected),
+        validated=len(questions),
+        rejections=rejections,
+        relaxed_gates=outcome.relaxed_gates,
+    )
+    _log_quiz_generation(telemetry, rejections)
+
+    # The contract: exactly what was asked for, or an explicit explanation.
+    # Returning 1 of 8 questions silently is the failure this pipeline exists
+    # to prevent, and padding the difference would break grounding.
+    if require_exact_count and len(questions) < count:
+        raise QuizMaterialError(
+            _insufficient_material_message(count, len(questions)),
+            requested=count,
+            available=len(questions),
+        )
+
+    # Honesty about who wrote the quiz: the top-up stage uses the deterministic
+    # writer, so if any of its questions survived into the final set the result
+    # is a mix and must not be reported as pure provider output.
+    if completion is not None and not used_deterministic:
+        selected_blueprints = {record.blueprint_id for record in provenance}
+        if any(bp_id.startswith("topup") for bp_id in selected_blueprints):
+            fallback_used_topup = True
+        else:
+            fallback_used_topup = False
+    else:
+        fallback_used_topup = False
+
     if completion is not None and not used_deterministic:
         provider = completion.provider
         model = completion.model
         fallback_used = bool(
             (map_completion.fallback_used if map_completion is not None else True)
             or completion.fallback_used
+            or fallback_used_topup
         )
     else:
         provider = DETERMINISTIC_PROVIDER
@@ -1186,4 +1607,6 @@ def generate_quiz(
         knowledge_targets=context.knowledge_targets,
         provenance=provenance,
         rejections=rejections,
+        relaxed_gates=outcome.relaxed_gates,
+        telemetry=telemetry,
     )
