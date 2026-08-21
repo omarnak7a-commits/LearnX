@@ -1,0 +1,693 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R 27 0 R 29 0 R 31 0 R 33 0 R 35 0 R 37 0 R 39 0 R 41 0 R 43 0 R 45 0 R 47 0 R 49 0 R 51 0 R 53 0 R 55 0 R 57 0 R 59 0 R 61 0 R 63 0 R 65 0 R] /Count 32 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 128 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(CS305 Database Systems) Tj
+T*
+(Lecture 18: SQL) Tj
+T*
+(Dr. A. Hassan) Tj
+T*
+(Spring 2026) Tj
+T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 174 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Outline) Tj
+T*
+(- Relational model) Tj
+T*
+(- Keys) Tj
+T*
+(- SQL queries) Tj
+T*
+(- Joins) Tj
+T*
+(- Normalization) Tj
+T*
+(- Transactions) Tj
+T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 221 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(The Relational Model) Tj
+T*
+(- A relation is a table of rows and columns.) Tj
+T*
+(- Each row is a tuple representing one entity.) Tj
+T*
+(- Each column is an attribute with a domain.) Tj
+T*
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 10 0 R >>
+endobj
+10 0 obj
+<< /Length 199 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Primary Key) Tj
+T*
+(- A primary key uniquely identifies each row in a table.) Tj
+T*
+(- It cannot contain NULL values.) Tj
+T*
+(- Every table should declare one.) Tj
+T*
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 12 0 R >>
+endobj
+12 0 obj
+<< /Length 183 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Foreign Key) Tj
+T*
+(- A foreign key references the primary key of another table.) Tj
+T*
+(- It enforces referential integrity between relations.) Tj
+T*
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 14 0 R >>
+endobj
+14 0 obj
+<< /Length 169 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(SELECT Statement) Tj
+T*
+(- SELECT retrieves rows from one or more tables.) Tj
+T*
+(- The WHERE clause filters rows by a predicate.) Tj
+T*
+ET
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 16 0 R >>
+endobj
+16 0 obj
+<< /Length 172 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Projection) Tj
+T*
+(- Projection chooses which columns appear in the result.) Tj
+T*
+(- It is written as the column list after SELECT.) Tj
+T*
+ET
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 18 0 R >>
+endobj
+18 0 obj
+<< /Length 183 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Aggregate Functions) Tj
+T*
+(- Aggregate functions compute a single value over many rows.) Tj
+T*
+(- COUNT returns the number of rows in a group.) Tj
+T*
+ET
+endstream
+endobj
+19 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 20 0 R >>
+endobj
+20 0 obj
+<< /Length 162 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(GROUP BY) Tj
+T*
+(- GROUP BY partitions rows into groups sharing a value.) Tj
+T*
+(- Aggregates are then computed per group.) Tj
+T*
+ET
+endstream
+endobj
+21 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 22 0 R >>
+endobj
+22 0 obj
+<< /Length 143 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(HAVING) Tj
+T*
+(- HAVING filters groups after aggregation.) Tj
+T*
+(- WHERE filters rows before grouping.) Tj
+T*
+ET
+endstream
+endobj
+23 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 24 0 R >>
+endobj
+24 0 obj
+<< /Length 182 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Inner Join) Tj
+T*
+(- An inner join returns rows matching in both tables.) Tj
+T*
+(- The join condition compares a foreign key to a primary key.) Tj
+T*
+ET
+endstream
+endobj
+25 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 26 0 R >>
+endobj
+26 0 obj
+<< /Length 167 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Outer Join) Tj
+T*
+(- A left outer join keeps unmatched rows from the left table.) Tj
+T*
+(- Missing values are padded with NULL.) Tj
+T*
+ET
+endstream
+endobj
+27 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 28 0 R >>
+endobj
+28 0 obj
+<< /Length 171 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Subqueries) Tj
+T*
+(- A subquery is a query nested inside another query.) Tj
+T*
+(- A correlated subquery references the outer query.) Tj
+T*
+ET
+endstream
+endobj
+29 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 30 0 R >>
+endobj
+30 0 obj
+<< /Length 159 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Views) Tj
+T*
+(- A view is a named query stored in the schema.) Tj
+T*
+(- It presents derived data as if it were a table.) Tj
+T*
+ET
+endstream
+endobj
+31 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 32 0 R >>
+endobj
+32 0 obj
+<< /Length 60 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Figure 3: ER diagram) Tj
+T*
+ET
+endstream
+endobj
+33 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 34 0 R >>
+endobj
+34 0 obj
+<< /Length 165 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Indexes) Tj
+T*
+(- An index is a data structure that speeds up lookups.) Tj
+T*
+(- It trades extra write cost for faster reads.) Tj
+T*
+ET
+endstream
+endobj
+35 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 36 0 R >>
+endobj
+36 0 obj
+<< /Length 170 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Functional Dependency) Tj
+T*
+(- A functional dependency means one attribute determines another.) Tj
+T*
+(- It is written X arrow Y.) Tj
+T*
+ET
+endstream
+endobj
+37 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 38 0 R >>
+endobj
+38 0 obj
+<< /Length 168 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(First Normal Form) Tj
+T*
+(- First normal form requires every attribute to be atomic.) Tj
+T*
+(- Repeating groups are not allowed.) Tj
+T*
+ET
+endstream
+endobj
+39 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 40 0 R >>
+endobj
+40 0 obj
+<< /Length 196 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Second Normal Form) Tj
+T*
+(- Second normal form removes partial dependencies on a composite key.) Tj
+T*
+(- Every non-key attribute depends on the whole key.) Tj
+T*
+ET
+endstream
+endobj
+41 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 42 0 R >>
+endobj
+42 0 obj
+<< /Length 192 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Third Normal Form) Tj
+T*
+(- Third normal form removes transitive dependencies.) Tj
+T*
+(- Non-key attributes must not determine other non-key attributes.) Tj
+T*
+ET
+endstream
+endobj
+43 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 44 0 R >>
+endobj
+44 0 obj
+<< /Length 193 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Denormalization) Tj
+T*
+(- Denormalization reintroduces redundancy to improve read speed.) Tj
+T*
+(- It is a deliberate trade-off against update anomalies.) Tj
+T*
+ET
+endstream
+endobj
+45 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 46 0 R >>
+endobj
+46 0 obj
+<< /Length 172 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Transactions) Tj
+T*
+(- A transaction is a unit of work executed atomically.) Tj
+T*
+(- It either commits entirely or aborts entirely.) Tj
+T*
+ET
+endstream
+endobj
+47 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 48 0 R >>
+endobj
+48 0 obj
+<< /Length 178 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(ACID Properties) Tj
+T*
+(- Atomicity means all operations succeed or none do.) Tj
+T*
+(- Durability means committed changes survive failure.) Tj
+T*
+ET
+endstream
+endobj
+49 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 50 0 R >>
+endobj
+50 0 obj
+<< /Length 178 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Isolation Levels) Tj
+T*
+(- Isolation determines how concurrent transactions see each other.) Tj
+T*
+(- Serializable is the strictest level.) Tj
+T*
+ET
+endstream
+endobj
+51 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 52 0 R >>
+endobj
+52 0 obj
+<< /Length 184 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Deadlock) Tj
+T*
+(- A deadlock occurs when transactions wait on each other forever.) Tj
+T*
+(- The system resolves it by aborting one transaction.) Tj
+T*
+ET
+endstream
+endobj
+53 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 54 0 R >>
+endobj
+54 0 obj
+<< /Length 187 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Stored Procedures) Tj
+T*
+(- A stored procedure is program logic stored in the database.) Tj
+T*
+(- It reduces round trips between client and server.) Tj
+T*
+ET
+endstream
+endobj
+55 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 56 0 R >>
+endobj
+56 0 obj
+<< /Length 185 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Triggers) Tj
+T*
+(- A trigger executes automatically in response to a table event.) Tj
+T*
+(- It can enforce rules that constraints cannot express.) Tj
+T*
+ET
+endstream
+endobj
+57 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 58 0 R >>
+endobj
+58 0 obj
+<< /Length 168 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Query Optimization) Tj
+T*
+(- The optimizer chooses a low cost execution plan.) Tj
+T*
+(- Cost is estimated from table statistics.) Tj
+T*
+ET
+endstream
+endobj
+59 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 60 0 R >>
+endobj
+60 0 obj
+<< /Length 65 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Figure 7: query plan tree) Tj
+T*
+ET
+endstream
+endobj
+61 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 62 0 R >>
+endobj
+62 0 obj
+<< /Length 98 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Summary) Tj
+T*
+(- Keys, joins, normalization, transactions) Tj
+T*
+ET
+endstream
+endobj
+63 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 64 0 R >>
+endobj
+64 0 obj
+<< /Length 97 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(References) Tj
+T*
+(Silberschatz, Database System Concepts) Tj
+T*
+ET
+endstream
+endobj
+65 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 67 0 R >> >> /Contents 66 0 R >>
+endobj
+66 0 obj
+<< /Length 77 >>
+stream
+BT
+/F1 11 Tf
+56 730 Td
+14 TL
+(Appendix) Tj
+T*
+(- Additional reading) Tj
+T*
+ET
+endstream
+endobj
+67 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 68
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000330 00000 n 
+0000000457 00000 n 
+0000000636 00000 n 
+0000000763 00000 n 
+0000000988 00000 n 
+0000001115 00000 n 
+0000001387 00000 n 
+0000001515 00000 n 
+0000001766 00000 n 
+0000001895 00000 n 
+0000002130 00000 n 
+0000002259 00000 n 
+0000002480 00000 n 
+0000002609 00000 n 
+0000002833 00000 n 
+0000002962 00000 n 
+0000003197 00000 n 
+0000003326 00000 n 
+0000003540 00000 n 
+0000003669 00000 n 
+0000003864 00000 n 
+0000003993 00000 n 
+0000004227 00000 n 
+0000004356 00000 n 
+0000004575 00000 n 
+0000004704 00000 n 
+0000004927 00000 n 
+0000005056 00000 n 
+0000005267 00000 n 
+0000005396 00000 n 
+0000005507 00000 n 
+0000005636 00000 n 
+0000005853 00000 n 
+0000005982 00000 n 
+0000006204 00000 n 
+0000006333 00000 n 
+0000006553 00000 n 
+0000006682 00000 n 
+0000006930 00000 n 
+0000007059 00000 n 
+0000007303 00000 n 
+0000007432 00000 n 
+0000007677 00000 n 
+0000007806 00000 n 
+0000008030 00000 n 
+0000008159 00000 n 
+0000008389 00000 n 
+0000008518 00000 n 
+0000008748 00000 n 
+0000008877 00000 n 
+0000009113 00000 n 
+0000009242 00000 n 
+0000009481 00000 n 
+0000009610 00000 n 
+0000009847 00000 n 
+0000009976 00000 n 
+0000010196 00000 n 
+0000010325 00000 n 
+0000010441 00000 n 
+0000010570 00000 n 
+0000010719 00000 n 
+0000010848 00000 n 
+0000010996 00000 n 
+0000011125 00000 n 
+0000011253 00000 n 
+trailer
+<< /Size 68 /Root 1 0 R >>
+startxref
+11324
+%%EOF

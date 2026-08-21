@@ -239,6 +239,32 @@ _COMPOSITE_BOUNDARY_RE = re.compile(
 )
 
 
+#: Leading list glyphs used by slide decks and lecture handouts. A bullet is
+#: typography, not content: the sentence "- A primary key uniquely identifies
+#: each row" is the same teaching sentence as its unbulleted twin. Left in
+#: place the glyph becomes the sentence's first token, which stops it reading
+#: as a definition and silently costs the document every bulleted concept.
+#:
+#: Only a glyph followed by whitespace is a bullet. That proviso keeps
+#: "-5 degrees", "--verbose" and hyphenated fragments intact.
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[\u2022\u2023\u25AA\u25CF\u25E6\u2043\u2219*\u00B7]|[-\u2010-\u2015](?=\s))\s*")
+
+
+def strip_bullet_prefix(line: str) -> str:
+    """Remove a leading list glyph, preserving the text after it.
+
+    Applied repeatedly so nested markers ("- - item") collapse, but never so
+    far that the line is emptied of content.
+    """
+    text = line
+    for _ in range(3):
+        stripped = _BULLET_PREFIX_RE.sub("", text, count=1)
+        if stripped == text:
+            break
+        text = stripped
+    return text if text.strip() else line
+
+
 def clean_source_line(line: str) -> str:
     """Remove metadata fragments while preserving adjacent educational text.
 
@@ -248,7 +274,7 @@ def clean_source_line(line: str) -> str:
     boundaries and only fragments that are independently boilerplate are
     removed. Metadata-only lines still clean to an empty string.
     """
-    source = line.strip()
+    source = strip_bullet_prefix(line.strip()).strip()
     if not source:
         return ""
     if not is_boilerplate_line(source):
