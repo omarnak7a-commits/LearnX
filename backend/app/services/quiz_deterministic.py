@@ -967,6 +967,40 @@ _UNBLANKABLE = frozenset(
 )
 
 
+def _blankable_terms(clause: str, concept: str) -> list[str]:
+    """Terms inside ``clause`` that may legitimately become the blank.
+
+    Shared by the writer and the planner's veto so the two cannot disagree:
+    a slot is only planned when a real blank exists, and the writer then finds
+    the same one. The blank is always a term copied verbatim from supported
+    text, so the missing content is explicitly backed by the document.
+    """
+    concept_tokens = content_tokens(concept)
+    candidates: list[str] = []
+    for match in re.finditer(r"\b[A-Z][A-Za-z0-9'\u2019\-]*(?:\s+[A-Z][A-Za-z0-9'\u2019\-]+)*\b", clause):
+        term = match.group(0).strip()
+        if 2 < len(term) <= 40:
+            candidates.append(term)
+    for match in re.finditer(r"\b[a-z][a-z\-]{5,}\b", clause):
+        candidates.append(match.group(0))
+
+    usable: list[str] = []
+    for term in candidates:
+        key = normalize_question_text(term)
+        if not key or key in _UNBLANKABLE:
+            continue
+        # Never blank the concept's own name: that is the definitional
+        # give-away shape.
+        if content_tokens(term) & concept_tokens:
+            continue
+        if len(content_tokens(term)) < 1:
+            continue
+        if len(re.compile(rf"\b{re.escape(term)}\b").findall(clause)) != 1:
+            continue
+        usable.append(term)
+    return usable
+
+
 def _fill_blank(blueprint: QuestionBlueprint) -> tuple[str, str] | None:
     """Blank one meaningful technical term inside a relational claim.
 
@@ -980,31 +1014,21 @@ def _fill_blank(blueprint: QuestionBlueprint) -> tuple[str, str] | None:
     """
     clause = re.sub(r"\s+", " ", blueprint.answer_clause or "").strip()
     if not clause or len(content_tokens(clause)) < 3:
-        return None
+        # A definitional target has no relational clause, because the document
+        # explains the concept rather than relating it to something else. That
+        # is not a reason to refuse a fill-blank: the evidence sentence is
+        # itself supported text, and blanking a term inside it asks the student
+        # to recall that term. Without this fallback the type was structurally
+        # impossible -- every target whose *skill* permits fill-blank
+        # (factual_recall, understanding) is exactly a target with no facet, so
+        # the two sets never intersected and no PDF ever produced one.
+        clause = re.sub(r"\s+", " ", blueprint.evidence or "").strip()
+        if not clause or len(content_tokens(clause)) < 4:
+            return None
 
-    concept_tokens = content_tokens(blueprint.concept)
     # Prefer a multi-word technical term, else a distinctive single word.
-    candidates: list[str] = []
-    for match in re.finditer(r"\b[A-Z][A-Za-z0-9'’\-]*(?:\s+[A-Z][A-Za-z0-9'’\-]+)*\b", clause):
-        term = match.group(0).strip()
-        if 2 < len(term) <= 40:
-            candidates.append(term)
-    for match in re.finditer(r"\b[a-z][a-z\-]{5,}\b", clause):
-        candidates.append(match.group(0))
-
-    for term in candidates:
-        key = normalize_question_text(term)
-        if not key or key in _UNBLANKABLE:
-            continue
-        # Never blank the concept's own name: that is the definitional
-        # give-away shape again.
-        if content_tokens(term) & concept_tokens:
-            continue
-        if len(content_tokens(term)) < 1:
-            continue
+    for term in _blankable_terms(clause, blueprint.concept):
         pattern = re.compile(rf"\b{re.escape(term)}\b")
-        if len(pattern.findall(clause)) != 1:
-            continue
         prompt_clause = pattern.sub("_____", clause, count=1)
         concept = _display(blueprint.concept, blueprint.evidence)
         prompt = f"Complete this statement about {concept}: {prompt_clause}."
@@ -1553,8 +1577,19 @@ def target_writable_types(target: Any, allowed_types: list[str]) -> list[str]:
             if _EQUATION.search(answer):
                 continue
         elif question_type == "fill-blank":
-            # Mirrors _fill_blank's requirements.
-            if not clause or len(content_tokens(clause)) < 3:
+            # Mirrors _fill_blank's requirements, including its fallback to the
+            # evidence sentence for definitional targets that carry no clause.
+            source_text = clause
+            if not source_text or len(content_tokens(source_text)) < 3:
+                source_text = re.sub(
+                    r"\s+", " ", getattr(target, "evidence", "") or ""
+                ).strip()
+                if not source_text or len(content_tokens(source_text)) < 4:
+                    continue
+            # The writer needs a blankable term that is not the concept's own
+            # name. Checking here keeps the planner from spending a slot the
+            # writer will decline.
+            if not _blankable_terms(source_text, getattr(target, "concept_name", "")):
                 continue
         writable.append(question_type)
     return writable
@@ -1573,14 +1608,13 @@ def writable_question_types(
     allowed = list(question_types)
     if len(_claim_pool(understanding)) < 4 and "mcq" in allowed and len(allowed) > 1:
         allowed = [value for value in allowed if value != "mcq"]
-    # True/false asserts a *relation* the document states, and fill-blank
-    # blanks a term inside that relation's clause, so both need an extracted
-    # facet. A document of bare definitions has none, and planning these types
-    # for it would only yield blueprints the writer silently drops.
+    # True/false asserts a *relation* the document states, so it needs an
+    # extracted facet. Fill-blank does not: it blanks a term inside supported
+    # text, and a definition sentence is supported text, so it stays available
+    # to a document of bare definitions.
     has_facets = any(concept.facets for concept in understanding.concepts)
     if not has_facets:
-        relational = {"true-false", "fill-blank"}
-        remaining = [value for value in allowed if value not in relational]
+        remaining = [value for value in allowed if value != "true-false"]
         if remaining:
             allowed = remaining
     return allowed

@@ -1497,7 +1497,9 @@ def validate_final_quiz(
             }:
                 reject(question, "correct answer is not among the options")
                 continue
-        if question.type == "fill-blank" and not is_valid_fill_blank(question.prompt):
+        if question.type == "fill-blank" and not is_valid_fill_blank(
+            question.prompt, question.correct_answer
+        ):
             reject(question, "fill-blank prompt has no usable blank")
             continue
         valid.append(question)

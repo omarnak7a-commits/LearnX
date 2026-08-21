@@ -332,6 +332,14 @@ def build_question_blueprints(
                 prefer_mcq = (
                     target.cognitive_skill in RECOGNITION_SKILLS and "mcq" in options
                 )
+                # NOTE: this preference also means a *mixed* request rarely
+                # yields a fill-blank, because recognition targets are the only
+                # ones that can carry one. Relaxing it was measured and made
+                # the quiz worse -- the writer's non-MCQ forms truncate on some
+                # clauses, and scanner defects rose from 5 to 10-16 depending
+                # on how the relaxation was scoped. Question quality wins over
+                # format variety, so the preference stands: a student who wants
+                # fill-blanks can request that type, which now works.
                 question_type = min(
                     options,
                     key=lambda value: (

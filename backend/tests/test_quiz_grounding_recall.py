@@ -582,3 +582,142 @@ def test_twelve_questions_are_spread_across_concepts() -> None:
         assert max(concepts.count(value) for value in set(concepts)) <= 3
         prompts = [question.prompt for question in result.questions]
         assert len(set(prompts)) == len(prompts)
+
+
+# --------------------------------------------------------------------------- #
+# Fill-blank was structurally impossible, not merely rare
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "cell-biology-ch3.pdf",
+        "calculus-limits-derivatives.pdf",
+        "operating-systems-scheduling.pdf",
+        "physics-newtonian-mechanics.pdf",
+    ],
+)
+def test_fill_blank_questions_can_be_produced_from_every_pdf(name: str) -> None:
+    """Regression: no PDF could ever yield a fill-blank question.
+
+    The type was gated on ``answer_clause``, which only facet-backed targets
+    carry, but the only cognitive skills allowed to be fill-blank
+    (factual_recall, understanding) are exactly the ones with no facet. The two
+    sets never intersected, so a fill-blank-only request raised
+    "AI quiz generation is unavailable" on documents full of definitions.
+    """
+    result = build(load_pdf(name), count=4, question_types=["fill-blank"])
+    assert len(result.questions) == 4
+    for question in result.questions:
+        assert question.type == "fill-blank"
+
+
+def test_a_fill_blank_answer_is_verbatim_supported_text() -> None:
+    """The missing content must be explicitly supported, not inferred."""
+    source = load_pdf("cell-biology-ch3.pdf")
+    result = build(source, count=4, question_types=["fill-blank"])
+    for question in result.questions:
+        assert question.correct_answer.strip()
+        # The blanked term is copied out of the document, so it must appear in
+        # the extracted text exactly.
+        assert question.correct_answer in source.text
+
+
+def test_a_fill_blank_prompt_has_exactly_one_blank() -> None:
+    import re
+
+    result = build(load_pdf("operating-systems-scheduling.pdf"), count=4,
+                   question_types=["fill-blank"])
+    for question in result.questions:
+        assert len(re.findall(r"_{3,}", question.prompt)) == 1
+
+
+def test_a_fill_blank_never_blanks_the_concepts_own_name() -> None:
+    """Blanking the subject of its own definition is a give-away, not a question."""
+    from app.services.quiz_scoring import content_tokens
+
+    result = build(load_pdf("cell-biology-ch3.pdf"), count=4, question_types=["fill-blank"])
+    by_id = {record.question_id: record for record in result.provenance}
+    for question in result.questions:
+        record = by_id[question.id]
+        assert not (content_tokens(question.correct_answer) & content_tokens(record.concept))
+
+
+def test_a_definition_only_document_still_supports_fill_blank() -> None:
+    """A document with no relational facets is the fill-blank case, not a blocker."""
+    from app.services.quiz_deterministic import writable_question_types
+    from app.services.quiz_pipeline import build_document_understanding, build_quiz_context
+
+    definitions = source_from_text(
+        "[Page 1]\n"
+        "A compiler is defined as a program that translates source code into machine code.\n"
+        "An interpreter is defined as a program that executes source code directly.\n"
+        "A linker is defined as a program that combines object files into one executable.\n"
+        "An assembler is defined as a program that converts assembly language into machine code.",
+        "definitions",
+    )
+    context = build_quiz_context(definitions)
+    understanding, _ = build_document_understanding(
+        NoProvider(), definitions, context, system_prompt=""
+    )
+    allowed = writable_question_types(ALL_TYPES, understanding)
+    assert "fill-blank" in allowed, (
+        "a document of pure definitions is exactly what fill-blank is for"
+    )
+
+
+def test_the_planner_veto_and_the_writer_agree_about_fill_blank() -> None:
+    """A planned fill-blank slot must not be silently dropped by the writer.
+
+    They previously used two copies of the term-selection rules; a planned slot
+    the writer then declined is how a quiz comes back short.
+    """
+    from app.services.quiz_blueprints import build_question_blueprints
+    from app.services.quiz_deterministic import (
+        SUPPORTED_SKILLS,
+        deterministic_candidates,
+        target_writable_types,
+        writable_question_types,
+    )
+    from app.services.quiz_knowledge_targets import build_knowledge_targets
+    from app.services.quiz_pipeline import build_document_understanding, build_quiz_context
+
+    source = load_pdf("cell-biology-ch3.pdf")
+    context = build_quiz_context(source)
+    understanding, _ = build_document_understanding(
+        NoProvider(), source, context, system_prompt=""
+    )
+    targets = build_knowledge_targets(understanding)
+    plans = build_question_blueprints(
+        targets,
+        count=8,
+        question_types=writable_question_types(["fill-blank"], understanding),
+        difficulty="medium",
+        seed=1,
+        allowed_skills=SUPPORTED_SKILLS,
+        type_filter=target_writable_types,
+    )
+    assert plans, "the planner should be able to plan fill-blank slots"
+    written = deterministic_candidates(plans, language="en", understanding=understanding)
+    produced = {item["blueprint_id"] for item in written}
+    missing = [plan.id for plan in plans if plan.id not in produced]
+    assert not missing, f"planner promised slots the writer could not write: {missing}"
+
+
+def test_a_mixed_request_still_varies_its_question_types() -> None:
+    """A mixed request must not collapse to a single format.
+
+    Fill-blank is deliberately NOT expected here. Recognition targets are the
+    only ones that can carry a fill-blank, and the planner prefers multiple
+    choice for those because the options make the discrimination explicit.
+    Relaxing that preference to force format variety was measured and made the
+    quiz worse -- scanner defects rose from 5 to between 10 and 16 depending on
+    how the relaxation was scoped, mostly answers truncating mid-phrase. A
+    student who specifically wants fill-blanks can request that type, which is
+    covered by the tests above.
+    """
+    for seed in SEEDS:
+        result = build(load_pdf("cell-biology-ch3.pdf"), count=12, seed=seed)
+        types = {question.type for question in result.questions}
+        assert len(types) >= 2, types
