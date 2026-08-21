@@ -242,6 +242,26 @@ class RejectionNote:
     cognitive_skill: str
     prompt: str
     reason: str
+    #: Pages the candidate's evidence came from, for diagnostics.
+    evidence_pages: tuple[int, ...] = ()
+    #: Quality score, where the candidate got far enough to be scored.
+    grounding_score: float | None = None
+    #: The distinction that matters when a quiz comes back short:
+    #:
+    #:  ``unsupported_by_pdf``      -- the document genuinely does not back
+    #:                                 this question; rejecting it is correct.
+    #:  ``validator_false_negative``-- the question is derived from the
+    #:                                 document but a validator rule could not
+    #:                                 see it. These are bugs, and the count
+    #:                                 of them is what tells us whether a
+    #:                                 shortfall is honest.
+    #:  ``not_selected``            -- valid, but the quiz had no room.
+    grounding_result: str = "unsupported_by_pdf"
+
+    @property
+    def question_id(self) -> str:
+        """Stable identifier for this rejection, for structured diagnostics."""
+        return self.blueprint_id or "-"
 
 
 @dataclass
@@ -524,7 +544,40 @@ def normalize_candidate(
         return None
 
 
-def _answer_is_supported(question: AIQuizQuestion, blueprint: QuestionBlueprint) -> bool:
+#: Linking verbs a paraphrase may add without asserting anything new. Each one
+#: needs a subject and an object to carry meaning, and both of those must still
+#: come from the document, so none of these can smuggle in an outside fact.
+#: Deliberately closed and tiny -- it is a fix for connective grammar, not a
+#: general tolerance for unsupported content.
+_PARAPHRASE_CONNECTIVES = frozenset(
+    {
+        "needs",
+        "need",
+        "needed",
+        "helps",
+        "help",
+        "allows",
+        "allow",
+        "makes",
+        "make",
+        "lets",
+        "gives",
+        "provides",
+        "keeps",
+        "takes",
+        "happens",
+        "occurs",
+        "means",
+    }
+)
+
+
+def _answer_is_supported(
+    question: AIQuizQuestion,
+    blueprint: QuestionBlueprint,
+    *,
+    document_vocab: set[str] | None = None,
+) -> bool:
     if question.type == "true-false":
         return True
     answer = normalize_question_text(question.correct_answer)
@@ -535,9 +588,36 @@ def _answer_is_supported(question: AIQuizQuestion, blueprint: QuestionBlueprint)
     evidence_tokens = content_tokens(blueprint.evidence)
     if not answer_tokens:
         return False
-    # Every substantive answer token must be present in verified evidence. For
-    # Arabic, permit only a close same-script stem, never an extra assertion.
-    unsupported = answer_tokens - evidence_tokens
+    # An answer may legitimately be phrased in the document's own words without
+    # copying one sentence: naming the concept the evidence is *about*, or
+    # linking it to a neighbouring concept the document also defines. Requiring
+    # every token to sit inside the single planned quote rejected exactly those
+    # paraphrases -- "it absorbs the light energy that photosynthesis needs" was
+    # refused because "photosynthesis" appears on the page but not in the
+    # chlorophyll sentence.
+    #
+    # So the token must come from somewhere the document actually says: the
+    # planned evidence, the concept being tested, or (when the caller supplies
+    # it) the document's own vocabulary. That is still a closed world -- an
+    # outside fact such as a wavelength in nanometres has no source anywhere in
+    # the text and is still refused.
+    supported_tokens = set(evidence_tokens)
+    supported_tokens |= content_tokens(blueprint.concept)
+    supported_tokens |= content_tokens(blueprint.knowledge_target)
+    if document_vocab:
+        supported_tokens |= document_vocab
+    unsupported = answer_tokens - supported_tokens
+    # A paraphrase carries connective words the source never used ("needs",
+    # "helps", "allows") purely to make the sentence read naturally. Demanding
+    # zero such tokens is the literal matching that produced false rejections.
+    #
+    # Allowing *any* single stray token was too blunt: it also admitted answers
+    # that tack a contrast clause about a different subject onto the end. So
+    # the residue is restricted to a closed list of linking verbs, which cannot
+    # by themselves introduce a fact -- they need a subject and an object, and
+    # those must still come from the document.
+    if unsupported and unsupported <= _PARAPHRASE_CONNECTIVES:
+        unsupported = set()
     for token in unsupported:
         if not re.search(r"[\u0600-\u06ff]", token):
             return False
@@ -663,6 +743,34 @@ def _matches_cognitive_shape(question: AIQuizQuestion, blueprint: QuestionBluepr
     return True
 
 
+#: Gate reasons that mean "the document does not back this", as opposed to
+#: "a validator rule could not recognise a legitimate transformation".
+#: Everything the writer produces is built *from* a planned knowledge target,
+#: so a shape/quality veto is a validator limitation, not missing material.
+_UNSUPPORTED_MARKERS = (
+    "not part of this quiz plan",
+    "outside the concept's",
+    "does not match the planned evidence",
+    "not verbatim in the cited page text",
+    "shares no content",
+    "not supported by the cited evidence",
+    "is not supported by the evidence",
+)
+
+
+def classify_grounding_result(reason: str) -> str:
+    """Separate genuine lack of support from a validator false negative.
+
+    A short quiz is only honest when the rejections were genuine. Counting
+    these separately is what makes that checkable instead of assumed.
+    """
+    lowered = reason.casefold()
+    for marker in _UNSUPPORTED_MARKERS:
+        if marker in lowered:
+            return "unsupported_by_pdf"
+    return "validator_false_negative"
+
+
 def _note(reasons: list[str] | None, reason: str) -> None:
     """Record why a gate rejected a candidate, when the caller is collecting."""
     if reasons is not None:
@@ -741,7 +849,7 @@ def normalize_blueprinted_candidate(
     ):
         _note(reasons, "explanation is not supported by the cited evidence")
         return None
-    if not _answer_is_supported(question, blueprint):
+    if not _answer_is_supported(question, blueprint, document_vocab=vocab):
         _note(reasons, "correct answer is not supported by the evidence")
         return None
     if not _matches_cognitive_shape(question, blueprint):
@@ -922,6 +1030,11 @@ def _score_and_filter(
                         cognitive_skill=record.blueprint.cognitive_skill,
                         prompt=record.question.prompt,
                         reason="; ".join(failed),
+                        evidence_pages=tuple(record.blueprint.pages),
+                        grounding_score=result.total,
+                        # It cleared grounding and was scored, so the document
+                        # does support it; it simply scored too low.
+                        grounding_result="validator_false_negative",
                     )
                 )
             continue
@@ -966,6 +1079,8 @@ def _collect_records(
                 cognitive_skill=blueprint.cognitive_skill if blueprint else "",
                 prompt=raw.prompt,
                 reason=reason,
+                evidence_pages=tuple(blueprint.pages) if blueprint else (),
+                grounding_result=classify_grounding_result(reason),
             )
         )
 
@@ -1058,6 +1173,9 @@ def _top_up_candidates(
     important = {
         concept.concept_id for concept in understanding.important_concepts()
     }
+    # Objectives already written and rejected. Re-planning one produces the
+    # same question and the same rejection, wasting a bounded retry round.
+    attempted_objectives: set[str] = set()
     for round_index in range(_MAX_TOPUP_ROUNDS):
         covered = {
             blueprint_by_id[candidate.blueprint_id].concept_id
@@ -1079,13 +1197,37 @@ def _top_up_candidates(
         ]
         if len(scored) >= count and not missing_concepts:
             break
-        targets = missing_concepts or uncovered or context.knowledge_targets
+        # Plan over uncovered concepts *first* but never only over them. Once
+        # every concept has one question, `uncovered` is empty -- and planning
+        # over an empty set re-proposed the objectives already in the pool, so
+        # the top-up added nothing and a 12-question request failed on a
+        # document that could support far more. Keeping the full target list as
+        # a tail lets later rounds plan a *second, different* knowledge target
+        # for an already-covered concept, which is new material rather than a
+        # repeat.
+        seen_target_ids = {target.target_id for target in missing_concepts}
+        targets = [
+            *missing_concepts,
+            *(
+                target
+                for target in context.knowledge_targets
+                if target.target_id not in seen_target_ids
+            ),
+        ]
         if not targets:
             break
         # Ask for more than the shortfall: some plans will not survive the
         # writer or the gates, and an exhausted pool is what caused the
         # shortfall in the first place.
-        wanted = max(count - len(scored), len(missing_concepts)) + 4
+        #
+        # `count`, not the shortfall, is what the planner is told. The planner
+        # relaxes its own quality preferences once it cannot reach the count it
+        # was given, so asking it for "2 more" made a tiny request that it
+        # satisfied by relaxing straight into tier-3 recall -- weak questions
+        # entered quizzes that were not even short. Asking for the full quiz
+        # size keeps the strict pass in charge; `exclude_objectives` is what
+        # actually makes the round return *new* material.
+        wanted = max(count, len(missing_concepts) + 4)
         planned = build_question_blueprints(
             targets,
             count=wanted,
@@ -1096,6 +1238,23 @@ def _top_up_candidates(
             seed=seed + 7919 * (round_index + 1),
             allowed_skills=DETERMINISTIC_SKILLS,
             type_filter=target_writable_types,
+            # Never re-plan an objective the pool already holds. Without this
+            # the top-up spent every round rewriting questions it already had,
+            # all of which were then dropped as duplicates -- so the quiz
+            # stayed short while untouched knowledge targets went unused.
+            # Exclude what the pool already holds AND what earlier rounds
+            # already tried and lost: regenerating a candidate that has
+            # already failed the gates burns a round and produces the
+            # identical rejection.
+            exclude_objectives={
+                candidate.objective_key for candidate in scored
+            }
+            | attempted_objectives,
+            # Only a genuinely short quiz may relax the quality preferences.
+            # When this round is merely widening an already-sufficient pool for
+            # coverage, relaxing would plan bare-recall slots that then compete
+            # with the strong questions already selected.
+            allow_relaxation=len(scored) < count,
         )
         if not planned:
             break
@@ -1126,6 +1285,8 @@ def _top_up_candidates(
             quality_threshold=quality_threshold,
             rejections=rejections,
         )
+        for blueprint in renumbered:
+            attempted_objectives.add(blueprint.objective_key)
         existing = {candidate.objective_key for candidate in scored}
         added = [
             candidate
@@ -1173,6 +1334,16 @@ def _quiz_telemetry(
         "questions_generated": generated,
         "questions_validated": validated,
         "questions_rejected": len(real_rejections),
+        "rejected_unsupported_by_pdf": sum(
+            1 for note in real_rejections
+            if note.grounding_result == "unsupported_by_pdf"
+        ),
+        # The number that matters when a quiz is short: questions the document
+        # *does* support but a validator rule could not recognise.
+        "rejected_validator_false_negative": sum(
+            1 for note in real_rejections
+            if note.grounding_result == "validator_false_negative"
+        ),
         "relaxed_gates": list(relaxed_gates),
     }
 
@@ -1191,7 +1362,7 @@ def _log_quiz_generation(
         "quiz generation funnel | PDF pages available: %s | Pages used: %s | "
         "Extracted text: %s | Concepts found: %s | Quiz requested: %s | "
         "Quiz plans created: %s | Questions generated: %s | Questions validated: %s | "
-        "Questions rejected: %s",
+        "Questions rejected: %s (unsupported by PDF: %s, validator false negatives: %s)",
         telemetry["pdf_pages_available"],
         pages_text,
         telemetry["extracted_text"],
@@ -1201,6 +1372,8 @@ def _log_quiz_generation(
         telemetry["questions_generated"],
         telemetry["questions_validated"],
         telemetry["questions_rejected"],
+        telemetry["rejected_unsupported_by_pdf"],
+        telemetry["rejected_validator_false_negative"],
     )
     if telemetry["relaxed_gates"]:
         logger.info(
@@ -1211,12 +1384,16 @@ def _log_quiz_generation(
         if note.stage == "diversity_selection":
             continue
         logger.info(
-            "quiz question rejected | stage=%s | concept=%s | skill=%s | "
-            "blueprint=%s | reason=%s | prompt=%s",
-            note.stage,
+            "quiz question rejected | question_id=%s | concept=%s | "
+            "evidence_pages=%s | grounding_result=%s | grounding_score=%s | "
+            "stage=%s | skill=%s | rejection_reason=%s | prompt=%s",
+            note.question_id,
             note.concept_id or "-",
+            list(note.evidence_pages) or "-",
+            note.grounding_result,
+            f"{note.grounding_score:.2f}" if note.grounding_score is not None else "-",
+            note.stage,
             note.cognitive_skill or "-",
-            note.blueprint_id or "-",
             note.reason,
             (note.prompt or "")[:120],
         )
@@ -1264,6 +1441,9 @@ def validate_final_quiz(
                 cognitive_skill=record.cognitive_skill if record else "",
                 prompt=question.prompt,
                 reason=reason,
+                evidence_pages=tuple(question.source_pages),
+                grounding_score=record.quality_score if record else None,
+                grounding_result=classify_grounding_result(reason),
             )
         )
 
@@ -1552,6 +1732,9 @@ def generate_quiz(
                         f"valid (score {candidate.score:.2f}) but not selected: "
                         "concept/skill already covered or quiz full"
                     ),
+                    evidence_pages=tuple(candidate.question.source_pages),
+                    grounding_score=candidate.score,
+                    grounding_result="not_selected",
                 )
             )
     by_id = {candidate.question.id: candidate for candidate in scored}

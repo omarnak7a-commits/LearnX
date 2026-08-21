@@ -15,6 +15,7 @@ quota.
 from __future__ import annotations
 
 import random
+from collections.abc import Collection
 from typing import Callable
 from dataclasses import dataclass
 
@@ -181,6 +182,8 @@ def build_question_blueprints(
     seed: int,
     allowed_skills: frozenset[str] | None = None,
     type_filter: Callable[[KnowledgeTarget, list[str]], list[str]] | None = None,
+    exclude_objectives: Collection[str] = (),
+    allow_relaxation: bool = True,
 ) -> list[QuestionBlueprint]:
     """Plan a slightly larger-than-needed, concept-diverse assessment.
 
@@ -205,6 +208,18 @@ def build_question_blueprints(
     clauses cannot be phrased as a true/false assertion or carry a meaningful
     blank; without the veto the planner would spend a slot on a question the
     writer then drops, and the quiz would come back short.
+
+    ``exclude_objectives`` names semantic objectives a caller has already
+    filled. A top-up round needs this: without it the planner happily re-plans
+    the slots the quiz already contains, every candidate is discarded as a
+    duplicate, and the quiz stays short even though the document has plenty of
+    untouched knowledge targets.
+
+    ``allow_relaxation`` controls whether the quality preferences may be
+    dropped to reach ``count``. A caller that is merely widening an
+    already-sufficient pool must pass ``False``: with objectives excluded the
+    planner runs out of strong targets quickly, and relaxing there would add
+    bare-recall slots to a quiz that was never short.
     """
     allowed_types = list(dict.fromkeys(question_types))
     if not allowed_types or not targets:
@@ -224,7 +239,7 @@ def build_question_blueprints(
         return []
 
     selected: list[tuple[KnowledgeTarget, str]] = []
-    objectives: set[str] = set()
+    objectives: set[str] = set(exclude_objectives)
     # Recognition questions are capped so a quiz cannot silently become a list
     # of "what is X?" items. The cap is a *preference for reasoning*, not a
     # prohibition: when a document genuinely supports few reasoning targets,
@@ -250,12 +265,6 @@ def build_question_blueprints(
         # A purely definitional document supports nothing else; a recall quiz is
         # the honest output rather than no quiz at all.
         recognition_budget = count
-    recognition_selected = 0
-    concept_counts: dict[str, int] = {}
-    skill_counts: dict[str, int] = {}
-    type_counts: dict[str, int] = {}
-    topic_counts: dict[str, int] = {}
-    page_counts: dict[int, int] = {}
     remaining = list(usable)
     # How many distinct concepts this document can actually cover; breadth is
     # only enforced until each of them has been given a slot.
@@ -274,116 +283,177 @@ def build_question_blueprints(
     # and left a whole concept unexamined; catching it here lets the slot go to
     # a concept that still has none.
     planned_pairs: set[tuple[str, ...]] = set()
+    recognition_selected = 0
+    concept_counts: dict[str, int] = {}
+    skill_counts: dict[str, int] = {}
+    type_counts: dict[str, int] = {}
+    topic_counts: dict[str, int] = {}
+    page_counts: dict[int, int] = {}
 
-    while remaining and len(selected) < desired:
-        best_index = -1
-        best_value = float("-inf")
-        best_type = ""
-        for index, target in enumerate(remaining):
-            objective = semantic_objective_key(
-                target.concept_id, target.target_id, target.cognitive_skill
-            )
-            if objective in objectives:
-                continue
-            if _comparison_pair_key(target) in planned_pairs:
-                continue
-            options = _types_for(target, allowed_types, type_filter)
-            if not options:
-                continue
-            # A recognition target reads better as multiple choice than as a
-            # bare "What is X?": the options make the discrimination explicit
-            # and give the student something to reason against, whereas the
-            # written form is a vocabulary prompt. This is a general
-            # question-type preference for recognition skills, not a rule about
-            # any particular concept, and it applies only when the writer has
-            # confirmed it can build the MCQ (type_filter already removed types
-            # it cannot deliver, including MCQs with too few good distractors).
-            # Where no MCQ is available -- typically a very small document --
-            # the clean short-answer recognition question stands.
-            prefer_mcq = (
-                target.cognitive_skill in RECOGNITION_SKILLS and "mcq" in options
-            )
-            question_type = min(
-                options,
-                key=lambda value: (
-                    value != "mcq" if prefer_mcq else False,
-                    type_counts.get(value, 0),
-                    allowed_types.index(value),
-                ),
-            )
+    def plan_pass(
+        *,
+        enforce_recognition_cap: bool,
+        enforce_recall_last_resort: bool,
+        stop_at: int | None = None,
+    ) -> None:
+        """Fill remaining slots under the given quality preferences.
 
-            tier = target_tier(target)
-            is_recognition = target.cognitive_skill in RECOGNITION_SKILLS
-            # Enforce the recognition cap during planning, so reasoning slots
-            # are not crowded out by easy definitional ones.
-            if is_recognition and recognition_selected >= recognition_budget:
-                continue
-            # Recall is a last resort. While this concept still has a richer
-            # target available, never spend its slot on terminology: the
-            # document explaining how something works makes "what is it?" the
-            # weaker question by definition.
-            if tier == TIER_RECALL and richer_available.get(target.concept_id):
-                continue
+        Re-entrant: it appends to the enclosing ``selected`` list and keeps the
+        objective/pair bookkeeping, so a relaxed pass tops up the strict pass's
+        result instead of replacing it.
+        """
+        nonlocal recognition_selected
+        limit = desired if stop_at is None else min(stop_at, desired)
+        while remaining and len(selected) < limit:
+            best_index = -1
+            best_value = float("-inf")
+            best_type = ""
+            for index, target in enumerate(remaining):
+                objective = semantic_objective_key(
+                    target.concept_id, target.target_id, target.cognitive_skill
+                )
+                if objective in objectives:
+                    continue
+                if _comparison_pair_key(target) in planned_pairs:
+                    continue
+                options = _types_for(target, allowed_types, type_filter)
+                if not options:
+                    continue
+                # A recognition target reads better as multiple choice than as a
+                # bare "What is X?": the options make the discrimination explicit
+                # and give the student something to reason against, whereas the
+                # written form is a vocabulary prompt. This is a general
+                # question-type preference for recognition skills, not a rule about
+                # any particular concept, and it applies only when the writer has
+                # confirmed it can build the MCQ (type_filter already removed types
+                # it cannot deliver, including MCQs with too few good distractors).
+                # Where no MCQ is available -- typically a very small document --
+                # the clean short-answer recognition question stands.
+                prefer_mcq = (
+                    target.cognitive_skill in RECOGNITION_SKILLS and "mcq" in options
+                )
+                question_type = min(
+                    options,
+                    key=lambda value: (
+                        value != "mcq" if prefer_mcq else False,
+                        type_counts.get(value, 0),
+                        allowed_types.index(value),
+                    ),
+                )
 
-            value = target.importance * 1.6
-            # Tier dominates skill ordering: a stated relationship is worth far
-            # more than a definition of the same concept, so a concept with a
-            # richer target never gets asked "what is X?".
-            value += {1: 1.10, 2: 0.35, 3: 0.0}[tier]
-            # Concept breadth is the strongest diversity term: a second slot on
-            # an already-covered concept is worth much less than a first slot
-            # on a new one.
-            # Breadth is a near-hard rule, not a tiebreaker. Every important
-            # concept earns a slot before any concept earns a second, so an
-            # eight-question quiz covers eight concepts when the document has
-            # eight. The penalty must exceed every other bonus combined,
-            # otherwise a strong concept's second facet-backed target outbids an
-            # untouched concept's first and coverage silently collapses.
-            already = concept_counts.get(target.concept_id, 0)
-            if already and len(concept_counts) < concepts_available:
-                value -= 3.0 * already
-            skill_rank = (
-                PREFERRED_SKILL_ORDER.index(target.cognitive_skill)
-                if target.cognitive_skill in PREFERRED_SKILL_ORDER
-                else len(PREFERRED_SKILL_ORDER)
+                tier = target_tier(target)
+                is_recognition = target.cognitive_skill in RECOGNITION_SKILLS
+                # Enforce the recognition cap during planning, so reasoning slots
+                # are not crowded out by easy definitional ones.
+                if (
+                    enforce_recognition_cap
+                    and is_recognition
+                    and recognition_selected >= recognition_budget
+                ):
+                    continue
+                # Recall is a last resort. While this concept still has a richer
+                # target available, never spend its slot on terminology: the
+                # document explaining how something works makes "what is it?" the
+                # weaker question by definition.
+                if (
+                    enforce_recall_last_resort
+                    and tier == TIER_RECALL
+                    and richer_available.get(target.concept_id)
+                ):
+                    continue
+
+                value = target.importance * 1.6
+                # Tier dominates skill ordering: a stated relationship is worth far
+                # more than a definition of the same concept, so a concept with a
+                # richer target never gets asked "what is X?".
+                value += {1: 1.10, 2: 0.35, 3: 0.0}[tier]
+                # Concept breadth is the strongest diversity term: a second slot on
+                # an already-covered concept is worth much less than a first slot
+                # on a new one.
+                # Breadth is a near-hard rule, not a tiebreaker. Every important
+                # concept earns a slot before any concept earns a second, so an
+                # eight-question quiz covers eight concepts when the document has
+                # eight. The penalty must exceed every other bonus combined,
+                # otherwise a strong concept's second facet-backed target outbids an
+                # untouched concept's first and coverage silently collapses.
+                already = concept_counts.get(target.concept_id, 0)
+                if already and len(concept_counts) < concepts_available:
+                    value -= 3.0 * already
+                skill_rank = (
+                    PREFERRED_SKILL_ORDER.index(target.cognitive_skill)
+                    if target.cognitive_skill in PREFERRED_SKILL_ORDER
+                    else len(PREFERRED_SKILL_ORDER)
+                )
+                value += 0.30 * (1.0 - skill_rank / max(1, len(PREFERRED_SKILL_ORDER)))
+                # A target backed by a relational claim the document actually makes
+                # is worth more than a definitional one: it can carry a real "why"
+                # or "how" question rather than a recognition template.
+                if target.facet_kind:
+                    value += 0.55
+                value += 0.45 / (1 + skill_counts.get(target.cognitive_skill, 0))
+                value += 0.20 / (1 + type_counts.get(question_type, 0))
+                value += 0.18 / (1 + topic_counts.get(normalize_question_text(target.topic), 0))
+                value += sum(0.06 / (1 + page_counts.get(page, 0)) for page in target.pages[:2])
+                # Seeded jitter must be large enough to reorder genuinely
+                # comparable targets, so different seeds give different valid
+                # quizzes, but small enough that it cannot promote a weak target
+                # over a clearly stronger one.
+                value += rng.random() * 0.22
+                if value > best_value:
+                    best_value, best_index, best_type = value, index, question_type
+
+            if best_index < 0:
+                break
+            target = remaining.pop(best_index)
+            if target.cognitive_skill in RECOGNITION_SKILLS:
+                recognition_selected += 1
+            objectives.add(
+                semantic_objective_key(target.concept_id, target.target_id, target.cognitive_skill)
             )
-            value += 0.30 * (1.0 - skill_rank / max(1, len(PREFERRED_SKILL_ORDER)))
-            # A target backed by a relational claim the document actually makes
-            # is worth more than a definitional one: it can carry a real "why"
-            # or "how" question rather than a recognition template.
-            if target.facet_kind:
-                value += 0.55
-            value += 0.45 / (1 + skill_counts.get(target.cognitive_skill, 0))
-            value += 0.20 / (1 + type_counts.get(question_type, 0))
-            value += 0.18 / (1 + topic_counts.get(normalize_question_text(target.topic), 0))
-            value += sum(0.06 / (1 + page_counts.get(page, 0)) for page in target.pages[:2])
-            # Seeded jitter must be large enough to reorder genuinely
-            # comparable targets, so different seeds give different valid
-            # quizzes, but small enough that it cannot promote a weak target
-            # over a clearly stronger one.
-            value += rng.random() * 0.22
-            if value > best_value:
-                best_value, best_index, best_type = value, index, question_type
+            pair_key = _comparison_pair_key(target)
+            if pair_key:
+                planned_pairs.add(pair_key)
+            selected.append((target, best_type))
+            concept_counts[target.concept_id] = concept_counts.get(target.concept_id, 0) + 1
+            skill_counts[target.cognitive_skill] = skill_counts.get(target.cognitive_skill, 0) + 1
+            type_counts[best_type] = type_counts.get(best_type, 0) + 1
+            topic_key = normalize_question_text(target.topic)
+            topic_counts[topic_key] = topic_counts.get(topic_key, 0) + 1
+            for page in target.pages:
+                page_counts[page] = page_counts.get(page, 0) + 1
 
-        if best_index < 0:
-            break
-        target = remaining.pop(best_index)
-        if target.cognitive_skill in RECOGNITION_SKILLS:
-            recognition_selected += 1
-        objectives.add(
-            semantic_objective_key(target.concept_id, target.target_id, target.cognitive_skill)
+    # Strict pass: every quality preference in force. This is what a document
+    # with plenty of reasoning material yields, and it is the normal case.
+    plan_pass(enforce_recognition_cap=True, enforce_recall_last_resort=True)
+
+    # The two rules above are *preferences about which question is better*, not
+    # judgements about whether a question is supported. Enforcing them
+    # unconditionally meant a document with 19 usable knowledge targets could
+    # plan only 13 slots, so a request for more questions failed with "not
+    # enough material" while genuinely grounded targets sat unused. When the
+    # strict pass cannot fill the quiz, relax them in order of least
+    # educational harm -- the recall-last-resort rule first (it only reorders
+    # which target of an already-covered concept is used), then the recognition
+    # cap. Both relaxed passes still plan only supported targets; no grounding
+    # rule is touched.
+    # The strict pass normally overshoots `count` (it plans up to `desired`) so
+    # the writer and the gates have spare material to lose. Relaxing must
+    # therefore trigger on a genuine shortfall against `count`, and each
+    # relaxed pass must stop as soon as the quiz is merely fillable -- planning
+    # on to `desired` would append weaker recall slots that then compete with,
+    # and displace, the strong ones the strict pass already found.
+    if allow_relaxation and len(selected) < count:
+        plan_pass(
+            enforce_recognition_cap=True,
+            enforce_recall_last_resort=False,
+            stop_at=count,
         )
-        pair_key = _comparison_pair_key(target)
-        if pair_key:
-            planned_pairs.add(pair_key)
-        selected.append((target, best_type))
-        concept_counts[target.concept_id] = concept_counts.get(target.concept_id, 0) + 1
-        skill_counts[target.cognitive_skill] = skill_counts.get(target.cognitive_skill, 0) + 1
-        type_counts[best_type] = type_counts.get(best_type, 0) + 1
-        topic_key = normalize_question_text(target.topic)
-        topic_counts[topic_key] = topic_counts.get(topic_key, 0) + 1
-        for page in target.pages:
-            page_counts[page] = page_counts.get(page, 0) + 1
+    if allow_relaxation and len(selected) < count:
+        plan_pass(
+            enforce_recognition_cap=False,
+            enforce_recall_last_resort=False,
+            stop_at=count,
+        )
 
     return [
         QuestionBlueprint(
