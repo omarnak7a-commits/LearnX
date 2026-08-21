@@ -124,6 +124,18 @@ class AIQuizRequest(AISourceRequest):
     )
     difficulty: Difficulty | Literal["mixed"] = "mixed"
     kind: Literal["practice", "exam"] = "practice"
+    #: Which part of the PDF the quiz may draw on.
+    #:
+    #:  ``document``   -- the whole uploaded PDF (the default, and what
+    #:                    "make me an exam from this PDF" means).
+    #:  ``pages-read`` -- only the pages the student actually opened, for the
+    #:                    deliberate "quiz me on what I've read" flow.
+    #:
+    #: Defaulting to ``document`` matters: sourcing a whole-PDF quiz from
+    #: ``pagesRead`` is how a 20-page textbook was reduced to its title page,
+    #: which yielded zero concepts and the misleading "not enough material"
+    #: error even though the document was full of teachable content.
+    scope: Literal["document", "pages-read"] = "document"
     allowed_pages: list[int] | None = Field(default=None, min_length=1, max_length=300)
     # Optional determinism + history knobs (backward compatible; the frontend
     # does not need to send them). A seed makes selection/randomization
@@ -131,6 +143,10 @@ class AIQuizRequest(AISourceRequest):
     # backend also merges persisted analysis questions as additional history.
     seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
     previous_questions: list[str] = Field(default_factory=list, max_length=100)
+    #: Return the stage-by-stage generation funnel alongside the quiz. Counts
+    #: and rejection reasons only -- never prompts, credentials or provider
+    #: configuration.
+    diagnostics: bool = False
 
 
 class AIQuizQuestion(AIBaseModel):
@@ -158,8 +174,28 @@ class AIQuizResult(AIBaseModel):
     questions: list[AIQuizQuestion] = Field(min_length=1, max_length=20)
 
 
+class AIQuizDiagnostics(BaseModel):
+    """Where questions were lost, stage by stage.
+
+    Exists because "could only verify 1" is unactionable on its own: it cannot
+    distinguish a thin PDF from a page-scoping mistake from an over-strict
+    validator. Contains counts and rejection reasons only.
+    """
+
+    requested: int
+    extracted_pages: int
+    pages_used: int
+    concepts: int
+    evidence_items: int
+    plans: int
+    candidates_generated: int
+    accepted: int
+    rejected: int
+    rejections: dict[str, int] = Field(default_factory=dict)
+
+
 class AIQuizResponse(AIProviderMetadata, AIQuizResult):
-    pass
+    diagnostics: AIQuizDiagnostics | None = None
 
 
 class AIFlashcardsRequest(AISourceRequest):

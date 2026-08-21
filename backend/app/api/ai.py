@@ -7,6 +7,8 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -30,6 +32,7 @@ from app.schemas.ai import (
     AIMindMapRequest,
     AIMindMapResponse,
     AIMindMapResult,
+    AIQuizDiagnostics,
     AIQuizRequest,
     AIQuizResponse,
     AISourceRequest,
@@ -62,7 +65,11 @@ from app.services.ai_service import (
     AIUnavailableError,
     get_ai_service,
 )
-from app.services.quiz_pipeline import QuizMaterialError, generate_quiz
+from app.services.quiz_pipeline import (
+    QuizContentError,
+    QuizMaterialError,
+    generate_quiz,
+)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -142,7 +149,7 @@ def _as_http_exception(exc: Exception) -> HTTPException:
     # A document that simply cannot support the requested number of questions
     # is not an outage: the student needs to know it was the PDF, not the
     # service, and that asking for fewer questions will work.
-    if isinstance(exc, QuizMaterialError):
+    if isinstance(exc, (QuizMaterialError, QuizContentError)):
         return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
     if isinstance(exc, (AIDocumentUnsupportedError, AIContentBlockedError)):
         return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
@@ -299,7 +306,33 @@ def topics(
         raise _as_http_exception(exc) from exc
 
 
-@router.post("/quiz", response_model=AIQuizResponse)
+def _quiz_diagnostics(result: Any) -> AIQuizDiagnostics:
+    """Summarise the generation funnel for debugging.
+
+    Counts and rejection-stage names only. No prompts, no document text, no
+    provider configuration, and nothing derived from a credential.
+    """
+    telemetry = result.telemetry or {}
+    rejections = dict(telemetry.get("rejections_by_stage") or {})
+    rejections["unsupported_by_pdf"] = telemetry.get("rejected_unsupported_by_pdf", 0)
+    rejections["validator_false_negative"] = telemetry.get(
+        "rejected_validator_false_negative", 0
+    )
+    return AIQuizDiagnostics(
+        requested=telemetry.get("quiz_requested", 0),
+        extracted_pages=telemetry.get("pdf_pages_available", 0),
+        pages_used=len(telemetry.get("pages_used") or []),
+        concepts=telemetry.get("concepts_total", telemetry.get("concepts_found", 0)),
+        evidence_items=telemetry.get("evidence_items", 0),
+        plans=telemetry.get("quiz_plans_created", 0),
+        candidates_generated=telemetry.get("candidates_generated", 0),
+        accepted=len(result.questions),
+        rejected=telemetry.get("questions_rejected", 0),
+        rejections={key: value for key, value in rejections.items() if value},
+    )
+
+
+@router.post("/quiz", response_model=AIQuizResponse, response_model_exclude_none=True)
 def quiz(
     payload: AIQuizRequest,
     user: User = Depends(get_current_user),
@@ -308,12 +341,18 @@ def quiz(
     service: AIService = Depends(get_ai_service),
 ) -> AIQuizResponse:
     try:
+        # A page restriction applies only when the caller explicitly asked to be
+        # quizzed on the pages they have read. A quiz "from this PDF" must see
+        # the whole PDF: silently narrowing it to pagesRead turned a 20-page
+        # textbook into its title page, which produced no concepts at all and
+        # the misleading "this PDF does not contain enough material" error.
+        restrict_pages = payload.allowed_pages if payload.scope == "pages-read" else None
         file, source = _source_for(
             payload,
             db=db,
             user=user,
             settings=settings,
-            allowed_pages=payload.allowed_pages,
+            allowed_pages=restrict_pages,
         )
         assert source is not None
         language = _resolve_request_language(payload, user)
@@ -340,12 +379,21 @@ def quiz(
             previous_questions=previous_questions,
             system_prompt=_system_prompt(language, structured=True),
         )
-        return AIQuizResponse(
+        response = AIQuizResponse(
             questions=result.questions,
             provider=result.provider,
             model=result.model,
             fallback_used=result.fallback_used,
+            diagnostics=_quiz_diagnostics(result) if payload.diagnostics else None,
         )
+        if not payload.diagnostics:
+            # Keep the wire contract byte-identical for normal callers: the
+            # frontend asserts on the exact key set, and an always-present
+            # null would be a silent API change for every existing client.
+            return JSONResponse(
+                content=jsonable_encoder(response, exclude={"diagnostics"})
+            )
+        return response
     except (AIDocumentError, AIServiceError) as exc:
         raise _as_http_exception(exc) from exc
 

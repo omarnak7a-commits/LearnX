@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import random
 import re
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -279,6 +280,17 @@ class QuizGenerationResult:
     relaxed_gates: tuple[str, ...] = ()
     #: Stage-by-stage funnel, emitted to the log and kept for tests.
     telemetry: dict[str, Any] = field(default_factory=dict)
+
+
+class QuizContentError(AIUnavailableError):
+    """The material provided cannot support a quiz.
+
+    Separate from a provider outage. Both used to surface as "AI is
+    temporarily unavailable, please try again shortly", which is wrong twice
+    over: retrying will not help, and it hides that the request may simply
+    have been scoped to a title page. Subclasses AIUnavailableError so every
+    existing handler keeps working.
+    """
 
 
 class QuizMaterialError(AIUnavailableError):
@@ -1313,6 +1325,7 @@ def _quiz_telemetry(
     validated: int,
     rejections: list[RejectionNote],
     relaxed_gates: tuple[str, ...],
+    candidates_generated: int = 0,
 ) -> dict[str, Any]:
     """The stage-by-stage funnel, as data so tests can assert on it."""
     pages_used = sorted(context.included_pages)
@@ -1329,6 +1342,13 @@ def _quiz_telemetry(
         "pages_used": pages_used,
         "extracted_text": "available" if context.units else "missing",
         "concepts_found": len(list(understanding.important_concepts())),
+        # Every concept the study map holds, and every verbatim span behind
+        # them. A quiz that comes back short is only explainable next to these.
+        "concepts_total": len(understanding.concepts),
+        "evidence_items": sum(
+            len(concept.evidence) for concept in understanding.concepts
+        ),
+        "candidates_generated": candidates_generated,
         "quiz_requested": requested,
         "quiz_plans_created": len(blueprints),
         "questions_generated": generated,
@@ -1345,6 +1365,9 @@ def _quiz_telemetry(
             if note.grounding_result == "validator_false_negative"
         ),
         "relaxed_gates": list(relaxed_gates),
+        "rejections_by_stage": dict(
+            Counter(note.stage for note in real_rejections)
+        ),
     }
 
 
@@ -1507,6 +1530,21 @@ def validate_final_quiz(
     return valid, notes
 
 
+def _scope_note(source: AIDocumentSource, context: QuizContext) -> str:
+    """Describe how much of the document was actually examined.
+
+    A failure message must distinguish "this PDF has nothing to teach" from
+    "we only looked at one page of it".
+    """
+    used = len(context.included_pages)
+    total = max(source.page_count, used)
+    if used and total and used < total:
+        pages = ", ".join(str(page) for page in sorted(context.included_pages)[:8])
+        more = "..." if used > 8 else ""
+        return f" (only page(s) {pages}{more} of {total} were used)"
+    return ""
+
+
 def generate_quiz(
     service: Any,
     source: AIDocumentSource,
@@ -1531,9 +1569,16 @@ def generate_quiz(
     probing a different invariant; every caller in the application leaves it on.
     """
     context = build_quiz_context(source)
+    # When the request was restricted to a handful of pages, say so. Blaming
+    # "the PDF" for having no content is actively misleading if only its title
+    # page was ever examined -- that was the reported bug, and the message sent
+    # students looking for a fault in a perfectly good document.
+    scope_note = _scope_note(source, context)
     if not has_educational_content(context.units):
-        raise AIUnavailableError(
-            "The source contains no educational content to build questions from."
+        raise QuizContentError(
+            "No teachable content was found in the material provided"
+            f"{scope_note}. Scanned pages may contain only a title, contents "
+            "list, or images."
         )
 
     shared_system_prompt = f"{system_prompt}\n\n{quiz_language_guidance(language)}"
@@ -1544,8 +1589,9 @@ def generate_quiz(
     )
     context.understanding = understanding
     if not understanding.is_usable:
-        raise AIUnavailableError(
-            "The document does not contain enough explained content to build a meaningful quiz."
+        raise QuizContentError(
+            "Not enough explained content was found in the material provided"
+            f"{scope_note} to build a meaningful quiz."
         )
 
     # --- Stage 2: knowledge targets and the quiz blueprint ----------------- #
@@ -1789,6 +1835,11 @@ def generate_quiz(
         validated=len(questions),
         rejections=rejections,
         relaxed_gates=outcome.relaxed_gates,
+        # Everything the writers produced across the initial pass and every
+        # top-up round, so "generated" can be compared against "accepted".
+        candidates_generated=len(scored) + len(
+            [n for n in rejections if n.stage != "diversity_selection"]
+        ),
     )
     _log_quiz_generation(telemetry, rejections)
 
@@ -1797,7 +1848,7 @@ def generate_quiz(
     # to prevent, and padding the difference would break grounding.
     if require_exact_count and len(questions) < count:
         raise QuizMaterialError(
-            _insufficient_material_message(count, len(questions)),
+            _insufficient_material_message(count, len(questions)) + scope_note,
             requested=count,
             available=len(questions),
         )

@@ -65,7 +65,11 @@ interface FileVaultContextValue {
   setCurrentPage: (id: string, page: number) => Promise<void>
   addStudyTime: (id: string, seconds: number) => Promise<void>
   getPdfDocument: (id: string) => Promise<PDFDocumentProxy | null>
-  generatePracticeQuiz: (id: string, count?: number) => Promise<VaultQuizQuestion[]>
+  generatePracticeQuiz: (
+    id: string,
+    count?: number,
+    scope?: QuizSourceScope
+  ) => Promise<VaultQuizQuestion[]>
   generateExam: (
     id: string,
     count: number,
@@ -80,6 +84,17 @@ interface FileVaultContextValue {
     coveragePages: number[]
   ) => Promise<void>
 }
+
+/**
+ * What a generated quiz is allowed to draw on.
+ *
+ * 'document'   — the whole uploaded PDF. This is the default: "make me an exam
+ *                from this PDF" means the PDF, not the fraction of it the
+ *                student has scrolled past.
+ * 'pages-read' — only the pages the student actually opened, for a deliberate
+ *                "quiz me on what I've read so far" request.
+ */
+export type QuizSourceScope = 'document' | 'pages-read'
 
 /** Coalescing window for backend progress writes. */
 const REMOTE_SYNC_DEBOUNCE_MS = 1200
@@ -500,13 +515,24 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
   )
 
   const generatePracticeQuiz = useCallback(
-    async (id: string, count = 6): Promise<VaultQuizQuestion[]> => {
+    async (
+      id: string,
+      count = 6,
+      scope: QuizSourceScope = 'document'
+    ): Promise<VaultQuizQuestion[]> => {
       const file = files.find((f) => f.id === id)
       if (!file || !file.analysis) return []
-      // Practice quizzes ONLY draw from pages already viewed — never
-      // generate questions from unread sections, per the spec.
-      const allowedPages = new Set(file.pagesRead)
-      if (allowedPages.size === 0) return []
+      // `scope` decides what the quiz may draw on. 'pages-read' restricts it to
+      // the pages the student actually opened; 'document' uses the whole PDF.
+      //
+      // The default is the whole document. Restricting every practice quiz to
+      // pagesRead meant a student who had opened one page of a twenty-page
+      // textbook was quizzed on the title page alone — which contains no
+      // teachable content, so the backend correctly found zero concepts and
+      // reported "this PDF does not contain enough clearly explained
+      // material". The document was fine; it was never being sent.
+      const readPages = [...new Set(file.pagesRead)].sort((a, b) => a - b)
+      if (scope === 'pages-read' && readPages.length === 0) return []
       // No client-side fallback. The backend understands the document before
       // it writes anything, and when it cannot verify enough content it
       // returns a controlled "unavailable" state. Substituting the old
@@ -517,7 +543,8 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
         fileId: id,
         count,
         kind: 'practice',
-        allowedPages: [...allowedPages],
+        scope,
+        ...(scope === 'pages-read' ? { allowedPages: readPages } : {}),
       })
       return generated.questions
     },
@@ -532,7 +559,10 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
     ): Promise<VaultQuizQuestion[]> => {
       const file = files.find((f) => f.id === id)
       if (!file || !file.analysis || !isFullyRead(file)) return []
-      const pageNumbers = Array.from({ length: file.pageCount }, (_, i) => i + 1)
+      // An exam covers the whole document. Saying so with `scope` is more
+      // robust than enumerating page numbers from a possibly stale pageCount:
+      // if that count were ever short, the exam would silently be sourced from
+      // a truncated document.
       // As with the practice quiz: an exam is either genuinely grounded in the
       // backend's semantic study map or it is not offered at all.
       const generated = await aiApi.quiz({
@@ -540,7 +570,7 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
         count,
         questionTypes: types,
         kind: 'exam',
-        allowedPages: pageNumbers,
+        scope: 'document',
       })
       return generated.questions
     },

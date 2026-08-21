@@ -98,6 +98,8 @@ export const aiApi = {
       questionTypes?: VaultQuestionType[]
       difficulty?: 'easy' | 'medium' | 'hard' | 'mixed'
       kind?: 'practice' | 'exam'
+      /** Which part of the PDF to source from. Defaults to the whole document. */
+      scope?: 'document' | 'pages-read'
       allowedPages?: number[]
     }
   ) => apiFetch<AIQuizResponse>('/api/v1/ai/quiz', { method: 'POST', body: input }),
