@@ -9,6 +9,7 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from io import BytesIO
+from typing import Any
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -33,11 +34,35 @@ class AIDocumentUnsupportedError(AIDocumentError):
 
 
 @dataclass(frozen=True)
+class PageExtraction:
+    """What extraction actually recovered from one PDF page.
+
+    A page can fail to contribute for two very different reasons: it holds no
+    text at all (a scanned image, a full-page diagram), or its text was
+    recovered but later discarded. Recording the raw per-page result lets a
+    diagnostic distinguish the two instead of guessing.
+    """
+
+    page: int
+    text_length: int
+    #: True when the page carries drawable content (an image XObject) even
+    #: though little or no text could be extracted -- i.e. a candidate for
+    #: multimodal inspection rather than a genuinely blank page.
+    image_available: bool = False
+
+    @property
+    def text_available(self) -> bool:
+        return self.text_length > 0
+
+
+@dataclass
 class AIDocumentSource:
     file_id: str | None
     title: str
     text: str
     page_count: int
+    #: Per-page extraction quality, in page order. Empty for text sources.
+    pages: tuple[PageExtraction, ...] = ()
 
     def prompt_block(self) -> str:
         return (
@@ -193,6 +218,31 @@ def _trim_at_boundary(text: str, limit: int) -> str:
     return window.rstrip()
 
 
+def _page_has_image(page: Any) -> bool:
+    """Whether a page embeds drawable content (an image XObject).
+
+    Used only for diagnostics and for deciding which pages are worth a
+    multimodal look. Any pypdf error means "unknown", reported as False rather
+    than failing the whole extraction over a malformed resource dictionary.
+    """
+    try:
+        resources = page.get("/Resources")
+        if resources is None:
+            return False
+        xobjects = resources.get_object().get("/XObject")
+        if xobjects is None:
+            return False
+        for ref in xobjects.get_object().values():
+            try:
+                if ref.get_object().get("/Subtype") == "/Image":
+                    return True
+            except Exception:  # noqa: BLE001 - a bad entry is not an error
+                continue
+    except Exception:  # noqa: BLE001 - diagnostics must never break extraction
+        return False
+    return False
+
+
 def _extract_pdf_uncached(
     data: bytes,
     *,
@@ -228,12 +278,21 @@ def _extract_pdf_uncached(
     # pipeline, and the resulting "only page(s) 1..22 of 32 were used" looked
     # like a page-scoping bug rather than truncation.
     extracted: list[tuple[int, str]] = []
+    page_reports: list[PageExtraction] = []
     for page_number in selected_pages:
+        page_obj = reader.pages[page_number - 1]
         try:
-            raw = reader.pages[page_number - 1].extract_text() or ""
+            raw = page_obj.extract_text() or ""
         except (PdfReadError, ValueError, KeyError):
             raw = ""
         clean = _clean_text(raw)
+        page_reports.append(
+            PageExtraction(
+                page=page_number,
+                text_length=len(clean),
+                image_available=_page_has_image(page_obj),
+            )
+        )
         if clean:
             extracted.append((page_number, clean))
 
@@ -269,6 +328,7 @@ def _extract_pdf_uncached(
         title=title[:512],
         text="\n\n".join(chunks),
         page_count=page_count,
+        pages=tuple(page_reports),
     )
 
 

@@ -1144,14 +1144,54 @@ _OPTION_TYPES = {"mcq", "true-false"}
 _MAX_TOPUP_ROUNDS = 3
 
 
-def _insufficient_material_message(requested: int, available: int) -> str:
-    """Explain a genuine shortfall in the student's terms."""
+def _insufficient_material_message(
+    requested: int, available: int, telemetry: dict[str, Any] | None = None
+) -> str:
+    """Explain a shortfall, and only blame the PDF when the PDF is to blame.
+
+    Requirement: "this PDF does not contain enough material" must be reserved
+    for a proven content shortage. When the shortfall is better explained by
+    something the pipeline did -- pages that were extracted and then discarded
+    during cleaning, scanned pages whose text was never recovered, or a
+    provider that failed -- say that instead. Telling a student their textbook
+    is empty when the extractor dropped half of it is both wrong and
+    unactionable.
+    """
+    telemetry = telemetry or {}
+    dropped = telemetry.get("pages_dropped_in_cleaning", 0)
+    image_only = telemetry.get("image_only_pages", 0)
+    provider_errors = telemetry.get("provider_errors", 0)
+
+    # A provider outage only *explains* a shortfall when nothing else covered
+    # it. The deterministic writer is a designed fallback, not a failure: while
+    # it is still producing grounded questions, an unavailable provider is not
+    # what limited the quiz, and saying so would mislead in the other
+    # direction.
+    if provider_errors and available == 0:
+        return (
+            f"LearnX could only build {available} of {requested} questions "
+            "because the AI provider failed part-way through. This is a "
+            "service problem, not a problem with your PDF -- please retry."
+        )
+    if dropped:
+        return (
+            f"LearnX could only verify {available} of {requested} questions. "
+            f"{dropped} page(s) of this PDF were read but could not be used, "
+            "which usually means repeated slide furniture or unusual layout "
+            "rather than missing content. Try asking for fewer questions."
+        )
+    if image_only:
+        return (
+            f"LearnX could only verify {available} of {requested} questions. "
+            f"{image_only} page(s) are images or scans with no extractable "
+            "text, so their content could not be read. A text-based PDF, or a "
+            f"request for {available} questions, will work better."
+        )
     return (
         f"This PDF does not contain enough clearly explained material for "
         f"{requested} well-grounded questions -- LearnX could only verify "
-        f"{available}. Try selecting more pages, or ask for {available} "
-        f"questions instead. LearnX will not invent questions the document "
-        f"does not support."
+        f"{available}. Try asking for {available} questions instead. "
+        f"LearnX will not invent questions the document does not support."
     )
 
 
@@ -1326,6 +1366,7 @@ def _quiz_telemetry(
     rejections: list[RejectionNote],
     relaxed_gates: tuple[str, ...],
     candidates_generated: int = 0,
+    provider_errors: int = 0,
 ) -> dict[str, Any]:
     """The stage-by-stage funnel, as data so tests can assert on it."""
     pages_used = sorted(context.included_pages)
@@ -1348,6 +1389,24 @@ def _quiz_telemetry(
         "evidence_items": sum(
             len(concept.evidence) for concept in understanding.concepts
         ),
+        "relationships": len(understanding.relationships),
+        # Extraction quality, so a shortfall can be attributed to the file
+        # (scanned pages) rather than to the pipeline.
+        "text_pages": sum(1 for page in source.pages if page.text_available),
+        "image_only_pages": sum(
+            1 for page in source.pages
+            if not page.text_available and page.image_available
+        ),
+        "pages_dropped_in_cleaning": max(
+            0,
+            sum(1 for page in source.pages if page.text_available)
+            - len(context.included_pages),
+        ),
+        "page_quality": [
+            f"page {page.page}: text {page.text_length} chars"
+            + (", image available" if page.image_available else "")
+            for page in source.pages[:40]
+        ],
         "candidates_generated": candidates_generated,
         "quiz_requested": requested,
         "quiz_plans_created": len(blueprints),
@@ -1365,6 +1424,7 @@ def _quiz_telemetry(
             if note.grounding_result == "validator_false_negative"
         ),
         "relaxed_gates": list(relaxed_gates),
+        "provider_errors": provider_errors,
         "rejections_by_stage": dict(
             Counter(note.stage for note in real_rejections)
         ),
@@ -1648,6 +1708,7 @@ def generate_quiz(
     )
     completion = None
     raw_candidates: list[_RawCandidate] = []
+    provider_errors = 0 if map_completion is not None else 1
     try:
         completion = service.complete_structured(
             response_model=_RawQuizPool,
@@ -1659,6 +1720,9 @@ def generate_quiz(
         raw_candidates = list(completion.value.questions)
     except AIServiceError:
         completion = None
+        # A writer outage is a *service* failure. Recording it keeps the
+        # shortfall message from blaming the document for a provider problem.
+        provider_errors += 1
 
     blueprint_by_id = {blueprint.id: blueprint for blueprint in context.blueprints}
     rejections: list[RejectionNote] = []
@@ -1860,6 +1924,7 @@ def generate_quiz(
         validated=len(questions),
         rejections=rejections,
         relaxed_gates=outcome.relaxed_gates,
+        provider_errors=provider_errors,
         # Everything the writers produced across the initial pass and every
         # top-up round, so "generated" can be compared against "accepted".
         candidates_generated=len(scored) + len(
@@ -1873,7 +1938,8 @@ def generate_quiz(
     # to prevent, and padding the difference would break grounding.
     if require_exact_count and len(questions) < count:
         raise QuizMaterialError(
-            _insufficient_material_message(count, len(questions)) + scope_note,
+            _insufficient_material_message(count, len(questions), telemetry)
+            + scope_note,
             requested=count,
             available=len(questions),
         )

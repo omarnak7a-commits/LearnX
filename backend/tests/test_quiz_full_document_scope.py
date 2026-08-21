@@ -458,3 +458,119 @@ def test_diagnostics_expose_the_full_funnel_for_the_exam_flow(client) -> None:
     assert diagnostics["evidence_items"] > 0
     assert diagnostics["plans"] >= 8
     assert diagnostics["accepted"] == 8
+
+
+# --------------------------------------------------------------------------- #
+# Per-page extraction quality, and honest attribution of a shortfall
+# --------------------------------------------------------------------------- #
+
+
+def test_extraction_reports_per_page_quality() -> None:
+    """Requirement 2/13: record text length and image availability per page."""
+    clear_extraction_cache()
+    source = _extract_pdf_uncached(
+        pdf_bytes(),
+        file_id="t",
+        title="cell-biology-32",
+        max_characters=100_000,
+        allowed_pages=None,
+    )
+    assert len(source.pages) == 32
+    assert [page.page for page in source.pages] == list(range(1, 33))
+    # The cover carries far less text than a content page.
+    assert source.pages[0].text_length < source.pages[3].text_length
+    for page in source.pages:
+        assert page.text_available == (page.text_length > 0)
+
+
+def test_diagnostics_expose_extraction_quality(client) -> None:
+    response = ask(client, count=8, kind="exam", scope="document", diagnostics=True)
+    assert response.status_code == 200, response.text
+    diagnostics = response.json()["diagnostics"]
+    for key in (
+        "text_pages",
+        "image_only_pages",
+        "pages_dropped_in_cleaning",
+        "relationships",
+        "provider_errors",
+        "page_quality",
+    ):
+        assert key in diagnostics
+    assert diagnostics["text_pages"] > 0
+    assert diagnostics["page_quality"], "per-page quality must be reported"
+    assert any("text" in line for line in diagnostics["page_quality"])
+
+
+def test_diagnostics_never_leak_secrets(client) -> None:
+    response = ask(client, count=8, kind="exam", scope="document", diagnostics=True)
+    blob = response.text.lower()
+    for secret in ("api_key", "apikey", "authorization", "bearer ", "gemini_api", "groq_api"):
+        assert secret not in blob
+
+
+def test_a_shortfall_blames_the_document_only_when_the_document_is_to_blame() -> None:
+    """Requirement 12: never report a pipeline failure as a thin PDF."""
+    from app.services.quiz_pipeline import _insufficient_material_message
+
+    # Genuine content shortage: nothing else explains it.
+    plain = _insufficient_material_message(8, 3, {})
+    assert "does not contain enough clearly explained material" in plain
+
+    # Content was read but discarded after extraction -- not the PDF's fault.
+    dropped = _insufficient_material_message(8, 3, {"pages_dropped_in_cleaning": 5})
+    assert "does not contain enough clearly explained material" not in dropped
+    assert "could not be used" in dropped
+
+    # Scanned pages: explain that the text was unreadable, not absent.
+    scanned = _insufficient_material_message(8, 3, {"image_only_pages": 4})
+    assert "images or scans" in scanned
+    assert "does not contain enough clearly explained material" not in scanned
+
+    # A total provider outage is a service problem.
+    outage = _insufficient_material_message(8, 0, {"provider_errors": 1})
+    assert "service problem" in outage
+
+    # But a provider outage that the deterministic writer covered is NOT the
+    # explanation, and must not be mentioned.
+    covered = _insufficient_material_message(8, 5, {"provider_errors": 1})
+    assert "service problem" not in covered
+
+
+def test_image_only_pages_are_counted_not_silently_ignored() -> None:
+    """A scanned page is unreadable, not proof the document is empty."""
+    from app.services.ai_documents import AIDocumentSource, PageExtraction
+    from app.services.quiz_pipeline import _quiz_telemetry, build_quiz_context
+
+    source = AIDocumentSource(
+        file_id="f",
+        title="scan",
+        text="[Page 2]\nMitosis is defined as nuclear division producing two cells.",
+        page_count=2,
+        pages=(
+            PageExtraction(page=1, text_length=0, image_available=True),
+            PageExtraction(page=2, text_length=60, image_available=False),
+        ),
+    )
+    context = build_quiz_context(source)
+
+    class _Understanding:
+        concepts = ()
+        relationships = ()
+
+        def important_concepts(self):
+            return []
+
+    telemetry = _quiz_telemetry(
+        source=source,
+        context=context,
+        understanding=_Understanding(),
+        blueprints=[],
+        requested=8,
+        generated=0,
+        validated=0,
+        rejections=[],
+        relaxed_gates=(),
+    )
+    assert telemetry["text_pages"] == 1
+    assert telemetry["image_only_pages"] == 1
+    assert any("image available" in line for line in telemetry["page_quality"])

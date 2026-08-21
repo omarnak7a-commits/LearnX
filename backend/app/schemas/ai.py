@@ -184,14 +184,28 @@ class AIQuizDiagnostics(BaseModel):
 
     requested: int
     extracted_pages: int
+    #: Pages whose text survived extraction AND boilerplate cleaning.
     pages_used: int
+    #: Pages that yielded some extractable text.
+    text_pages: int = 0
+    #: Pages with (almost) no text but embedded imagery -- scans, diagrams,
+    #: slide screenshots. These are candidates for multimodal understanding
+    #: rather than evidence that the document is empty.
+    image_only_pages: int = 0
+    #: Pages whose text was extracted but then discarded by cleaning. A high
+    #: number here means content was lost after extraction, not absent.
+    pages_dropped_in_cleaning: int = 0
     concepts: int
     evidence_items: int
+    relationships: int = 0
     plans: int
     candidates_generated: int
     accepted: int
     rejected: int
+    provider_errors: int = 0
     rejections: dict[str, int] = Field(default_factory=dict)
+    #: Per-page extraction quality, capped so the payload stays small.
+    page_quality: list[str] = Field(default_factory=list)
 
 
 class AIQuizResponse(AIProviderMetadata, AIQuizResult):

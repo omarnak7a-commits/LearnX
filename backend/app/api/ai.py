@@ -322,13 +322,19 @@ def _quiz_diagnostics(result: Any) -> AIQuizDiagnostics:
         requested=telemetry.get("quiz_requested", 0),
         extracted_pages=telemetry.get("pdf_pages_available", 0),
         pages_used=len(telemetry.get("pages_used") or []),
+        text_pages=telemetry.get("text_pages", 0),
+        image_only_pages=telemetry.get("image_only_pages", 0),
+        pages_dropped_in_cleaning=telemetry.get("pages_dropped_in_cleaning", 0),
         concepts=telemetry.get("concepts_total", telemetry.get("concepts_found", 0)),
         evidence_items=telemetry.get("evidence_items", 0),
+        relationships=telemetry.get("relationships", 0),
         plans=telemetry.get("quiz_plans_created", 0),
         candidates_generated=telemetry.get("candidates_generated", 0),
         accepted=len(result.questions),
         rejected=telemetry.get("questions_rejected", 0),
+        provider_errors=telemetry.get("provider_errors", 0),
         rejections={key: value for key, value in rejections.items() if value},
+        page_quality=list(telemetry.get("page_quality") or []),
     )
 
 
