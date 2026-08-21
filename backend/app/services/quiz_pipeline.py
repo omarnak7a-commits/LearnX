@@ -301,10 +301,22 @@ class QuizMaterialError(AIUnavailableError):
     from the student, and inventing the difference would break grounding.
     """
 
-    def __init__(self, message: str, *, requested: int, available: int) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        requested: int,
+        available: int,
+        telemetry: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.requested = requested
         self.available = available
+        #: The funnel as it stood when the shortfall was declared. Carried on
+        #: the exception because this is precisely the case where diagnostics
+        #: are needed most, and the 422 path previously discarded them --
+        #: leaving "could only verify 1" with nothing to explain it.
+        self.telemetry = telemetry or {}
 
 
 def quiz_language_guidance(language: str) -> str:
@@ -358,6 +370,7 @@ def build_document_understanding(
     context: QuizContext,
     *,
     system_prompt: str,
+    trace: dict[str, Any] | None = None,
 ) -> tuple[DocumentUnderstanding, Any | None]:
     """Understand the document first; fall back to a deterministic study map.
 
@@ -370,6 +383,8 @@ def build_document_understanding(
         context.units, title=source.title, page_count=source.page_count
     )
     prompt = build_understanding_prompt(source_block=cleaned_block, title=source.title)
+    if trace is not None:
+        trace["understanding_calls"] = trace.get("understanding_calls", 0) + 1
     try:
         completion = service.complete_structured(
             response_model=_RawUnderstanding,
@@ -379,13 +394,26 @@ def build_document_understanding(
             max_tokens=7000,
         )
     except AIServiceError:
+        if trace is not None:
+            trace["understanding_failed"] = 1
         return deterministic_understanding(context.units, title=source.title), None
 
+    if trace is not None:
+        trace["understanding_ok"] = 1
+
+    drops: dict[str, Any] = {}
     understanding = normalize_understanding(
-        completion.value, context.units, title=source.title
+        completion.value, context.units, title=source.title, drops=drops
     )
+    if trace is not None:
+        trace["concept_drops"] = drops
     if not understanding.is_usable:
+        # The provider answered, but nothing it proposed survived verification.
+        # Falling back silently here is what makes a discarded study map
+        # indistinguishable from a thin document, so record it.
         deterministic = deterministic_understanding(context.units, title=source.title)
+        if trace is not None:
+            trace["provider_map_discarded"] = 1
         if deterministic.is_usable:
             return deterministic, completion
     return understanding, completion
@@ -1367,6 +1395,7 @@ def _quiz_telemetry(
     relaxed_gates: tuple[str, ...],
     candidates_generated: int = 0,
     provider_errors: int = 0,
+    provider_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The stage-by-stage funnel, as data so tests can assert on it."""
     pages_used = sorted(context.included_pages)
@@ -1428,6 +1457,17 @@ def _quiz_telemetry(
         "rejections_by_stage": dict(
             Counter(note.stage for note in real_rejections)
         ),
+        # Provider-call outcomes and the concept-filter funnel. Needed to tell
+        # "the document is thin" apart from "the provider answered and we threw
+        # the answer away".
+        "provider_trace": dict(provider_trace or {}),
+        "concepts_proposed_by_provider": (provider_trace or {}).get(
+            "concept_drops", {}
+        ).get("proposed", 0),
+        "concepts_dropped_in_filtering": dict(
+            (provider_trace or {}).get("concept_drops", {}).get("reasons", {})
+        ),
+        "understanding_source": getattr(understanding, "source", ""),
     }
 
 
@@ -1669,8 +1709,10 @@ def generate_quiz(
     shared_system_prompt = f"{system_prompt}\n\n{quiz_language_guidance(language)}"
 
     # --- Stage 1: DOCUMENT UNDERSTANDING (before any question exists) ------ #
+    provider_trace: dict[str, Any] = {}
     understanding, map_completion = build_document_understanding(
-        service, source, context, system_prompt=shared_system_prompt
+        service, source, context, system_prompt=shared_system_prompt,
+        trace=provider_trace,
     )
     context.understanding = understanding
     if not understanding.is_usable:
@@ -1709,6 +1751,7 @@ def generate_quiz(
     completion = None
     raw_candidates: list[_RawCandidate] = []
     provider_errors = 0 if map_completion is not None else 1
+    provider_trace["writer_calls"] = provider_trace.get("writer_calls", 0) + 1
     try:
         completion = service.complete_structured(
             response_model=_RawQuizPool,
@@ -1718,11 +1761,18 @@ def generate_quiz(
             max_tokens=14000,
         )
         raw_candidates = list(completion.value.questions)
+        provider_trace["writer_ok"] = provider_trace.get("writer_ok", 0) + 1
+        provider_trace["writer_questions_returned"] = (
+            provider_trace.get("writer_questions_returned", 0) + len(raw_candidates)
+        )
+        if not raw_candidates:
+            provider_trace["writer_empty"] = provider_trace.get("writer_empty", 0) + 1
     except AIServiceError:
         completion = None
         # A writer outage is a *service* failure. Recording it keeps the
         # shortfall message from blaming the document for a provider problem.
         provider_errors += 1
+        provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
 
     blueprint_by_id = {blueprint.id: blueprint for blueprint in context.blueprints}
     rejections: list[RejectionNote] = []
@@ -1925,6 +1975,7 @@ def generate_quiz(
         rejections=rejections,
         relaxed_gates=outcome.relaxed_gates,
         provider_errors=provider_errors,
+        provider_trace=provider_trace,
         # Everything the writers produced across the initial pass and every
         # top-up round, so "generated" can be compared against "accepted".
         candidates_generated=len(scored) + len(
@@ -1942,6 +1993,7 @@ def generate_quiz(
             + scope_note,
             requested=count,
             available=len(questions),
+            telemetry=telemetry,
         )
 
     # Honesty about who wrote the quiz: the top-up stage uses the deterministic

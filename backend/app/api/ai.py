@@ -307,12 +307,20 @@ def topics(
 
 
 def _quiz_diagnostics(result: Any) -> AIQuizDiagnostics:
+    """Summarise the generation funnel for a successful response."""
+    return _diagnostics_from_telemetry(
+        result.telemetry or {}, accepted=len(result.questions)
+    )
+
+
+def _diagnostics_from_telemetry(
+    telemetry: dict[str, Any], *, accepted: int
+) -> AIQuizDiagnostics:
     """Summarise the generation funnel for debugging.
 
     Counts and rejection-stage names only. No prompts, no document text, no
     provider configuration, and nothing derived from a credential.
     """
-    telemetry = result.telemetry or {}
     rejections = dict(telemetry.get("rejections_by_stage") or {})
     rejections["unsupported_by_pdf"] = telemetry.get("rejected_unsupported_by_pdf", 0)
     rejections["validator_false_negative"] = telemetry.get(
@@ -330,11 +338,23 @@ def _quiz_diagnostics(result: Any) -> AIQuizDiagnostics:
         relationships=telemetry.get("relationships", 0),
         plans=telemetry.get("quiz_plans_created", 0),
         candidates_generated=telemetry.get("candidates_generated", 0),
-        accepted=len(result.questions),
+        accepted=accepted,
         rejected=telemetry.get("questions_rejected", 0),
         provider_errors=telemetry.get("provider_errors", 0),
         rejections={key: value for key, value in rejections.items() if value},
         page_quality=list(telemetry.get("page_quality") or []),
+        concepts_proposed_by_provider=telemetry.get(
+            "concepts_proposed_by_provider", 0
+        ),
+        concepts_dropped_in_filtering=dict(
+            telemetry.get("concepts_dropped_in_filtering") or {}
+        ),
+        understanding_source=telemetry.get("understanding_source", ""),
+        provider_calls={
+            key: value
+            for key, value in (telemetry.get("provider_trace") or {}).items()
+            if isinstance(value, int)
+        },
     )
 
 
@@ -404,6 +424,24 @@ def quiz(
             )
         return response
     except (AIDocumentError, AIServiceError) as exc:
+        # A shortfall is exactly the case that needs explaining, yet the 422
+        # path used to discard the funnel entirely -- leaving "could only
+        # verify 1" with nothing behind it. Attach diagnostics as a sibling
+        # key, opt-in only. `detail` stays a plain string, which is what every
+        # existing client parses.
+        telemetry = getattr(exc, "telemetry", None)
+        if payload.diagnostics and isinstance(exc, QuizMaterialError) and telemetry:
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content=jsonable_encoder(
+                    {
+                        "detail": str(exc),
+                        "diagnostics": _diagnostics_from_telemetry(
+                            telemetry, accepted=exc.available
+                        ),
+                    }
+                ),
+            )
         raise _as_http_exception(exc) from exc
 
 

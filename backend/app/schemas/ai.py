@@ -204,6 +204,16 @@ class AIQuizDiagnostics(BaseModel):
     rejected: int
     provider_errors: int = 0
     rejections: dict[str, int] = Field(default_factory=dict)
+    #: Concepts the provider actually proposed, before verification. When this
+    #: is high and ``concepts`` is low, the shortfall is ours, not the PDF's.
+    concepts_proposed_by_provider: int = 0
+    #: Why proposed concepts were dropped, keyed by gate.
+    concepts_dropped_in_filtering: dict[str, int] = Field(default_factory=dict)
+    #: "provider" or "deterministic". "deterministic" after a provider call
+    #: succeeded means the provider's study map was discarded.
+    understanding_source: str = ""
+    #: Provider call outcomes: calls attempted, valid, empty, discarded.
+    provider_calls: dict[str, int] = Field(default_factory=dict)
     #: Per-page extraction quality, capped so the payload stays small.
     page_quality: list[str] = Field(default_factory=list)
 

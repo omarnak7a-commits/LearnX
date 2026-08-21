@@ -759,3 +759,160 @@ def test_a_provider_study_map_yields_a_full_exam(client, monkeypatch) -> None:
     body = response.json()
     assert len(body["questions"]) == 8
     assert body["diagnostics"]["concepts"] >= 8
+
+
+def _gemini_service(understanding, questions=None):
+    """A provider that answers the understanding call like Gemini would."""
+    from app.services.ai_service import AIStructuredCompletion
+    from app.services.quiz_pipeline import _RawQuizPool
+    from app.services.quiz_understanding import _RawUnderstanding
+
+    class _Gemini:
+        def complete_structured(self, **kwargs):
+            value = (
+                understanding
+                if kwargs["response_model"] is _RawUnderstanding
+                else _RawQuizPool(questions=list(questions or []))
+            )
+            return AIStructuredCompletion(
+                value=value,
+                provider="gemini",
+                model="gemini-3.7-flash",
+                fallback_used=False,
+            )
+
+    return _Gemini()
+
+
+def _provider_concepts(context, *, label, limit=12):
+    return [
+        {
+            "id": f"c{index}",
+            "name": label(name),
+            "description": quote,
+            "topic": "Course",
+            "knowledge_type": "definition",
+            "teaching_emphasis": "high",
+            "evidence_quotes": [f"{name} matters here."],
+            "source_pages": [page],
+            "why_important": "central",
+        }
+        for index, (page, quote, name) in enumerate(
+            _page_definitions(context)[:limit], 1
+        )
+    ]
+
+
+def _document_context():
+    clear_extraction_cache()
+    source = _extract_pdf_uncached(
+        pdf_bytes(),
+        file_id="t",
+        title="SQL18",
+        max_characters=100_000,
+        allowed_pages=None,
+    )
+    return build_quiz_context(source)
+
+
+def test_diagnostics_report_concepts_the_provider_proposed(client) -> None:
+    """A shortfall must show what the provider offered, not just what survived.
+
+    Without this, "concepts: 1" is ambiguous: it cannot distinguish a document
+    that teaches one thing from a study map of thirty that we deleted.
+    """
+    import app.api.ai as ai_api
+
+    context = _document_context()
+    concepts = _provider_concepts(context, label=lambda name: name, limit=12)
+    app.dependency_overrides[ai_api.get_ai_service] = lambda: _gemini_service(
+        _provider_understanding(concepts)
+    )
+
+    body = ask(client, count=8, kind="exam", scope="document", diagnostics=True).json()
+    diagnostics = body["diagnostics"]
+    assert diagnostics["concepts_proposed_by_provider"] == 12
+    assert diagnostics["understanding_source"] == "provider"
+
+
+def test_diagnostics_name_the_gate_that_dropped_provider_concepts(client) -> None:
+    """Every dropped concept must name the gate that dropped it."""
+    import app.api.ai as ai_api
+
+    context = _document_context()
+    # Labels a verifier must reject: generic, teaching nothing specific.
+    concepts = _provider_concepts(context, label=lambda name: "Overview", limit=12)
+    app.dependency_overrides[ai_api.get_ai_service] = lambda: _gemini_service(
+        _provider_understanding(concepts)
+    )
+
+    body = ask(client, count=8, kind="exam", scope="document", diagnostics=True).json()
+    dropped = body["diagnostics"]["concepts_dropped_in_filtering"]
+    assert dropped.get("generic_or_boilerplate_label") == 12, dropped
+
+
+def test_diagnostics_reveal_a_discarded_provider_study_map(client) -> None:
+    """Falling back to the deterministic reader must never look like success.
+
+    When the provider answers but nothing it proposed survives verification,
+    the run silently continues on the deterministic map. That is a pipeline
+    loss and has to be visible as one.
+    """
+    import app.api.ai as ai_api
+
+    context = _document_context()
+    concepts = _provider_concepts(context, label=lambda name: "Overview", limit=12)
+    app.dependency_overrides[ai_api.get_ai_service] = lambda: _gemini_service(
+        _provider_understanding(concepts)
+    )
+
+    body = ask(client, count=8, kind="exam", scope="document", diagnostics=True).json()
+    diagnostics = body["diagnostics"]
+    calls = diagnostics["provider_calls"]
+    assert calls["understanding_calls"] == 1
+    assert calls["understanding_ok"] == 1
+    assert diagnostics["understanding_source"] == "deterministic"
+
+
+def test_a_shortfall_response_still_carries_diagnostics(client) -> None:
+    """The 422 is exactly where the funnel is needed most.
+
+    "LearnX could only verify 1" used to arrive with nothing behind it, so a
+    thin PDF and a broken pipeline produced an identical response.
+    """
+    import app.api.ai as ai_api
+
+    context = _document_context()
+    concepts = _provider_concepts(context, label=lambda name: name, limit=1)
+    app.dependency_overrides[ai_api.get_ai_service] = lambda: _gemini_service(
+        _provider_understanding(concepts)
+    )
+
+    response = ask(client, count=8, kind="exam", scope="document", diagnostics=True)
+    assert response.status_code == 422
+    body = response.json()
+    # The message stays a plain string: clients parse `detail` directly.
+    assert isinstance(body["detail"], str)
+    assert "could only verify 1" in body["detail"]
+    diagnostics = body["diagnostics"]
+    assert diagnostics["accepted"] == 1
+    assert diagnostics["concepts_proposed_by_provider"] == 1
+    assert diagnostics["extracted_pages"] == 32
+    # Proves the shortage is honest: the provider proposed one concept and one
+    # survived, so nothing was lost inside the pipeline.
+    assert diagnostics["concepts_dropped_in_filtering"] == {}
+
+
+def test_diagnostics_stay_opt_in_on_a_shortfall(client) -> None:
+    """Without diagnostics:true the error body must be unchanged."""
+    import app.api.ai as ai_api
+
+    context = _document_context()
+    concepts = _provider_concepts(context, label=lambda name: name, limit=1)
+    app.dependency_overrides[ai_api.get_ai_service] = lambda: _gemini_service(
+        _provider_understanding(concepts)
+    )
+
+    response = ask(client, count=8, kind="exam", scope="document")
+    assert response.status_code == 422
+    assert set(response.json()) == {"detail"}

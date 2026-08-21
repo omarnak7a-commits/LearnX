@@ -1747,8 +1747,20 @@ def normalize_understanding(
     units: list[SourceUnit],
     *,
     title: str,
+    drops: dict[str, Any] | None = None,
 ) -> DocumentUnderstanding:
-    """Verify, classify, and rank a provider-proposed understanding."""
+    """Verify, classify, and rank a provider-proposed understanding.
+
+    ``drops`` is an optional diagnostics sink. Concept filtering is the one
+    stage that can silently delete provider work: a concept that fails a gate
+    simply disappears, so a study map that arrives with 30 concepts and leaves
+    with 1 looks identical to a document that only ever taught 1. Recording
+    the reason each concept was dropped is what makes the difference visible.
+    """
+    def _drop(reason: str) -> None:
+        if drops is not None:
+            reasons = drops.setdefault("reasons", {})
+            reasons[reason] = reasons.get(reason, 0) + 1
     sentences = iter_sentences(units)
     page_text = {unit.page: unit.text for unit in units}
     included_pages = set(page_text)
@@ -1757,13 +1769,22 @@ def normalize_understanding(
     staged: list[dict[str, Any]] = []
     used_ids: set[str] = set()
     id_lookup: dict[str, str] = {}
+    if drops is not None:
+        drops["proposed"] = len(raw.concepts)
+        drops["considered"] = len(raw.concepts[:60])
+        drops.setdefault("reasons", {})
+        if len(raw.concepts) > 60:
+            drops["reasons"]["over_60_concept_cap"] = len(raw.concepts) - 60
     for index, item in enumerate(raw.concepts[:60]):
         name = re.sub(r"\s+", " ", item.name.strip()).strip("-:;,. ")
         if not (2 < len(name) <= 120):
+            _drop("name_length")
             continue
         if is_generic_label(name) or is_boilerplate_text(name) or is_layout_detail(name):
+            _drop("generic_or_boilerplate_label")
             continue
         if is_heading_like(name) and not content_tokens(name):
+            _drop("heading_like_label")
             continue
         pages = _coerce_pages(item.source_pages, included_pages) or sorted(included_pages)
         evidence = _valid_evidence(
@@ -1777,6 +1798,9 @@ def normalize_understanding(
                 for sentence in _concept_sentences(name, sentences, limit=3)
             ]
         if not evidence:
+            # The concept could not be tied to any page. This is the gate that
+            # silently deleted canonicalised provider labels.
+            _drop("no_evidence_found_on_any_page")
             continue
         knowledge_type = _canonical_type(item.knowledge_type, evidence[0].text)
         concept_id = _slug(item.id or name, f"concept-{index + 1}")
@@ -1800,7 +1824,11 @@ def normalize_understanding(
             }
         )
 
+    if drops is not None:
+        drops["kept"] = len(staged)
     if not staged:
+        if drops is not None:
+            drops["fallback"] = "all_provider_concepts_dropped"
         return deterministic_understanding(units, title=title)
 
     concepts = _finalize_concepts(staged, sentences=sentences, id_lookup=id_lookup)
