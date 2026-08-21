@@ -329,6 +329,11 @@ def test_a_narrow_scope_failure_message_names_the_scope() -> None:
             seed=1,
             previous_questions=[],
             system_prompt="",
+            # The caller genuinely restricted the request, which is what
+            # licenses the "only page(s) ..." wording. Without this the
+            # message must NOT imply a restriction -- see
+            # test_the_scope_note_distinguishes_a_restriction_from_unreadable_pages.
+            requested_pages=[1],
         )
     message = str(excinfo.value)
     assert "only page(s) 1 of 20" in message

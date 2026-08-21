@@ -378,6 +378,9 @@ def quiz(
             seed=seed,
             previous_questions=previous_questions,
             system_prompt=_system_prompt(language, structured=True),
+            # Only a genuine restriction; None for a document-scoped exam, so a
+            # shortfall message can never imply the request was narrowed.
+            requested_pages=restrict_pages,
         )
         response = AIQuizResponse(
             questions=result.questions,

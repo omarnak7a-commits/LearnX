@@ -341,3 +341,120 @@ def test_a_page_restriction_still_wins_over_the_budget() -> None:
         allowed_pages=PAGES_READ,
     )
     assert pages_in(source.text) == PAGES_READ
+
+
+# --------------------------------------------------------------------------- #
+# The Exam tab's real payload, and the message it can produce
+# --------------------------------------------------------------------------- #
+
+#: Exactly what src/context/FileVaultContext.tsx generateExam() sends today.
+EXAM_PAYLOAD_KEYS = {"fileId", "count", "questionTypes", "kind", "scope"}
+
+
+def test_the_exam_tab_payload_carries_document_scope_and_no_page_list() -> None:
+    """Guard the built request shape, not just the backend behaviour.
+
+    The screenshot that reopened this bug came from a deployed bundle built
+    before scope existed. Asserting on the compiled source keeps a future edit
+    from quietly reintroducing `allowedPages` into the exam call.
+    """
+    context = (
+        Path(__file__).resolve().parents[2] / "src" / "context" / "FileVaultContext.tsx"
+    ).read_text(encoding="utf-8")
+    exam = context.split("const generateExam")[1].split("const recordAttempt")[0]
+    assert "scope: 'document'" in exam
+    assert "allowedPages" not in exam, "the exam must never send a page restriction"
+
+
+def test_full_document_exam_never_says_only_pages_were_used(client) -> None:
+    """Acceptance criterion from the bug report."""
+    response = ask(
+        client,
+        count=8,
+        kind="exam",
+        questionTypes=["mcq", "true-false", "fill-blank", "short-answer"],
+        scope="document",
+    )
+    assert response.status_code == 200, response.text
+    assert "only page(s)" not in response.text
+
+
+def test_a_stale_client_sending_pages_without_scope_still_gets_the_whole_pdf(
+    client,
+) -> None:
+    """A browser running an old bundle must not be silently restricted.
+
+    The pre-fix bundle sent allowedPages and no scope at all. Because scope
+    defaults to 'document', that payload must now be served from the whole
+    document.
+    """
+    response = ask(
+        client,
+        count=8,
+        kind="exam",
+        allowedPages=list(range(1, 33)),
+        diagnostics=True,
+    )
+    assert response.status_code == 200, response.text
+    diagnostics = response.json()["diagnostics"]
+    assert diagnostics["pages_used"] == 32
+    assert diagnostics["accepted"] == 8
+
+
+def test_a_stale_practice_payload_is_also_unrestricted(client) -> None:
+    response = ask(
+        client,
+        count=8,
+        kind="practice",
+        allowedPages=list(range(2, 33)),
+        diagnostics=True,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["diagnostics"]["pages_used"] == 32
+
+
+def test_the_scope_note_distinguishes_a_restriction_from_unreadable_pages() -> None:
+    """The screenshot's wording implied a page filter that was never applied.
+
+    A document-scoped request whose page 1 is a scanned cover used to report
+    "only page(s) 2, 3, 4 ... of 32 were used" -- indistinguishable from an
+    actual pagesRead restriction.
+    """
+    from app.services.ai_documents import AIDocumentSource
+    from app.services.quiz_pipeline import QuizContext, _scope_note
+
+    context = QuizContext(
+        units=[],
+        sentences=[],
+        vocab=set(),
+        page_text={},
+        included_pages=set(range(2, 33)),
+    )
+    source = AIDocumentSource(file_id="f", title="SQL18", text="x", page_count=32)
+
+    unrestricted = _scope_note(source, context)
+    assert "only page(s)" not in unrestricted
+    assert "whole 32-page document was analysed" in unrestricted
+    assert "no extractable text" in unrestricted
+
+    restricted = _scope_note(source, context, requested_pages=list(range(2, 33)))
+    assert "only page(s) 2, 3, 4" in restricted
+
+
+def test_diagnostics_expose_the_full_funnel_for_the_exam_flow(client) -> None:
+    response = ask(
+        client,
+        count=8,
+        kind="exam",
+        questionTypes=["mcq", "true-false", "fill-blank", "short-answer"],
+        scope="document",
+        diagnostics=True,
+    )
+    assert response.status_code == 200, response.text
+    diagnostics = response.json()["diagnostics"]
+    assert diagnostics["extracted_pages"] == 32
+    assert diagnostics["pages_used"] == 32
+    assert diagnostics["concepts"] > 0
+    assert diagnostics["evidence_items"] > 0
+    assert diagnostics["plans"] >= 8
+    assert diagnostics["accepted"] == 8

@@ -1530,19 +1530,43 @@ def validate_final_quiz(
     return valid, notes
 
 
-def _scope_note(source: AIDocumentSource, context: QuizContext) -> str:
+def _scope_note(
+    source: AIDocumentSource,
+    context: QuizContext,
+    *,
+    requested_pages: list[int] | None = None,
+) -> str:
     """Describe how much of the document was actually examined.
 
-    A failure message must distinguish "this PDF has nothing to teach" from
-    "we only looked at one page of it".
+    A failure message must distinguish three different situations that used to
+    look identical:
+
+    * the caller restricted the request to some pages;
+    * the whole document was read, but some pages carried no extractable text
+      (a scanned cover, a full-page diagram);
+    * the whole document was read and every page contributed.
+
+    The old wording said "only page(s) 2, 3, 4 ... of 32 were used" in the
+    second case too, which reads as though the exam had been silently narrowed
+    to the pages the student had opened. That sent a user hunting for a
+    page-scoping bug when the request had in fact covered the entire PDF.
     """
     used = len(context.included_pages)
     total = max(source.page_count, used)
-    if used and total and used < total:
-        pages = ", ".join(str(page) for page in sorted(context.included_pages)[:8])
-        more = "..." if used > 8 else ""
+    if not used or not total or used >= total:
+        return ""
+    pages = ", ".join(str(page) for page in sorted(context.included_pages)[:8])
+    more = "..." if used > 8 else ""
+    if requested_pages:
+        # A genuine restriction: naming it is the actionable information.
         return f" (only page(s) {pages}{more} of {total} were used)"
-    return ""
+    # No restriction was applied. The whole PDF was read; some pages simply had
+    # nothing extractable, which is a property of the file, not of the request.
+    skipped = total - used
+    return (
+        f" (the whole {total}-page document was analysed; {skipped} page(s) "
+        "had no extractable text, e.g. scanned images or diagrams)"
+    )
 
 
 def generate_quiz(
@@ -1559,6 +1583,7 @@ def generate_quiz(
     system_prompt: str,
     quality_threshold: float = _DEFAULT_THRESHOLD,
     require_exact_count: bool = True,
+    requested_pages: list[int] | None = None,
 ) -> QuizGenerationResult:
     """Understand the document, plan the quiz, then write and validate it.
 
@@ -1573,7 +1598,7 @@ def generate_quiz(
     # "the PDF" for having no content is actively misleading if only its title
     # page was ever examined -- that was the reported bug, and the message sent
     # students looking for a fault in a perfectly good document.
-    scope_note = _scope_note(source, context)
+    scope_note = _scope_note(source, context, requested_pages=requested_pages)
     if not has_educational_content(context.units):
         raise QuizContentError(
             "No teachable content was found in the material provided"
