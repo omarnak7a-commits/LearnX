@@ -350,6 +350,11 @@ def _diagnostics_from_telemetry(
             telemetry.get("concepts_dropped_in_filtering") or {}
         ),
         understanding_source=telemetry.get("understanding_source", ""),
+        plans_by_type=dict(telemetry.get("plans_by_type") or {}),
+        candidates_by_type=dict(telemetry.get("candidates_by_type") or {}),
+        grounding_rejected=telemetry.get("grounding_rejected", 0),
+        diversity_rejected=telemetry.get("diversity_rejected", 0),
+        rejection_details=list(telemetry.get("rejection_details") or []),
         provider_calls={
             key: value
             for key, value in (telemetry.get("provider_trace") or {}).items()

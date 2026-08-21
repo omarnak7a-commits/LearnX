@@ -832,7 +832,9 @@ def test_diagnostics_report_concepts_the_provider_proposed(client) -> None:
     body = ask(client, count=8, kind="exam", scope="document", diagnostics=True).json()
     diagnostics = body["diagnostics"]
     assert diagnostics["concepts_proposed_by_provider"] == 12
-    assert diagnostics["understanding_source"] == "provider"
+    # The provider's concepts are kept; where its map is thinner than the
+    # document, the document supplements it rather than being discarded.
+    assert diagnostics["understanding_source"].startswith("provider")
 
 
 def test_diagnostics_name_the_gate_that_dropped_provider_concepts(client) -> None:
@@ -874,11 +876,11 @@ def test_diagnostics_reveal_a_discarded_provider_study_map(client) -> None:
     assert diagnostics["understanding_source"] == "deterministic"
 
 
-def test_a_shortfall_response_still_carries_diagnostics(client) -> None:
-    """The 422 is exactly where the funnel is needed most.
+def test_a_single_provider_concept_no_longer_starves_the_exam(client) -> None:
+    """A thin provider map must not decide what the document contains.
 
-    "LearnX could only verify 1" used to arrive with nothing behind it, so a
-    thin PDF and a broken pipeline produced an identical response.
+    "LearnX could only verify 1" came from exactly this: one provider concept
+    replacing a document that teaches dozens.
     """
     import app.api.ai as ai_api
 
@@ -889,22 +891,20 @@ def test_a_shortfall_response_still_carries_diagnostics(client) -> None:
     )
 
     response = ask(client, count=8, kind="exam", scope="document", diagnostics=True)
-    assert response.status_code == 422
+    # A single provider concept used to starve the exam and return 422. The
+    # document teaches far more than that, so it now supplements the map and
+    # the request succeeds -- which is the point of the fix.
+    assert response.status_code == 200, response.text
     body = response.json()
-    # The message stays a plain string: clients parse `detail` directly.
-    assert isinstance(body["detail"], str)
-    assert "could only verify 1" in body["detail"]
+    assert len(body["questions"]) == 8
     diagnostics = body["diagnostics"]
-    assert diagnostics["accepted"] == 1
     assert diagnostics["concepts_proposed_by_provider"] == 1
     assert diagnostics["extracted_pages"] == 32
-    # Proves the shortage is honest: the provider proposed one concept and one
-    # survived, so nothing was lost inside the pipeline.
-    assert diagnostics["concepts_dropped_in_filtering"] == {}
+    assert diagnostics["provider_calls"]["provider_map_supplemented"] == 1
 
 
-def test_diagnostics_stay_opt_in_on_a_shortfall(client) -> None:
-    """Without diagnostics:true the error body must be unchanged."""
+def test_diagnostics_stay_opt_in(client) -> None:
+    """Without diagnostics:true the response body must be unchanged."""
     import app.api.ai as ai_api
 
     context = _document_context()
@@ -914,5 +914,6 @@ def test_diagnostics_stay_opt_in_on_a_shortfall(client) -> None:
     )
 
     response = ask(client, count=8, kind="exam", scope="document")
-    assert response.status_code == 422
-    assert set(response.json()) == {"detail"}
+    assert response.status_code == 200, response.text
+    # The wire contract for a normal caller is unchanged: no diagnostics key.
+    assert "diagnostics" not in response.json()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
@@ -214,6 +214,14 @@ class AIQuizDiagnostics(BaseModel):
     understanding_source: str = ""
     #: Provider call outcomes: calls attempted, valid, empty, discarded.
     provider_calls: dict[str, int] = Field(default_factory=dict)
+    #: Plans and candidate drops broken down by question type, so a
+    #: type-allocation failure cannot masquerade as a thin document.
+    plans_by_type: dict[str, int] = Field(default_factory=dict)
+    candidates_by_type: dict[str, int] = Field(default_factory=dict)
+    grounding_rejected: int = 0
+    diversity_rejected: int = 0
+    #: One entry per dropped candidate: stage, reason, concept, pages, type.
+    rejection_details: list[dict[str, Any]] = Field(default_factory=list)
     #: Per-page extraction quality, capped so the payload stays small.
     page_quality: list[str] = Field(default_factory=list)
 

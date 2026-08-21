@@ -91,6 +91,7 @@ from app.services.quiz_scoring import (
     select_quiz_questions,
 )
 from app.services.quiz_understanding import (
+    ConceptNode,
     DocumentUnderstanding,
     _RawUnderstanding,
     build_understanding_prompt,
@@ -364,12 +365,58 @@ def build_quiz_context(source: AIDocumentSource) -> QuizContext:
 # --------------------------------------------------------------------------- #
 
 
+def _merge_understandings(
+    provider: DocumentUnderstanding, document: DocumentUnderstanding
+) -> DocumentUnderstanding:
+    """Add concepts the document teaches but the provider did not return.
+
+    The provider's own concepts are kept first and unchanged: its labels and
+    descriptions are better written, and where it and the document agree the
+    provider's version wins. Anything it simply *missed* is then appended from
+    the document's own reading.
+
+    This cannot weaken grounding. Deterministic concepts are built only from
+    explanatory sentences that actually appear in the PDF, with their page
+    numbers attached, so every added concept is page-evidenced by construction.
+    """
+    seen_keys = {concept.key() for concept in provider.concepts}
+    seen_ids = {concept.concept_id for concept in provider.concepts}
+
+    added: list[ConceptNode] = []
+    for concept in document.concepts:
+        if concept.key() in seen_keys or concept.concept_id in seen_ids:
+            continue
+        seen_keys.add(concept.key())
+        seen_ids.add(concept.concept_id)
+        added.append(concept)
+
+    if not added:
+        return provider
+
+    concepts = tuple(provider.concepts) + tuple(added)
+    known_ids = {concept.concept_id for concept in concepts}
+    # Only relationships whose endpoints both survived the merge; a dangling
+    # edge would point at a concept the planner cannot see.
+    relationships = tuple(provider.relationships) + tuple(
+        edge
+        for edge in document.relationships
+        if edge.source_id in known_ids and edge.target_id in known_ids
+    )
+    return replace(
+        provider,
+        concepts=concepts,
+        relationships=relationships,
+        source=f"{provider.source}+document",
+    )
+
+
 def build_document_understanding(
     service: Any,
     source: AIDocumentSource,
     context: QuizContext,
     *,
     system_prompt: str,
+    minimum_concepts: int = 0,
     trace: dict[str, Any] | None = None,
 ) -> tuple[DocumentUnderstanding, Any | None]:
     """Understand the document first; fall back to a deterministic study map.
@@ -407,6 +454,25 @@ def build_document_understanding(
     )
     if trace is not None:
         trace["concept_drops"] = drops
+        trace["provider_concepts_kept"] = len(understanding.concepts)
+
+    # A provider returning two concepts for a document that teaches twenty-six
+    # is the reported bug: its answer was accepted, the document's own reading
+    # was thrown away, and the exam came back short while the PDF was blamed.
+    # Whenever the provider's map is too thin to plan the requested quiz, the
+    # document supplements it rather than being discarded.
+    usable = len(list(understanding.important_concepts()))
+    if minimum_concepts and usable < minimum_concepts:
+        document = deterministic_understanding(context.units, title=source.title)
+        if len(document.concepts) > len(understanding.concepts):
+            merged = _merge_understandings(understanding, document)
+            if trace is not None:
+                trace["provider_map_supplemented"] = 1
+                trace["concepts_added_from_document"] = len(merged.concepts) - len(
+                    understanding.concepts
+                )
+            understanding = merged
+
     if not understanding.is_usable:
         # The provider answered, but nothing it proposed survived verification.
         # Falling back silently here is what makes a discarded study map
@@ -1461,6 +1527,39 @@ def _quiz_telemetry(
         # "the document is thin" apart from "the provider answered and we threw
         # the answer away".
         "provider_trace": dict(provider_trace or {}),
+        # Per-type funnel: a request for four types that plans only one is a
+        # distinct failure from a document that is simply thin.
+        "plans_by_type": dict(Counter(plan.question_type for plan in blueprints)),
+        "candidates_by_type": dict(
+            Counter(
+                blueprint.question_type
+                for note in real_rejections
+                if (blueprint := next(
+                    (b for b in blueprints if b.id == note.blueprint_id), None
+                )) is not None
+            )
+        ),
+        # Per-stage rejection totals, so no candidate can vanish uncounted.
+        "grounding_rejected": sum(
+            1 for note in real_rejections if note.stage in {"validation", "grounding"}
+        ),
+        "diversity_rejected": sum(
+            1 for note in rejections if note.stage == "diversity_selection"
+        ),
+        # Every drop, with the reason attached.
+        "rejection_details": [
+            {
+                "stage": note.stage,
+                "reason": note.reason,
+                "concept": note.concept_id,
+                "pages": list(note.evidence_pages),
+                "question_type": next(
+                    (b.question_type for b in blueprints if b.id == note.blueprint_id),
+                    "",
+                ),
+            }
+            for note in real_rejections[:40]
+        ],
         "concepts_proposed_by_provider": (provider_trace or {}).get(
             "concept_drops", {}
         ).get("proposed", 0),
@@ -1712,6 +1811,9 @@ def generate_quiz(
     provider_trace: dict[str, Any] = {}
     understanding, map_completion = build_document_understanding(
         service, source, context, system_prompt=shared_system_prompt,
+        # The planner needs materially more concepts than questions to build a
+        # diverse quiz; below that the exam is short before writing begins.
+        minimum_concepts=count,
         trace=provider_trace,
     )
     context.understanding = understanding
