@@ -172,6 +172,27 @@ def _extract_pdf(
     return source
 
 
+#: Never trim a page below this: a few words carry no teachable content, and a
+#: page that survives only as a fragment is worse than an evenly sampled one.
+_MIN_PAGE_CHARACTERS = 400
+
+
+def _trim_at_boundary(text: str, limit: int) -> str:
+    """Cut ``text`` to ``limit`` characters without splitting a sentence.
+
+    A half sentence is not evidence -- the grounding gates quote source spans
+    verbatim, so a truncated clause becomes an unusable (or misleading) quote.
+    """
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    for terminator in (". ", "? ", "! ", "\n"):
+        cut = window.rfind(terminator)
+        if cut >= limit // 2:
+            return window[: cut + 1].strip()
+    return window.rstrip()
+
+
 def _extract_pdf_uncached(
     data: bytes,
     *,
@@ -200,25 +221,43 @@ def _extract_pdf_uncached(
         if not selected_pages or selected_pages[0] < 1 or selected_pages[-1] > page_count:
             raise AIDocumentUnsupportedError("One or more selected pages are outside the PDF.")
 
-    chunks: list[str] = []
-    used = 0
+    # Read every selected page first, then decide how to fit them in the
+    # character budget. The previous loop filled pages front-to-back and broke
+    # when the budget ran out, so a dense 32-page PDF was silently reduced to
+    # its first ~22 pages: the later chapters simply never reached the quiz
+    # pipeline, and the resulting "only page(s) 1..22 of 32 were used" looked
+    # like a page-scoping bug rather than truncation.
+    extracted: list[tuple[int, str]] = []
     for page_number in selected_pages:
         try:
             raw = reader.pages[page_number - 1].extract_text() or ""
         except (PdfReadError, ValueError, KeyError):
             raw = ""
         clean = _clean_text(raw)
-        if not clean:
-            continue
-        header = f"[Page {page_number}]\n"
-        remaining = max_characters - used - len(header)
-        if remaining <= 0:
-            break
-        page_text = clean[:remaining]
-        chunks.append(f"{header}{page_text}")
-        used += len(header) + len(page_text)
-        if used >= max_characters:
-            break
+        if clean:
+            extracted.append((page_number, clean))
+
+    overhead = sum(len(f"[Page {number}]\n") for number, _ in extracted)
+    total_text = sum(len(text) for _, text in extracted)
+    budget = max_characters - overhead
+
+    chunks: list[str] = []
+    if extracted and total_text > budget > 0:
+        # Too much text for one request. Trim every page proportionally instead
+        # of dropping whole pages, so the study map still covers the entire
+        # document -- breadth across the PDF matters far more to a quiz than
+        # complete prose on its opening chapters.
+        per_page = max(_MIN_PAGE_CHARACTERS, budget // len(extracted))
+        remaining = budget
+        for number, text in extracted:
+            if remaining <= 0:
+                break
+            take = min(len(text), per_page, remaining)
+            chunks.append(f"[Page {number}]\n{_trim_at_boundary(text, take)}")
+            remaining -= take
+    else:
+        for number, text in extracted:
+            chunks.append(f"[Page {number}]\n{text}")
 
     if not chunks:
         raise AIDocumentUnsupportedError(
