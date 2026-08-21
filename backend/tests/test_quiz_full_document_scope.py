@@ -574,3 +574,188 @@ def test_image_only_pages_are_counted_not_silently_ignored() -> None:
     assert telemetry["text_pages"] == 1
     assert telemetry["image_only_pages"] == 1
     assert any("image available" in line for line in telemetry["page_quality"])
+
+
+# --------------------------------------------------------------------------- #
+# Provider-path regression: canonicalised concept labels must survive
+# --------------------------------------------------------------------------- #
+
+
+def _provider_understanding(concepts):
+    """A Gemini-shaped study map wrapping the supplied concepts."""
+    from app.services.quiz_understanding import _RawUnderstanding
+
+    return _RawUnderstanding.model_validate(
+        {
+            "subject": "Databases",
+            "summary": "Lecture slides covering core concepts.",
+            "main_topics": [
+                {
+                    "name": "Course",
+                    "concept_ids": [c["id"] for c in concepts[:6]],
+                    "source_pages": [2],
+                }
+            ],
+            "concepts": concepts,
+            "learning_objectives": [
+                {
+                    "text": "Explain each concept.",
+                    "concept_ids": [c["id"] for c in concepts[:4]],
+                    "source_pages": [2],
+                }
+            ],
+        }
+    )
+
+
+def _page_definitions(context):
+    found = []
+    for unit in context.units:
+        for line in unit.text.split("\n"):
+            if " is defined as " in line:
+                found.append((unit.page, line, line.split(" is defined as")[0].strip()))
+                break
+    return found
+
+
+@pytest.mark.parametrize(
+    "canonicalise",
+    [
+        lambda name: name,
+        lambda name: f"{name} mechanism",
+        lambda name: f"the process of {name}",
+        lambda name: f"{name} concept",
+    ],
+)
+def test_a_canonicalised_provider_label_still_finds_its_evidence(canonicalise) -> None:
+    """The 8 -> 1 collapse.
+
+    A provider almost never echoes the page's surface wording; it returns a
+    canonical label ("the process of mitosis") for a slide titled "Mitosis".
+    Requiring 60% of every token of that expanded label to occur in one
+    sentence discarded the concept outright -- measured at 30 -> 11 surviving
+    concepts on this 32-page deck, which is exactly how an eight-question exam
+    came back with one question.
+    """
+    from app.services.quiz_grounding import iter_sentences
+    from app.services.quiz_understanding import _concept_sentences, _valid_evidence
+
+    clear_extraction_cache()
+    source = _extract_pdf_uncached(
+        pdf_bytes(),
+        file_id="t",
+        title="SQL18",
+        max_characters=100_000,
+        allowed_pages=None,
+    )
+    context = build_quiz_context(source)
+    sentences = iter_sentences(context.units)
+    page_text = {unit.page: unit.text for unit in context.units}
+
+    definitions = _page_definitions(context)
+    assert definitions, "fixture must contain definitions"
+
+    kept = 0
+    for page, _quote, name in definitions:
+        label = canonicalise(name)
+        # The provider's quote is its own paraphrase, not a verbatim span.
+        paraphrase = f"{label} is an important idea covered in this lecture."
+        evidence = _valid_evidence(
+            [paraphrase], pages=[page], page_text=page_text, name=label
+        ) or _concept_sentences(label, sentences, limit=3)
+        if evidence:
+            kept += 1
+    assert kept == len(definitions), f"lost {len(definitions) - kept} concepts"
+
+
+def test_a_concept_the_document_never_teaches_is_still_discarded() -> None:
+    """Recovering canonicalised labels must not admit ungrounded concepts."""
+    from app.services.quiz_grounding import iter_sentences
+    from app.services.quiz_understanding import _concept_sentences, _valid_evidence
+
+    clear_extraction_cache()
+    source = _extract_pdf_uncached(
+        pdf_bytes(),
+        file_id="t",
+        title="SQL18",
+        max_characters=100_000,
+        allowed_pages=None,
+    )
+    context = build_quiz_context(source)
+    sentences = iter_sentences(context.units)
+    page_text = {unit.page: unit.text for unit in context.units}
+
+    for invented in (
+        "blockchain mechanism",
+        "quantum entanglement process",
+        "sonnet structure",
+        "Kubernetes orchestration concept",
+    ):
+        evidence = _valid_evidence(
+            [f"{invented} matters here."],
+            pages=[2],
+            page_text=page_text,
+            name=invented,
+        ) or _concept_sentences(invented, sentences, limit=3)
+        assert not evidence, f"ungrounded concept survived: {invented}"
+
+
+def test_a_provider_study_map_yields_a_full_exam(client, monkeypatch) -> None:
+    """End-to-end over HTTP with a Gemini-shaped provider, not the fallback."""
+    from app.services.ai_service import AIStructuredCompletion
+    from app.services.quiz_pipeline import _RawQuizPool
+    from app.services.quiz_understanding import _RawUnderstanding
+
+    clear_extraction_cache()
+    source = _extract_pdf_uncached(
+        pdf_bytes(),
+        file_id="t",
+        title="SQL18",
+        max_characters=100_000,
+        allowed_pages=None,
+    )
+    context = build_quiz_context(source)
+    concepts = [
+        {
+            "id": f"c{index}",
+            # Canonicalised label, exactly as a model would phrase it.
+            "name": f"the process of {name}",
+            "description": quote,
+            "topic": "Course",
+            "knowledge_type": "definition",
+            "teaching_emphasis": "high",
+            # A paraphrase, not a verbatim span.
+            "evidence_quotes": [f"{name} is an important idea in this lecture."],
+            "source_pages": [page],
+            "why_important": "central",
+        }
+        for index, (page, quote, name) in enumerate(_page_definitions(context)[:12], 1)
+    ]
+    understanding = _provider_understanding(concepts)
+
+    class Gemini:
+        def complete_structured(self, **kwargs):
+            if kwargs["response_model"] is _RawUnderstanding:
+                return AIStructuredCompletion(
+                    value=understanding,
+                    provider="gemini",
+                    model="gemini-3.7-flash",
+                    fallback_used=False,
+                )
+            # Writer returns nothing usable; the deterministic supplement must
+            # still fill the exam from the recovered study map.
+            return AIStructuredCompletion(
+                value=_RawQuizPool(questions=[]),
+                provider="gemini",
+                model="gemini-3.7-flash",
+                fallback_used=False,
+            )
+
+    import app.api.ai as ai_api
+
+    app.dependency_overrides[ai_api.get_ai_service] = lambda: Gemini()
+    response = ask(client, count=8, kind="exam", scope="document", diagnostics=True)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["questions"]) == 8
+    assert body["diagnostics"]["concepts"] >= 8

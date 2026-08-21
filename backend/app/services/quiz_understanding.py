@@ -562,6 +562,57 @@ def _is_teaching_sentence(sentence: str) -> bool:
     return len(content_tokens(sentence)) >= 5
 
 
+#: Words a model bolts onto a concept label without changing which concept it
+#: names ("the process of mitosis", "Mitosis mechanism"). Stripping them lets a
+#: canonicalised provider label still be matched against the page's own
+#: wording. Deliberately generic and subject-neutral -- nothing here is
+#: specific to biology, databases, or any other field.
+_LABEL_QUALIFIERS = frozenset(
+    {
+        "process",
+        "processes",
+        "mechanism",
+        "mechanisms",
+        "concept",
+        "concepts",
+        "principle",
+        "principles",
+        "method",
+        "methods",
+        "technique",
+        "techniques",
+        "operation",
+        "operations",
+        "procedure",
+        "procedures",
+        "stage",
+        "stages",
+        "phase",
+        "phases",
+        "step",
+        "steps",
+        "type",
+        "types",
+        "kind",
+        "kinds",
+        "form",
+        "forms",
+        "structure",
+        "structures",
+        "system",
+        "systems",
+        "model",
+        "models",
+        "theory",
+        "overview",
+        "introduction",
+        "definition",
+        "example",
+        "examples",
+    }
+)
+
+
 def _concept_sentences(
     name: str, sentences: list[SourceSentence], *, limit: int = 6
 ) -> list[SourceSentence]:
@@ -569,12 +620,28 @@ def _concept_sentences(
     key_tokens = content_tokens(name)
     if not key_tokens:
         return []
+    # A provider rarely echoes the page's exact surface wording. It
+    # canonicalises: the slide says "Mitosis", the model returns "the process
+    # of mitosis" or "Mitosis mechanism". Requiring 60% of *every* token of
+    # that expanded label to appear in one sentence discarded the concept
+    # entirely -- measured at 30 -> 11 surviving concepts on a 32-page deck,
+    # which is how an 8-question exam collapsed to one.
+    #
+    # The distinctive tokens are what identify the concept; generic qualifiers
+    # a model bolts on ("process", "mechanism", "concept") carry no identity.
+    # Match on the distinctive part, and keep the strict rule as the preferred,
+    # higher-scoring signal rather than the only admissible one.
+    distinctive = key_tokens - _LABEL_QUALIFIERS
+    match_tokens = distinctive or key_tokens
     normalized_name = normalize_question_text(name)
     matches: list[tuple[float, SourceSentence]] = []
     for sentence in sentences:
         normalized = normalize_question_text(sentence.text)
         tokens = sentence.tokens
         overlap = len(key_tokens & tokens) / len(key_tokens)
+        # Fall back to the distinctive tokens when the full label does not fit.
+        if overlap < 0.6 and match_tokens:
+            overlap = max(overlap, len(match_tokens & tokens) / len(match_tokens))
         if normalized_name and normalized_name in normalized:
             overlap = max(overlap, 1.0)
         if overlap < 0.6:
