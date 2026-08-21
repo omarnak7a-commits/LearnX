@@ -247,19 +247,45 @@ _COMPOSITE_BOUNDARY_RE = re.compile(
 #:
 #: Only a glyph followed by whitespace is a bullet. That proviso keeps
 #: "-5 degrees", "--verbose" and hyphenated fragments intact.
-_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[\u2022\u2023\u25AA\u25CF\u25E6\u2043\u2219*\u00B7]|[-\u2010-\u2015](?=\s))\s*")
+_BULLET_PREFIX_RE = re.compile(
+    r"^\s*(?:[\u2022\u2023\u25AA\u25AB\u25CF\u25CB\u25E6\u2043\u2219\u00B7\u25A0\u273B\u27A2\u2794]"
+    r"|[*\u2217](?=\s)"
+    r"|[-\u2010-\u2015](?=\s))\s*"
+)
+
+#: Ordered-list markers used by numbered slides: "1. ", "2) ", "(3) ", "a) ".
+#:
+#: Deliberately narrow, because a number at the start of a line is usually
+#: content rather than a marker:
+#:
+#:  * at most two digits, so a year ("1929. The crash began.") is left alone;
+#:  * the delimiter must be followed by whitespace, so section numbers ("3.2
+#:    The Nucleus") and decimals ("0.5 mol") never match;
+#:  * only *lowercase* letters, so an initial ("A. Hassan") keeps its name.
+_LIST_NUMBER_RE = re.compile(r"^\s*\(?(?:\d{1,2}|[a-z])[.)]\s+")
 
 
 def strip_bullet_prefix(line: str) -> str:
-    """Remove a leading list glyph, preserving the text after it.
+    """Remove a leading list marker, preserving the text after it.
+
+    Handles both unordered glyphs and ordered markers, since a numbered slide
+    ("1. A primary key uniquely identifies each row") is defeated by exactly
+    the same mechanism as a bulleted one.
 
     Applied repeatedly so nested markers ("- - item") collapse, but never so
     far that the line is emptied of content.
     """
     text = line
-    for _ in range(3):
+    for _ in range(4):
         stripped = _BULLET_PREFIX_RE.sub("", text, count=1)
         if stripped == text:
+            stripped = _LIST_NUMBER_RE.sub("", text, count=1)
+        if stripped == text:
+            break
+        # Never strip a marker off a line that is nothing but the marker: a
+        # lone "1." is a page number, and blanking it would delete the line
+        # rather than clean it.
+        if not stripped.strip():
             break
         text = stripped
     return text if text.strip() else line
