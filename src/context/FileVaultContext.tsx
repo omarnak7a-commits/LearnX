@@ -19,7 +19,7 @@ import type {
 import { readingPercent, isFullyRead } from '../types/fileVault'
 import { getFileVaultStorage } from '../lib/fileVault/storage'
 import { extractPdf, estimateReadingMinutes, loadPdfDocument } from '../lib/fileVault/pdfEngine'
-import { analyzeDocument, generateQuestions, hashString } from '../lib/fileVault/textAnalysis'
+import { analyzeDocument, hashString } from '../lib/fileVault/textAnalysis'
 import { weekKeyFor, weekLabelFor } from '../lib/fileVault/weeks'
 import { vaultApi, apiVaultFileToFrontend, vaultFileToPatch } from '../lib/fileVault/apiClient'
 import { aiApi } from '../lib/ai/apiClient'
@@ -65,7 +65,11 @@ interface FileVaultContextValue {
   setCurrentPage: (id: string, page: number) => Promise<void>
   addStudyTime: (id: string, seconds: number) => Promise<void>
   getPdfDocument: (id: string) => Promise<PDFDocumentProxy | null>
-  generatePracticeQuiz: (id: string, count?: number) => Promise<VaultQuizQuestion[]>
+  generatePracticeQuiz: (
+    id: string,
+    count?: number,
+    scope?: QuizSourceScope
+  ) => Promise<VaultQuizQuestion[]>
   generateExam: (
     id: string,
     count: number,
@@ -80,6 +84,20 @@ interface FileVaultContextValue {
     coveragePages: number[]
   ) => Promise<void>
 }
+
+/**
+ * What a generated quiz is allowed to draw on.
+ *
+ * 'document'   — the whole uploaded PDF. This is the default: "make me an exam
+ *                from this PDF" means the PDF, not the fraction of it the
+ *                student has scrolled past.
+ * 'pages-read' — only the pages the student actually opened, for a deliberate
+ *                "quiz me on what I've read so far" request.
+ */
+export type QuizSourceScope = 'document' | 'pages-read'
+
+/** Coalescing window for backend progress writes. */
+const REMOTE_SYNC_DEBOUNCE_MS = 1200
 
 const FileVaultContext = createContext<FileVaultContextValue | null>(null)
 
@@ -107,6 +125,9 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({})
   const storage = useMemo(() => getFileVaultStorage(), [])
   const pdfDocCache = useRef<Map<string, PDFDocumentProxy>>(new Map())
+  // Mirrors `files` so callbacks never read a stale snapshot (see mutate).
+  const filesRef = useRef<VaultFile[]>([])
+  filesRef.current = files
 
   useEffect(() => {
     let cancelled = false
@@ -138,16 +159,58 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
     }
   }, [storage])
 
+  /**
+   * Coalesced backend sync.
+   *
+   * Reading progress mutates frequently (every page the student opens),
+   * and each mutation used to issue its own PATCH. Pending writes are keyed by
+   * file id so only the newest state for a file is sent, and only after the
+   * student stops generating events.
+   */
+  const pendingSync = useRef<Map<string, VaultFile>>(new Map())
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flushRemoteSync = useCallback(() => {
+    if (syncTimer.current) {
+      clearTimeout(syncTimer.current)
+      syncTimer.current = null
+    }
+    const batch = [...pendingSync.current.values()]
+    pendingSync.current.clear()
+    for (const file of batch) {
+      // Fire-and-forget: local state and IndexedDB already hold the truth, so
+      // a failed sync degrades to "offline" rather than losing progress.
+      void vaultApi.update(file.id, vaultFileToPatch(file)).catch(() => undefined)
+    }
+  }, [])
+
+  const scheduleRemoteSync = useCallback(
+    (file: VaultFile) => {
+      pendingSync.current.set(file.id, file)
+      if (syncTimer.current) clearTimeout(syncTimer.current)
+      syncTimer.current = setTimeout(flushRemoteSync, REMOTE_SYNC_DEBOUNCE_MS)
+    },
+    [flushRemoteSync]
+  )
+
+  // Never lose the tail of a reading session: flush on unmount and when the
+  // page is being hidden/closed.
+  useEffect(() => {
+    const onHide = () => flushRemoteSync()
+    window.addEventListener('pagehide', onHide)
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      document.removeEventListener('visibilitychange', onHide)
+      flushRemoteSync()
+    }
+  }, [flushRemoteSync])
+
   const persist = useCallback(
     async (file: VaultFile) => {
-      // Push to the real backend (fire-and-forget; local state wins for UX,
-      // and failures leave the offline mirror intact).
-      try {
-        await vaultApi.update(file.id, vaultFileToPatch(file))
-      } catch {
-        // ignore network failures — keep working offline
-      }
-      await storage.putFile(file)
+      // React state first: the UI must never wait on I/O. Reading progress
+      // updates fire on a timer while the student reads, so awaiting a network
+      // PATCH here used to stall page navigation behind a round trip.
       setFiles((prev) => {
         const idx = prev.findIndex((f) => f.id === file.id)
         if (idx === -1) return [file, ...prev]
@@ -155,8 +218,16 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
         next[idx] = file
         return next
       })
+      // Local mirror is the durable source of truth and is cheap; the backend
+      // PATCH is coalesced so rapid progress updates collapse into one write.
+      try {
+        await storage.putFile(file)
+      } catch {
+        // Storage failure must not break reading; the session stays in memory.
+      }
+      scheduleRemoteSync(file)
     },
-    [storage]
+    [storage, scheduleRemoteSync]
   )
 
   const uploadFile = useCallback(
@@ -300,12 +371,20 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
 
   const mutate = useCallback(
     async (id: string, updater: (file: VaultFile) => VaultFile) => {
-      const current = files.find((f) => f.id === id)
+      // Read through a ref, not the captured `files` array. Reading progress
+      // produces bursts of mutations (page read, page changed, study time);
+      // with a stale closure the second mutation in a burst rebased on the
+      // pre-first-mutation snapshot and silently discarded the first, which
+      // is how read pages went missing.
+      const current = filesRef.current.find((f) => f.id === id)
       if (!current) return
       const next = reevaluateStatus(updater(current))
+      // Keep the ref authoritative immediately so the *next* mutation in the
+      // same tick sees this one, even before React re-renders.
+      filesRef.current = filesRef.current.map((f) => (f.id === id ? next : f))
       await persist(next)
     },
-    [files, persist]
+    [persist]
   )
 
   const toggleFavorite = useCallback(
@@ -436,31 +515,38 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
   )
 
   const generatePracticeQuiz = useCallback(
-    async (id: string, count = 6): Promise<VaultQuizQuestion[]> => {
+    async (
+      id: string,
+      count = 6,
+      scope: QuizSourceScope = 'document'
+    ): Promise<VaultQuizQuestion[]> => {
       const file = files.find((f) => f.id === id)
       if (!file || !file.analysis) return []
-      // Practice quizzes ONLY draw from pages already viewed — never
-      // generate questions from unread sections, per the spec.
-      const allowedPages = new Set(file.pagesRead)
-      if (allowedPages.size === 0) return []
-      try {
-        const generated = await aiApi.quiz({
-          fileId: id,
-          count,
-          kind: 'practice',
-          allowedPages: [...allowedPages],
-        })
-        return generated.questions
-      } catch (error) {
-        // Never silently replace a failed server-side, teacher-planned quiz
-        // with the much weaker sentence-transformation generator. Local-only
-        // uploads cannot be sent to the backend, so they retain explicit
-        // offline capability; stored File Vault PDFs surface the error and the
-        // quiz panel offers a retry instead of showing low-quality questions.
-        if (!id.startsWith('file-')) throw error
-        const seed = hashString(id) + file.pagesRead.length
-        return generateQuestions(file.pagesText, allowedPages, seed, count)
-      }
+      // `scope` decides what the quiz may draw on. 'pages-read' restricts it to
+      // the pages the student actually opened; 'document' uses the whole PDF.
+      //
+      // The default is the whole document. Restricting every practice quiz to
+      // pagesRead meant a student who had opened one page of a twenty-page
+      // textbook was quizzed on the title page alone — which contains no
+      // teachable content, so the backend correctly found zero concepts and
+      // reported "this PDF does not contain enough clearly explained
+      // material". The document was fine; it was never being sent.
+      const readPages = [...new Set(file.pagesRead)].sort((a, b) => a - b)
+      if (scope === 'pages-read' && readPages.length === 0) return []
+      // No client-side fallback. The backend understands the document before
+      // it writes anything, and when it cannot verify enough content it
+      // returns a controlled "unavailable" state. Substituting the old
+      // sentence-transformation generator here is exactly how shallow
+      // questions came back, so a failure surfaces as an error and the quiz
+      // panel offers a retry instead.
+      const generated = await aiApi.quiz({
+        fileId: id,
+        count,
+        kind: 'practice',
+        scope,
+        ...(scope === 'pages-read' ? { allowedPages: readPages } : {}),
+      })
+      return generated.questions
     },
     [files]
   )
@@ -473,23 +559,20 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
     ): Promise<VaultQuizQuestion[]> => {
       const file = files.find((f) => f.id === id)
       if (!file || !file.analysis || !isFullyRead(file)) return []
-      const pageNumbers = Array.from({ length: file.pageCount }, (_, i) => i + 1)
-      const allowedPages = new Set(pageNumbers)
-      try {
-        const generated = await aiApi.quiz({
-          fileId: id,
-          count,
-          questionTypes: types,
-          kind: 'exam',
-          allowedPages: pageNumbers,
-        })
-        return generated.questions
-      } catch {
-        const seed = hashString(id) + 7
-        const all = generateQuestions(file.pagesText, allowedPages, seed, count * 2)
-        const filtered = types.length > 0 ? all.filter((q) => types.includes(q.type)) : all
-        return filtered.slice(0, count)
-      }
+      // An exam covers the whole document. Saying so with `scope` is more
+      // robust than enumerating page numbers from a possibly stale pageCount:
+      // if that count were ever short, the exam would silently be sourced from
+      // a truncated document.
+      // As with the practice quiz: an exam is either genuinely grounded in the
+      // backend's semantic study map or it is not offered at all.
+      const generated = await aiApi.quiz({
+        fileId: id,
+        count,
+        questionTypes: types,
+        kind: 'exam',
+        scope: 'document',
+      })
+      return generated.questions
     },
     [files]
   )

@@ -1,0 +1,34 @@
+calculus-limits-derivative s1   8Q  clean
+calculus-limits-derivative s3   8Q  clean
+calculus-limits-derivative s5   8Q  clean
+calculus-limits-derivative s7   8Q  clean
+calculus-limits-derivative s11  8Q  clean
+cell-biology-ch3           s1   8Q  clean
+cell-biology-ch3           s3   8Q  clean
+cell-biology-ch3           s5   8Q  DEFECT=1 WARN=0
+      [DEFECT] Q5: named-unacceptable stem: 'What is the cell?'
+cell-biology-ch3           s7   8Q  clean
+cell-biology-ch3           s11  8Q  DEFECT=1 WARN=0
+      [DEFECT] Q3: named-unacceptable stem: 'What is the cell?'
+operating-systems-scheduli s1   8Q  clean
+operating-systems-scheduli s3   8Q  clean
+operating-systems-scheduli s5   8Q  clean
+operating-systems-scheduli s7   8Q  clean
+operating-systems-scheduli s11  8Q  clean
+physics-newtonian-mechanic s1   7Q  clean
+physics-newtonian-mechanic s3   7Q  DEFECT=1 WARN=0
+      [DEFECT] Q3: named-unacceptable stem: 'What is the net force?'
+physics-newtonian-mechanic s5   7Q  DEFECT=1 WARN=0
+      [DEFECT] Q4: named-unacceptable stem: 'What is the net force?'
+physics-newtonian-mechanic s7   7Q  DEFECT=1 WARN=0
+      [DEFECT] Q4: named-unacceptable stem: 'What is the net force?'
+physics-newtonian-mechanic s11  7Q  DEFECT=1 WARN=0
+      [DEFECT] Q4: named-unacceptable stem: 'What is the net force?'
+
+==============================================================================
+TOTAL questions scanned : 155
+TOTAL defects           : 6
+TOTAL warnings          : 0
+
+Grouped:
+    6x DEFECT: named-unacceptable stem

@@ -5,6 +5,15 @@ from app.services.quiz_pipeline import _RawCandidate, normalize_blueprinted_cand
 from app.services.quiz_scoring import content_tokens
 
 
+# The old content-map categories map onto study-map knowledge types.
+_KNOWLEDGE_TYPE_ALIASES = {
+    "core_concept": "definition",
+    "important_definition": "definition",
+    "process_mechanism": "process",
+    "formula_rule": "principle",
+}
+
+
 def _blueprint(
     *,
     question_type: str,
@@ -13,16 +22,19 @@ def _blueprint(
     skill: str = "understanding",
     concept: str = "Recursion",
 ) -> QuestionBlueprint:
+    knowledge_type = _KNOWLEDGE_TYPE_ALIASES.get(category, category)
+    concept_id = concept.lower().replace(" ", "-")
     return QuestionBlueprint(
         id="bp-1",
-        content_id="map-1",
+        concept_id=concept_id,
         concept=concept,
-        category=category,
-        importance=0.92,
+        knowledge_target_id=f"{concept_id}--{skill}",
         knowledge_target=evidence,
+        knowledge_type=knowledge_type,
         cognitive_skill=skill,
         question_type=question_type,
         difficulty="medium",
+        importance=0.92,
         evidence=evidence,
         pages=(1,),
     )

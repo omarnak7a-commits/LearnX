@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 from app.core.config import Settings, get_settings
 from app.services.ai_providers import (
     AIProvider,
+    ErrorCategory,
     GeminiProvider,
     GroqProvider,
     ProviderCompletion,
@@ -26,12 +27,99 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
+@dataclass(frozen=True)
+class ProviderFailure:
+    """One provider's sanitized failure record. Never contains credentials."""
+
+    provider: str
+    category: str
+    status_code: int | None
+    detail: str
+    model: str = ""
+    #: Server-supplied cooldown in seconds, when the provider sent Retry-After.
+    retry_after: float | None = None
+
+    @property
+    def summary(self) -> str:
+        parts = [f"{self.provider}: {self.category}"]
+        if self.model:
+            parts.append(f"model={self.model}")
+        if self.status_code is not None:
+            parts.append(f"status={self.status_code}")
+        if self.detail:
+            parts.append(f"detail={self.detail}")
+        return " ".join(parts)
+
+
+def _failure_from(name: str, exc: Exception) -> ProviderFailure:
+    """Classify any provider-layer exception into a sanitized record."""
+    if isinstance(exc, ProviderError):
+        return ProviderFailure(
+            provider=exc.provider or name,
+            category=exc.category.value,
+            status_code=exc.status_code,
+            detail=exc.detail,
+            model=exc.model,
+            retry_after=exc.retry_after,
+        )
+    if isinstance(exc, ValidationError):
+        return ProviderFailure(
+            provider=name,
+            category=ErrorCategory.RESPONSE_SCHEMA.value,
+            status_code=None,
+            # Field paths only -- never the offending values, which could echo
+            # document text back into the logs.
+            detail=",".join(
+                ".".join(str(part) for part in error.get("loc", ()))
+                for error in exc.errors()[:3]
+            )[:200],
+        )
+    if isinstance(exc, ValueError):
+        return ProviderFailure(
+            provider=name,
+            category=ErrorCategory.RESPONSE_SCHEMA.value,
+            status_code=None,
+            detail=type(exc).__name__,
+        )
+    return ProviderFailure(
+        provider=name,
+        category=ErrorCategory.UNKNOWN.value,
+        status_code=None,
+        detail=type(exc).__name__,
+    )
+
+
 class AIServiceError(RuntimeError):
     pass
 
 
 class AIUnavailableError(AIServiceError):
-    pass
+    """Every configured provider failed.
+
+    Carries the sanitized per-provider diagnosis so callers can report *why*
+    instead of a generic "provider error". ``str()`` stays the user-safe
+    message; the structured detail lives on the attributes.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failures: "list[ProviderFailure] | None" = None,
+    ) -> None:
+        super().__init__(message)
+        self.failures: list[ProviderFailure] = failures or []
+
+    @property
+    def category(self) -> str:
+        """Category of the primary (first) failure, for one-line reporting."""
+        return self.failures[0].category if self.failures else ErrorCategory.UNKNOWN.value
+
+    def diagnosis(self) -> str:
+        """Credential-free, single-line summary of every provider attempt."""
+        if not self.failures:
+            return "no providers were attempted"
+        return "; ".join(failure.summary for failure in self.failures)
 
 
 class AIContentBlockedError(AIServiceError):
@@ -44,6 +132,8 @@ class AITextCompletion:
     provider: str
     model: str
     fallback_used: bool
+    #: Failures of any providers tried before the successful one.
+    failures: tuple["ProviderFailure", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,6 +142,10 @@ class AIStructuredCompletion(Generic[T]):
     provider: str
     model: str
     fallback_used: bool
+    #: Failures of the providers tried before the one that succeeded. Empty on
+    #: a clean primary success. Without this a silent degradation to the
+    #: fallback looks identical to a healthy run.
+    failures: tuple["ProviderFailure", ...] = ()
 
 
 class AIService:
@@ -70,6 +164,7 @@ class AIService:
                 api_key=settings.gemini_api_key,
                 model=settings.gemini_model,
                 timeout_seconds=settings.ai_timeout_seconds,
+                thinking_budget=getattr(settings, "gemini_thinking_budget", 0),
             ),
             "groq": GroqProvider(
                 api_key=settings.groq_api_key,
@@ -93,10 +188,17 @@ class AIService:
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> AITextCompletion:
-        failures: list[str] = []
+        failures: list[ProviderFailure] = []
         for index, (name, provider) in enumerate(self._provider_order()):
             if provider is None:
-                failures.append(f"unknown provider {name}")
+                failures.append(
+                    ProviderFailure(
+                        provider=name,
+                        category=ErrorCategory.CONFIGURATION.value,
+                        status_code=None,
+                        detail="provider not registered",
+                    )
+                )
                 continue
             try:
                 result = provider.generate(
@@ -105,17 +207,28 @@ class AIService:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-                return self._text_result(result, index)
+                if failures:
+                    logger.warning(
+                        "AI provider %s succeeded after earlier failures (%s)",
+                        result.provider,
+                        "; ".join(failure.summary for failure in failures),
+                    )
+                return self._text_result(result, index, failures)
             except ProviderContentBlockedError as exc:
                 raise AIContentBlockedError(str(exc)) from exc
             except ProviderError as exc:
-                failures.append(name)
-                logger.warning("AI provider %s failed; trying configured fallback", name)
+                failure = _failure_from(name, exc)
+                failures.append(failure)
+                logger.warning("AI provider failed (%s)", failure.summary)
                 if not exc.recoverable:
                     break
 
-        logger.error("All configured AI providers failed (%s)", ", ".join(failures))
-        raise AIUnavailableError("The AI service is temporarily unavailable. Please try again shortly.")
+        diagnosis = "; ".join(failure.summary for failure in failures)
+        logger.error("All configured AI providers failed (%s)", diagnosis)
+        raise AIUnavailableError(
+            "The AI service is temporarily unavailable. Please try again shortly.",
+            failures=failures,
+        )
 
     def complete_structured(
         self,
@@ -134,11 +247,18 @@ class AIService:
             "The JSON must match this schema exactly:\n"
             f"{json.dumps(schema, ensure_ascii=False, separators=(',', ':'))}"
         )
-        failures: list[str] = []
+        failures: list[ProviderFailure] = []
 
         for index, (name, provider) in enumerate(self._provider_order()):
             if provider is None:
-                failures.append(f"unknown provider {name}")
+                failures.append(
+                    ProviderFailure(
+                        provider=name,
+                        category=ErrorCategory.CONFIGURATION.value,
+                        status_code=None,
+                        detail="provider not registered",
+                    )
+                )
                 continue
             try:
                 completion = provider.generate(
@@ -152,32 +272,51 @@ class AIService:
                 value = response_model.model_validate_json(payload)
                 if validator is not None:
                     validator(value)
+                if failures:
+                    # Succeeded, but only after a provider failed: surface it
+                    # so a silent degradation is still visible to operators.
+                    logger.warning(
+                        "AI provider %s succeeded after earlier failures (%s)",
+                        completion.provider,
+                        "; ".join(failure.summary for failure in failures),
+                    )
                 return AIStructuredCompletion(
                     value=value,
                     provider=completion.provider,
                     model=completion.model,
                     fallback_used=index > 0,
+                    failures=tuple(failures),
                 )
             except ProviderContentBlockedError as exc:
                 raise AIContentBlockedError(str(exc)) from exc
             except (ProviderError, ValidationError, ValueError) as exc:
                 # Invalid provider JSON is a recoverable provider response,
                 # just like a timeout: retry once with the configured fallback.
-                failures.append(name)
-                logger.warning("AI provider %s failed structured validation; trying fallback", name)
+                failure = _failure_from(name, exc)
+                failures.append(failure)
+                logger.warning("AI provider failed structured output (%s)", failure.summary)
                 if isinstance(exc, ProviderError) and not exc.recoverable:
                     break
 
-        logger.error("All configured AI providers failed structured output (%s)", ", ".join(failures))
-        raise AIUnavailableError("The AI service is temporarily unavailable. Please try again shortly.")
+        diagnosis = "; ".join(failure.summary for failure in failures)
+        logger.error("All configured AI providers failed structured output (%s)", diagnosis)
+        raise AIUnavailableError(
+            "The AI service is temporarily unavailable. Please try again shortly.",
+            failures=failures,
+        )
 
     @staticmethod
-    def _text_result(result: ProviderCompletion, index: int) -> AITextCompletion:
+    def _text_result(
+        result: ProviderCompletion,
+        index: int,
+        failures: "list[ProviderFailure] | None" = None,
+    ) -> AITextCompletion:
         return AITextCompletion(
             text=result.text,
             provider=result.provider,
             model=result.model,
             fallback_used=index > 0,
+            failures=tuple(failures or ()),
         )
 
 

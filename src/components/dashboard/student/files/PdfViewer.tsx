@@ -1,11 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { LruCache, RenderCoordinator, pageWindow } from '../../../../lib/fileVault/pdfPageCache'
+import { ReadingTracker, visitActivePage } from '../../../../lib/fileVault/readingTracker'
 
 interface PdfViewerProps {
   doc: PDFDocumentProxy | null
-  currentPage: number
+  /** Page to open at. Only the *initial* value is honoured per document; the
+   * viewer owns the page thereafter so navigation never waits on persistence. */
+  initialPage: number
   onPageChange: (page: number) => void
+  /** Fired when pages become active and are therefore read. */
   onPageRead: (page: number) => void
   color: string
   onRequestReload?: () => void
@@ -15,16 +20,29 @@ interface PdfViewerProps {
 
 type FitMode = 'width' | 'custom'
 
+/** How many decoded pages to keep warm. Current + next + previous + slack. */
+const PAGE_CACHE_SIZE = 6
+
+/**
+ * pdf.js reports a cancelled render by rejecting with RenderingCancelledException.
+ * That is the normal result of navigating away mid-render, not a failure.
+ */
+function isCancellation(reason: unknown): boolean {
+  if (!reason || typeof reason !== 'object') return false
+  const name = (reason as { name?: unknown }).name
+  return name === 'RenderingCancelledException' || name === 'AbortException'
+}
+
 /**
  * Real PDF page rendering via pdf.js canvas output — genuine pagination,
  * genuine zoom, and genuine "resume exactly where you stopped" behavior
- * (the workspace passes in the student's real last-read `currentPage`).
+ * (the workspace passes in the student's real last-read page).
  * Every page the student navigates to is reported back via `onPageRead`
  * so reading progress is driven entirely by real viewing activity.
  */
 export default function PdfViewer({
   doc,
-  currentPage,
+  initialPage,
   onPageChange,
   onPageRead,
   color,
@@ -43,22 +61,118 @@ export default function PdfViewer({
   const userError = errorMessage ?? null
   const error = userError ?? internalError
 
-  // Re-render whenever the page, the document, or the zoom changes.
+  // --- Page ownership -----------------------------------------------------
+  // The viewer owns the displayed page. Previously the page number lived in
+  // the vault context, so every click had to wait for a network PATCH and an
+  // IndexedDB write before the UI could move. Persistence is now a
+  // notification (onPageChange), never a precondition.
+  const [page, setPage] = useState(() => Math.max(1, initialPage || 1))
+  const pageRef = useRef(page)
+  pageRef.current = page
+
+  // Adopt the caller's resume position once per document, not on every
+  // context update (which would fight the user's own navigation).
+  const adoptedFor = useRef<PDFDocumentProxy | null>(null)
   useEffect(() => {
-    let cancelled = false
+    if (!doc || adoptedFor.current === doc) return
+    adoptedFor.current = doc
+    const target = Math.min(Math.max(1, initialPage || 1), doc.numPages)
+    setPage(target)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc])
+
+  const goToPage = useCallback(
+    (next: number) => {
+      const limit = pageCount || Number.MAX_SAFE_INTEGER
+      const target = Math.min(Math.max(1, Math.trunc(next) || 1), limit)
+      if (target === pageRef.current) return
+      pageRef.current = target
+      setPage(target)
+      onPageChange(target)
+    },
+    [pageCount, onPageChange]
+  )
+
+  // --- Render coordination ------------------------------------------------
+  // One coordinator per mount: guarantees a stale render can never repaint
+  // the canvas over a newer page, and cancels superseded pdf.js work.
+  const coordinator = useMemo(() => new RenderCoordinator(), [])
+  // Decoded pdf.js page objects, bounded so long documents cannot leak.
+  const pageCache = useMemo(
+    () => new LruCache<number, Awaited<ReturnType<PDFDocumentProxy['getPage']>>>(PAGE_CACHE_SIZE),
+    []
+  )
+
+  useEffect(() => {
+    // A new document invalidates every cached page and pending render.
+    pageCache.clear()
+    coordinator.cancelInFlight()
+  }, [doc, pageCache, coordinator])
+
+  useEffect(
+    () => () => {
+      coordinator.dispose()
+      pageCache.clear()
+    },
+    [coordinator, pageCache]
+  )
+
+  const getPage = useCallback(
+    async (target: number) => {
+      const cached = pageCache.get(target)
+      if (cached) return cached
+      if (!doc) return null
+      const loaded = await doc.getPage(target)
+      pageCache.set(target, loaded)
+      return loaded
+    },
+    [doc, pageCache]
+  )
+
+  // --- Reading tracking ---------------------------------------------------
+  // A page is read the moment it becomes the ACTIVE page. There is no dwell
+  // timer. Preloaded neighbours are decoded by getPage() in the warming effect
+  // and never routed through here, so jumping 3 -> 20 records only 3 and 20.
+  const tracker = useMemo(() => new ReadingTracker(), [])
+  const onPageReadRef = useRef(onPageRead)
+  onPageReadRef.current = onPageRead
+
+  // Mark the active page read as soon as it becomes active. Keyed on `page`
+  // (not on render completion) so the mark is immediate and still fires for
+  // the page restored on open. Guarded on `doc` so we never record a page for
+  // a document that failed to load.
+  useEffect(() => {
+    if (!doc) return
+    // visitActivePage() marks the page and returns it only the first time it
+    // is seen, so revisits never duplicate progress or trigger a redundant
+    // write. Same helper the pipeline tests drive.
+    for (const readPage of visitActivePage(tracker, page, doc.numPages)) {
+      onPageReadRef.current(readPage)
+    }
+  }, [doc, page, tracker])
+
+  // Render the visible page. Only the newest generation may touch the canvas,
+  // so jumping 1 -> 10 paints page 10 and abandons page 1 rather than letting
+  // a late-resolving render overwrite it.
+  useEffect(() => {
+    if (!doc) return
+    const token = coordinator.begin()
+    let disposed = false
+
     async function render() {
       if (!doc || !canvasRef.current || !containerRef.current) return
       setRendering(true)
       setInternalError(null)
       try {
-        const targetPage = Math.min(Math.max(1, currentPage), doc.numPages)
-        const page = await doc.getPage(targetPage)
-        if (cancelled) return
+        const targetPage = Math.min(Math.max(1, page), doc.numPages)
+        const pdfPage = await getPage(targetPage)
+        if (!pdfPage || disposed || !coordinator.isCurrent(token)) return
+
         const containerWidth = containerRef.current.clientWidth - 32
-        const baseViewport = page.getViewport({ scale: 1 })
+        const baseViewport = pdfPage.getViewport({ scale: 1 })
         const widthScale = containerWidth > 0 ? containerWidth / baseViewport.width : zoom
         const effectiveScale = fitMode === 'width' ? widthScale : zoom
-        const viewport = page.getViewport({ scale: effectiveScale })
+        const viewport = pdfPage.getViewport({ scale: effectiveScale })
         const canvas = canvasRef.current
         const ctx = canvas.getContext('2d')
         if (!ctx) return
@@ -69,17 +183,23 @@ export default function PdfViewer({
         canvas.style.width = `${Math.ceil(viewport.width)}px`
         canvas.style.height = `${Math.ceil(viewport.height)}px`
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        await page.render({
+
+        const task = pdfPage.render({
           canvas,
           canvasContext: ctx,
           viewport,
           transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-        }).promise
-        if (!cancelled) {
-          onPageRead(targetPage)
-        }
+        })
+        coordinator.attach(token, task)
+        await task.promise
+        coordinator.settle(token)
+        // Reading is recorded when the page becomes active, not here:
+        // rendering also happens for preloaded pages, which must never count.
       } catch (reason) {
-        if (!cancelled) {
+        // A cancelled render is the expected outcome of fast navigation and
+        // must not surface as an error to the student.
+        if (isCancellation(reason)) return
+        if (!disposed && coordinator.isCurrent(token)) {
           setInternalError(
             reason instanceof Error
               ? reason.message
@@ -87,17 +207,35 @@ export default function PdfViewer({
           )
         }
       } finally {
-        if (!cancelled) setRendering(false)
+        if (!disposed && coordinator.isCurrent(token)) setRendering(false)
       }
     }
     render()
     return () => {
-      cancelled = true
+      disposed = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, currentPage, zoom, fitMode])
+  }, [doc, page, zoom, fitMode, getPage, coordinator])
 
-  const clampedCurrent = Math.min(Math.max(1, currentPage), Math.max(1, pageCount))
+  // Warm the neighbouring pages *after* the visible one is painted, at idle
+  // priority. Preloading decodes a page but never marks it read.
+  useEffect(() => {
+    if (!doc || rendering) return
+    let cancelled = false
+    const handle = window.setTimeout(() => {
+      const neighbours = pageWindow(page, doc.numPages).slice(1)
+      neighbours.forEach((target) => {
+        if (cancelled || pageCache.has(target)) return
+        void getPage(target).catch(() => undefined)
+      })
+    }, 150)
+    return () => {
+      cancelled = true
+      window.clearTimeout(handle)
+    }
+  }, [doc, page, rendering, getPage, pageCache])
+
+  const clampedCurrent = Math.min(Math.max(1, page), Math.max(1, pageCount))
 
   return (
     <div className="flex flex-col h-full">
@@ -108,8 +246,8 @@ export default function PdfViewer({
       >
         <div className="flex items-center gap-1.5">
           <IconButton
-            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-            disabled={currentPage <= 1}
+            onClick={() => goToPage(page - 1)}
+            disabled={page <= 1}
             label="Previous page"
           >
             ‹
@@ -117,11 +255,11 @@ export default function PdfViewer({
           <PageJump
             currentPage={clampedCurrent}
             pageCount={pageCount}
-            onPageChange={onPageChange}
+            onPageChange={goToPage}
           />
           <IconButton
-            onClick={() => onPageChange(Math.min(pageCount, currentPage + 1))}
-            disabled={currentPage >= pageCount}
+            onClick={() => goToPage(page + 1)}
+            disabled={page >= pageCount}
             label="Next page"
           >
             ›
@@ -176,7 +314,7 @@ export default function PdfViewer({
           <PdfViewerError message={error} onRetry={onRequestReload} />
         ) : doc ? (
           <motion.div
-            key={`${currentPage}-${zoom}-${fitMode}`}
+            key={`${page}-${zoom}-${fitMode}`}
             initial={{ opacity: 0.4 }}
             animate={{ opacity: rendering ? 0.6 : 1 }}
             transition={{ duration: 0.18 }}

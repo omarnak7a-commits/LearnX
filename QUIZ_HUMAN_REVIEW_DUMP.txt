@@ -1,0 +1,1921 @@
+==================================================================================================
+calculus-limits-derivatives.pdf   seed=1   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [mcq] [difficulty: hard]
+    prompt          : Why are critical points important?
+    options         :
+        [distractor] limits refer to the behavior of a function as x approaches a from only one direction
+        [distractor] represents the slope of the tangent line to the curve y = f(x) at the point x
+        [distractor] if f(x) = u(x) * v(x), then f'(x) = u'(x) * v(x) + u(x) * v'(x)
+        [CORRECT  ] locating local maxima and local minima using the first derivative test or the second derivative test
+    concept         : Critical points (critical-points)
+    knowledge target: explain why Critical points matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : explains a mechanism the document teaches; the document flags it as important
+    source pages    : [2]
+    evidence        : Critical points are essential for locating local maxima and local minima using the first
+                      derivative test or the second derivative test.
+    explanation     : Critical points are essential for locating local maxima and local minima using the first
+                      derivative test or the second derivative test. That is why locating local maxima and local
+                      minima using the first derivative test or the second derivative test is correct.
+    quality score   : 0.933
+
+Q2. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the limit?
+    options         :
+        [CORRECT  ] the value that a function f(x) approaches as the input x approaches some particular value, without necessarily ever reaching it
+        [distractor] the simplest technique for evaluating a limit
+        [distractor] limits refer to the behavior of a function as x approaches a from only one direction
+        [distractor] essential for locating local maxima and local minima using the first derivative test or the second derivative test
+    concept         : limit (limit)
+    knowledge target: understand what limit is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; is explained in depth; other taught concepts depend on it; the document flags it as important; developed across several pages
+    source pages    : [1]
+    evidence        : A limit is defined as the value that a function f(x) approaches as the input x approaches some
+                      particular value, without necessarily ever reaching it.
+    explanation     : A limit is defined as the value that a function f(x) approaches as the input x approaches some
+                      particular value, without necessarily ever reaching it. That is why the value that a function
+                      f(x) approaches as the input x approaches some particular value, without necessarily ever
+                      reaching it is correct.
+    quality score   : 0.926
+
+Q3. [mcq] [difficulty: hard]
+    prompt          : How does the two-sided limit differ from the limit?
+    options         :
+        [distractor] correctly identifying the outer and inner functions before applying the formula
+        [distractor] lim x->a [f(x) * g(x)] = lim x->a f(x) * lim x->a g(x)
+        [CORRECT  ] exists if and only if both one-sided limits exist and are equal
+        [distractor] rationalizing the numerator, or applying L'Hopital's Rule are required instead
+    concept         : two-sided limit (two-sided-limit)
+    knowledge target: distinguish two-sided limit from limit
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : draws a distinction the document emphasises; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : A two-sided limit exists if and only if both one-sided limits exist and are equal.
+    explanation     : A two-sided limit exists if and only if both one-sided limits exist and are equal. That is why
+                      exists if and only if both one-sided limits exist and are equal is correct.
+    quality score   : 0.883
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : What does the chain rule state?
+    correct answer  : if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x)
+    concept         : chain rule (chain-rule)
+    knowledge target: explain how chain rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a causal relationship; is explained in depth
+    source pages    : [2]
+    evidence        : The chain rule states that if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x).
+    explanation     : The chain rule states that if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x). That is why if f(x)
+                      = g(h(x)), then f'(x) = g'(h(x)) * h'(x) is correct.
+    quality score   : 0.916
+
+Q5. [short-answer] [difficulty: hard]
+    prompt          : What is the direct result of the algebraic techniques such as factoring?
+    correct answer  : an indeterminate form such as 0/0, algebraic techniques such as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead
+    concept         : algebraic techniques such as factoring (algebraic-techniques-such-as-factoring)
+    knowledge target: explain what results from algebraic techniques such as factoring
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : explains a mechanism the document teaches; the document flags it as important
+    source pages    : [1]
+    evidence        : When direct substitution produces an indeterminate form such as 0/0, algebraic techniques such
+                      as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead.
+    explanation     : When direct substitution produces an indeterminate form such as 0/0, algebraic techniques such
+                      as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead.
+                      That is why an indeterminate form such as 0/0, algebraic techniques such as factoring,
+                      rationalizing the numerator, or applying L'Hopital's Rule are required instead is correct.
+    quality score   : 0.925
+
+Q6. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the derivative?
+    options         :
+        [distractor] lim x->a [f(x) * g(x)] = lim x->a f(x) * lim x->a g(x)
+        [distractor] lim x->a [f(x) + g(x)] = lim x->a f(x) + lim x->a g(x), provided both limits exist
+        [CORRECT  ] represents the slope of the tangent line to the curve y = f(x) at the point x
+        [distractor] essential for locating local maxima and local minima using the first derivative test or the second derivative test
+    concept         : derivative (derivative)
+    knowledge target: understand what derivative is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : states a rule the learner must apply; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [2]
+    evidence        : Geometrically, the derivative represents the slope of the tangent line to the curve y = f(x) at
+                      the point x.
+    explanation     : Geometrically, the derivative represents the slope of the tangent line to the curve y = f(x) at
+                      the point x. That is why represents the slope of the tangent line to the curve y = f(x) at the
+                      point x is correct.
+    quality score   : 0.920
+
+Q7. [short-answer] [difficulty: medium]
+    prompt          : What does L'Hopital's Rule state?
+    correct answer  : if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit exists
+    concept         : L'Hopital's Rule (l-hopital-s-rule)
+    knowledge target: explain how L'Hopital's Rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : organises the material into categories; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : L'Hopital's Rule states that if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists.
+    explanation     : L'Hopital's Rule states that if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists. That is why if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists is correct.
+    quality score   : 0.919
+
+Q8. [short-answer] [difficulty: medium]
+    prompt          : What does the quotient rule state?
+    correct answer  : if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)] / [v(x)]^2
+    concept         : quotient rule (quotient-rule)
+    knowledge target: explain how quotient rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a causal relationship
+    source pages    : [2]
+    evidence        : The quotient rule states that if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)]
+                      / [v(x)]^2.
+    explanation     : The quotient rule states that if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)]
+                      / [v(x)]^2. That is why if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)] /
+                      [v(x)]^2 is correct.
+    quality score   : 0.878
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 13
+    concepts tested     : 8
+      NOT TESTED: power-rule (importance 0.682)
+      NOT TESTED: product-rule (importance 0.664)
+      NOT TESTED: related-rates-problems (importance 0.643)
+      NOT TESTED: sum-law (importance 0.620)
+      NOT TESTED: product-law (importance 0.616)
+    tiers               : T1=6 T2=2 T3=0
+    cognitive skills    : {'cause_effect': 2, 'understanding': 2, 'comparison': 1, 'process_order': 3}
+    question types      : {'mcq': 4, 'short-answer': 4}
+    T/F polarity        : True=0 False=0
+    duplicate targets   : 0
+
+==================================================================================================
+calculus-limits-derivatives.pdf   seed=3   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [mcq] [difficulty: hard]
+    prompt          : Why are critical points important?
+    options         :
+        [CORRECT  ] locating local maxima and local minima using the first derivative test or the second derivative test
+        [distractor] limits refer to the behavior of a function as x approaches a from only one direction
+        [distractor] represents the slope of the tangent line to the curve y = f(x) at the point x
+        [distractor] if f(x) = u(x) * v(x), then f'(x) = u'(x) * v(x) + u(x) * v'(x)
+    concept         : Critical points (critical-points)
+    knowledge target: explain why Critical points matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : explains a mechanism the document teaches; the document flags it as important
+    source pages    : [2]
+    evidence        : Critical points are essential for locating local maxima and local minima using the first
+                      derivative test or the second derivative test.
+    explanation     : Critical points are essential for locating local maxima and local minima using the first
+                      derivative test or the second derivative test. That is why locating local maxima and local
+                      minima using the first derivative test or the second derivative test is correct.
+    quality score   : 0.933
+
+Q2. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the limit?
+    options         :
+        [distractor] limits refer to the behavior of a function as x approaches a from only one direction
+        [distractor] essential for locating local maxima and local minima using the first derivative test or the second derivative test
+        [distractor] the simplest technique for evaluating a limit
+        [CORRECT  ] the value that a function f(x) approaches as the input x approaches some particular value, without necessarily ever reaching it
+    concept         : limit (limit)
+    knowledge target: understand what limit is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; is explained in depth; other taught concepts depend on it; the document flags it as important; developed across several pages
+    source pages    : [1]
+    evidence        : A limit is defined as the value that a function f(x) approaches as the input x approaches some
+                      particular value, without necessarily ever reaching it.
+    explanation     : A limit is defined as the value that a function f(x) approaches as the input x approaches some
+                      particular value, without necessarily ever reaching it. That is why the value that a function
+                      f(x) approaches as the input x approaches some particular value, without necessarily ever
+                      reaching it is correct.
+    quality score   : 0.926
+
+Q3. [mcq] [difficulty: hard]
+    prompt          : How does the two-sided limit differ from the limit?
+    options         :
+        [distractor] lim x->a [f(x) * g(x)] = lim x->a f(x) * lim x->a g(x)
+        [CORRECT  ] exists if and only if both one-sided limits exist and are equal
+        [distractor] correctly identifying the outer and inner functions before applying the formula
+        [distractor] rationalizing the numerator, or applying L'Hopital's Rule are required instead
+    concept         : two-sided limit (two-sided-limit)
+    knowledge target: distinguish two-sided limit from limit
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : draws a distinction the document emphasises; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : A two-sided limit exists if and only if both one-sided limits exist and are equal.
+    explanation     : A two-sided limit exists if and only if both one-sided limits exist and are equal. That is why
+                      exists if and only if both one-sided limits exist and are equal is correct.
+    quality score   : 0.883
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : What does the chain rule state?
+    correct answer  : if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x)
+    concept         : chain rule (chain-rule)
+    knowledge target: explain how chain rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a causal relationship; is explained in depth
+    source pages    : [2]
+    evidence        : The chain rule states that if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x).
+    explanation     : The chain rule states that if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x). That is why if f(x)
+                      = g(h(x)), then f'(x) = g'(h(x)) * h'(x) is correct.
+    quality score   : 0.916
+
+Q5. [short-answer] [difficulty: hard]
+    prompt          : What is the direct result of the algebraic techniques such as factoring?
+    correct answer  : an indeterminate form such as 0/0, algebraic techniques such as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead
+    concept         : algebraic techniques such as factoring (algebraic-techniques-such-as-factoring)
+    knowledge target: explain what results from algebraic techniques such as factoring
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : explains a mechanism the document teaches; the document flags it as important
+    source pages    : [1]
+    evidence        : When direct substitution produces an indeterminate form such as 0/0, algebraic techniques such
+                      as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead.
+    explanation     : When direct substitution produces an indeterminate form such as 0/0, algebraic techniques such
+                      as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead.
+                      That is why an indeterminate form such as 0/0, algebraic techniques such as factoring,
+                      rationalizing the numerator, or applying L'Hopital's Rule are required instead is correct.
+    quality score   : 0.925
+
+Q6. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the derivative?
+    options         :
+        [CORRECT  ] represents the slope of the tangent line to the curve y = f(x) at the point x
+        [distractor] essential for locating local maxima and local minima using the first derivative test or the second derivative test
+        [distractor] lim x->a [f(x) * g(x)] = lim x->a f(x) * lim x->a g(x)
+        [distractor] lim x->a [f(x) + g(x)] = lim x->a f(x) + lim x->a g(x), provided both limits exist
+    concept         : derivative (derivative)
+    knowledge target: understand what derivative is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : states a rule the learner must apply; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [2]
+    evidence        : Geometrically, the derivative represents the slope of the tangent line to the curve y = f(x) at
+                      the point x.
+    explanation     : Geometrically, the derivative represents the slope of the tangent line to the curve y = f(x) at
+                      the point x. That is why represents the slope of the tangent line to the curve y = f(x) at the
+                      point x is correct.
+    quality score   : 0.920
+
+Q7. [short-answer] [difficulty: medium]
+    prompt          : What does L'Hopital's Rule state?
+    correct answer  : if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit exists
+    concept         : L'Hopital's Rule (l-hopital-s-rule)
+    knowledge target: explain how L'Hopital's Rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : organises the material into categories; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : L'Hopital's Rule states that if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists.
+    explanation     : L'Hopital's Rule states that if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists. That is why if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists is correct.
+    quality score   : 0.919
+
+Q8. [short-answer] [difficulty: medium]
+    prompt          : What does the quotient rule state?
+    correct answer  : if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)] / [v(x)]^2
+    concept         : quotient rule (quotient-rule)
+    knowledge target: explain how quotient rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a causal relationship
+    source pages    : [2]
+    evidence        : The quotient rule states that if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)]
+                      / [v(x)]^2.
+    explanation     : The quotient rule states that if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)]
+                      / [v(x)]^2. That is why if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)] /
+                      [v(x)]^2 is correct.
+    quality score   : 0.878
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 13
+    concepts tested     : 8
+      NOT TESTED: power-rule (importance 0.682)
+      NOT TESTED: product-rule (importance 0.664)
+      NOT TESTED: related-rates-problems (importance 0.643)
+      NOT TESTED: sum-law (importance 0.620)
+      NOT TESTED: product-law (importance 0.616)
+    tiers               : T1=6 T2=2 T3=0
+    cognitive skills    : {'cause_effect': 2, 'understanding': 2, 'comparison': 1, 'process_order': 3}
+    question types      : {'mcq': 4, 'short-answer': 4}
+    T/F polarity        : True=0 False=0
+    duplicate targets   : 0
+
+==================================================================================================
+calculus-limits-derivatives.pdf   seed=5   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [mcq] [difficulty: hard]
+    prompt          : Why are critical points important?
+    options         :
+        [CORRECT  ] locating local maxima and local minima using the first derivative test or the second derivative test
+        [distractor] if f(x) = u(x) * v(x), then f'(x) = u'(x) * v(x) + u(x) * v'(x)
+        [distractor] represents the slope of the tangent line to the curve y = f(x) at the point x
+        [distractor] limits refer to the behavior of a function as x approaches a from only one direction
+    concept         : Critical points (critical-points)
+    knowledge target: explain why Critical points matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : explains a mechanism the document teaches; the document flags it as important
+    source pages    : [2]
+    evidence        : Critical points are essential for locating local maxima and local minima using the first
+                      derivative test or the second derivative test.
+    explanation     : Critical points are essential for locating local maxima and local minima using the first
+                      derivative test or the second derivative test. That is why locating local maxima and local
+                      minima using the first derivative test or the second derivative test is correct.
+    quality score   : 0.933
+
+Q2. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the limit?
+    options         :
+        [distractor] the simplest technique for evaluating a limit
+        [distractor] essential for locating local maxima and local minima using the first derivative test or the second derivative test
+        [distractor] limits refer to the behavior of a function as x approaches a from only one direction
+        [CORRECT  ] the value that a function f(x) approaches as the input x approaches some particular value, without necessarily ever reaching it
+    concept         : limit (limit)
+    knowledge target: understand what limit is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; is explained in depth; other taught concepts depend on it; the document flags it as important; developed across several pages
+    source pages    : [1]
+    evidence        : A limit is defined as the value that a function f(x) approaches as the input x approaches some
+                      particular value, without necessarily ever reaching it.
+    explanation     : A limit is defined as the value that a function f(x) approaches as the input x approaches some
+                      particular value, without necessarily ever reaching it. That is why the value that a function
+                      f(x) approaches as the input x approaches some particular value, without necessarily ever
+                      reaching it is correct.
+    quality score   : 0.926
+
+Q3. [mcq] [difficulty: hard]
+    prompt          : How does the two-sided limit differ from the limit?
+    options         :
+        [distractor] correctly identifying the outer and inner functions before applying the formula
+        [distractor] lim x->a [f(x) * g(x)] = lim x->a f(x) * lim x->a g(x)
+        [distractor] rationalizing the numerator, or applying L'Hopital's Rule are required instead
+        [CORRECT  ] exists if and only if both one-sided limits exist and are equal
+    concept         : two-sided limit (two-sided-limit)
+    knowledge target: distinguish two-sided limit from limit
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : draws a distinction the document emphasises; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : A two-sided limit exists if and only if both one-sided limits exist and are equal.
+    explanation     : A two-sided limit exists if and only if both one-sided limits exist and are equal. That is why
+                      exists if and only if both one-sided limits exist and are equal is correct.
+    quality score   : 0.883
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : What does the chain rule state?
+    correct answer  : if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x)
+    concept         : chain rule (chain-rule)
+    knowledge target: explain how chain rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a causal relationship; is explained in depth
+    source pages    : [2]
+    evidence        : The chain rule states that if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x).
+    explanation     : The chain rule states that if f(x) = g(h(x)), then f'(x) = g'(h(x)) * h'(x). That is why if f(x)
+                      = g(h(x)), then f'(x) = g'(h(x)) * h'(x) is correct.
+    quality score   : 0.916
+
+Q5. [short-answer] [difficulty: hard]
+    prompt          : What is the direct result of the algebraic techniques such as factoring?
+    correct answer  : an indeterminate form such as 0/0, algebraic techniques such as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead
+    concept         : algebraic techniques such as factoring (algebraic-techniques-such-as-factoring)
+    knowledge target: explain what results from algebraic techniques such as factoring
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : explains a mechanism the document teaches; the document flags it as important
+    source pages    : [1]
+    evidence        : When direct substitution produces an indeterminate form such as 0/0, algebraic techniques such
+                      as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead.
+    explanation     : When direct substitution produces an indeterminate form such as 0/0, algebraic techniques such
+                      as factoring, rationalizing the numerator, or applying L'Hopital's Rule are required instead.
+                      That is why an indeterminate form such as 0/0, algebraic techniques such as factoring,
+                      rationalizing the numerator, or applying L'Hopital's Rule are required instead is correct.
+    quality score   : 0.925
+
+Q6. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the derivative?
+    options         :
+        [distractor] essential for locating local maxima and local minima using the first derivative test or the second derivative test
+        [CORRECT  ] represents the slope of the tangent line to the curve y = f(x) at the point x
+        [distractor] lim x->a [f(x) + g(x)] = lim x->a f(x) + lim x->a g(x), provided both limits exist
+        [distractor] lim x->a [f(x) * g(x)] = lim x->a f(x) * lim x->a g(x)
+    concept         : derivative (derivative)
+    knowledge target: understand what derivative is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : states a rule the learner must apply; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [2]
+    evidence        : Geometrically, the derivative represents the slope of the tangent line to the curve y = f(x) at
+                      the point x.
+    explanation     : Geometrically, the derivative represents the slope of the tangent line to the curve y = f(x) at
+                      the point x. That is why represents the slope of the tangent line to the curve y = f(x) at the
+                      point x is correct.
+    quality score   : 0.920
+
+Q7. [short-answer] [difficulty: medium]
+    prompt          : What does L'Hopital's Rule state?
+    correct answer  : if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit exists
+    concept         : L'Hopital's Rule (l-hopital-s-rule)
+    knowledge target: explain how L'Hopital's Rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : organises the material into categories; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : L'Hopital's Rule states that if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists.
+    explanation     : L'Hopital's Rule states that if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists. That is why if lim x->a f(x)/g(x) produces an indeterminate form of type 0/0 or
+                      infinity/infinity, then lim x->a f(x)/g(x) = lim x->a f'(x)/g'(x), provided the latter limit
+                      exists is correct.
+    quality score   : 0.919
+
+Q8. [short-answer] [difficulty: medium]
+    prompt          : What does the quotient rule state?
+    correct answer  : if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)] / [v(x)]^2
+    concept         : quotient rule (quotient-rule)
+    knowledge target: explain how quotient rule works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a causal relationship
+    source pages    : [2]
+    evidence        : The quotient rule states that if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)]
+                      / [v(x)]^2.
+    explanation     : The quotient rule states that if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)]
+                      / [v(x)]^2. That is why if f(x) = u(x) / v(x), then f'(x) = [u'(x) * v(x) - u(x) * v'(x)] /
+                      [v(x)]^2 is correct.
+    quality score   : 0.878
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 13
+    concepts tested     : 8
+      NOT TESTED: power-rule (importance 0.682)
+      NOT TESTED: product-rule (importance 0.664)
+      NOT TESTED: related-rates-problems (importance 0.643)
+      NOT TESTED: sum-law (importance 0.620)
+      NOT TESTED: product-law (importance 0.616)
+    tiers               : T1=6 T2=2 T3=0
+    cognitive skills    : {'cause_effect': 2, 'understanding': 2, 'comparison': 1, 'process_order': 3}
+    question types      : {'mcq': 4, 'short-answer': 4}
+    T/F polarity        : True=0 False=0
+    duplicate targets   : 0
+
+==================================================================================================
+cell-biology-ch3.pdf   seed=1   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [mcq] [difficulty: hard]
+    prompt          : Why is the nucleus important?
+    options         :
+        [distractor] is responsible for the production of ribosomal RNA and the assembly of ribosomal subunits
+        [distractor] produces two genetically identical daughter cells from a single parent cell
+        [distractor] produces four genetically distinct daughter cells, each with half the number of chromosomes as the parent cell
+        [CORRECT  ] houses the cell's genetic material in the form of chromatin, which condenses into chromosomes during cell division
+    concept         : nucleus (nucleus)
+    knowledge target: explain why nucleus matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : states a causal relationship; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : The nucleus is defined as the membrane-bound organelle that houses the cell's genetic material
+                      in the form of chromatin, which condenses into chromosomes during cell division.
+    explanation     : The nucleus is defined as the membrane-bound organelle that houses the cell's genetic material
+                      in the form of chromatin, which condenses into chromosomes during cell division. That is why
+                      houses the cell's genetic material in the form of chromatin, which condenses into chromosomes
+                      during cell division is correct.
+    quality score   : 0.957
+
+Q2. [short-answer] [difficulty: hard]
+    prompt          : Explain how mitosis differs from meiosis.
+    correct answer  : the process of nuclear division that produces two genetically identical daughter cells from a single parent cell
+    concept         : Mitosis (mitosis)
+    knowledge target: distinguish Mitosis from what it is contrasted with (Meiosis)
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : explains a mechanism the document teaches; is explained in depth; the document flags it as important
+    source pages    : [2]
+    evidence        : Mitosis is defined as the process of nuclear division that produces two genetically identical
+                      daughter cells from a single parent cell, and is used for growth and tissue repair in
+                      multicellular organisms.
+    explanation     : Mitosis is defined as the process of nuclear division that produces two genetically identical
+                      daughter cells from a single parent cell, and is used for growth and tissue repair in
+                      multicellular organisms. That is why the process of nuclear division that produces two
+                      genetically identical daughter cells from a single parent cell is correct.
+    quality score   : 0.946
+
+Q3. [true-false] [difficulty: medium]
+    prompt          : Mitochondria work by means of a process called cellular respiration.
+    options         : ['True', 'False']
+    correct answer  : True
+    concept         : Mitochondria (mitochondria)
+    knowledge target: explain how Mitochondria works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; is explained in depth; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Mitochondria are membrane-bound organelles that generate most of the cell's supply of adenosine
+                      triphosphate, commonly abbreviated as ATP, through a process called cellular respiration.
+    explanation     : Mitochondria are membrane-bound organelles that generate most of the cell's supply of adenosine
+                      triphosphate, commonly abbreviated as ATP, through a process called cellular respiration. That
+                      is why this statement is correct.
+    quality score   : 0.918
+
+Q4. [true-false] [difficulty: medium]
+    prompt          : The golgi apparatus works by means of processes such as diffusion, osmosis, and active transport.
+    options         : ['True', 'False']
+    correct answer  : False
+    concept         : plasma membrane (plasma-membrane)
+    knowledge target: recognise whether a stated relationship really belongs to plasma membrane
+    cognitive skill : misconception   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; is explained in depth
+    source pages    : [1]
+    evidence        : It regulates what substances enter and exit the cell through processes such as diffusion,
+                      osmosis, and active transport.
+    explanation     : It regulates what substances enter and exit the cell through processes such as diffusion,
+                      osmosis, and active transport. The statement is false because this describes the plasma
+                      membrane, not golgi apparatus.
+    quality score   : 0.911
+
+Q5. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the cell?
+    options         :
+        [CORRECT  ] the smallest structural and functional unit of all living organisms
+        [distractor] the molecular machines responsible for protein synthesis
+        [distractor] the biological process by which a cell duplicates its DNA before cell division
+        [distractor] a cell that contains a true, membrane-bound nucleus along with other membrane-bound organelles
+    concept         : cell (cell)
+    knowledge target: understand what cell is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; is explained in depth; other taught concepts depend on it; developed across several pages
+    source pages    : [1]
+    evidence        : The cell is defined as the smallest structural and functional unit of all living organisms.
+    explanation     : The cell is defined as the smallest structural and functional unit of all living organisms. That
+                      is why the smallest structural and functional unit of all living organisms is correct.
+    quality score   : 0.887
+
+Q6. [short-answer] [difficulty: hard]
+    prompt          : Why does meiosis matter?
+    correct answer  : produces four genetically distinct daughter cells, each with half the number of chromosomes as the parent cell
+    concept         : Meiosis (meiosis)
+    knowledge target: explain why Meiosis matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on; is explained in depth; the document flags it as important
+    source pages    : [2]
+    evidence        : Meiosis is defined as a specialized type of cell division that produces four genetically
+                      distinct daughter cells, each with half the number of chromosomes as the parent cell, and is
+                      used specifically in the production of gametes for sexual reproduction.
+    explanation     : Meiosis is defined as a specialized type of cell division that produces four genetically
+                      distinct daughter cells, each with half the number of chromosomes as the parent cell, and is
+                      used specifically in the production of gametes for sexual reproduction. That is why produces
+                      four genetically distinct daughter cells, each with half the number of chromosomes as the parent
+                      cell is correct.
+    quality score   : 0.939
+
+Q7. [short-answer] [difficulty: medium]
+    prompt          : By what mechanism does Translation occur?
+    correct answer  : ribosomes decode the sequence of a messenger RNA molecule to produce a specific chain of amino acids
+    concept         : Translation (translation)
+    knowledge target: explain how Translation works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; the document flags it as important
+    source pages    : [2]
+    evidence        : Translation is defined as the process by which ribosomes decode the sequence of a messenger RNA
+                      molecule to produce a specific chain of amino acids, which then folds into a functional protein.
+    explanation     : Translation is defined as the process by which ribosomes decode the sequence of a messenger RNA
+                      molecule to produce a specific chain of amino acids, which then folds into a functional protein.
+                      That is why ribosomes decode the sequence of a messenger RNA molecule to produce a specific
+                      chain of amino acids is correct.
+    quality score   : 0.922
+
+Q8. [short-answer] [difficulty: medium]
+    prompt          : What is the process relies on the enzyme?
+    correct answer  : DNA polymerase, which reads the existing strand as a template and synthesizes a new complementary strand
+    concept         : process relies on the enzyme (process-relies-on-the-enzyme)
+    knowledge target: understand what process relies on the enzyme is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : explains a mechanism the document teaches
+    source pages    : [1]
+    evidence        : The process relies on the enzyme DNA polymerase, which reads the existing strand as a template
+                      and synthesizes a new complementary strand.
+    explanation     : The process relies on the enzyme DNA polymerase, which reads the existing strand as a template
+                      and synthesizes a new complementary strand. That is why DNA polymerase, which reads the existing
+                      strand as a template and synthesizes a new complementary strand is correct.
+    quality score   : 0.866
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 16
+    concepts tested     : 8
+      NOT TESTED: rough-endoplasmic-reticulum (importance 0.780)
+      NOT TESTED: transcription (importance 0.696)
+      NOT TESTED: ribosomes (importance 0.683)
+      NOT TESTED: nucleolus (importance 0.670)
+      NOT TESTED: protein-synthesis (importance 0.667)
+      NOT TESTED: golgi-apparatus (importance 0.661)
+      NOT TESTED: dna-replication (importance 0.651)
+      NOT TESTED: endoplasmic-reticulum (importance 0.627)
+    tiers               : T1=6 T2=2 T3=0
+    cognitive skills    : {'cause_effect': 2, 'comparison': 1, 'process_order': 2, 'misconception': 1, 'understanding': 2}
+    question types      : {'mcq': 2, 'short-answer': 4, 'true-false': 2}
+    T/F polarity        : True=1 False=1
+    duplicate targets   : 0
+
+==================================================================================================
+cell-biology-ch3.pdf   seed=3   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [mcq] [difficulty: hard]
+    prompt          : Why is the nucleus important?
+    options         :
+        [CORRECT  ] houses the cell's genetic material in the form of chromatin, which condenses into chromosomes during cell division
+        [distractor] is responsible for the production of ribosomal RNA and the assembly of ribosomal subunits
+        [distractor] produces two genetically identical daughter cells from a single parent cell
+        [distractor] produces four genetically distinct daughter cells, each with half the number of chromosomes as the parent cell
+    concept         : nucleus (nucleus)
+    knowledge target: explain why nucleus matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : states a causal relationship; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : The nucleus is defined as the membrane-bound organelle that houses the cell's genetic material
+                      in the form of chromatin, which condenses into chromosomes during cell division.
+    explanation     : The nucleus is defined as the membrane-bound organelle that houses the cell's genetic material
+                      in the form of chromatin, which condenses into chromosomes during cell division. That is why
+                      houses the cell's genetic material in the form of chromatin, which condenses into chromosomes
+                      during cell division is correct.
+    quality score   : 0.957
+
+Q2. [short-answer] [difficulty: hard]
+    prompt          : Explain how mitosis differs from meiosis.
+    correct answer  : the process of nuclear division that produces two genetically identical daughter cells from a single parent cell
+    concept         : Mitosis (mitosis)
+    knowledge target: distinguish Mitosis from what it is contrasted with (Meiosis)
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : explains a mechanism the document teaches; is explained in depth; the document flags it as important
+    source pages    : [2]
+    evidence        : Mitosis is defined as the process of nuclear division that produces two genetically identical
+                      daughter cells from a single parent cell, and is used for growth and tissue repair in
+                      multicellular organisms.
+    explanation     : Mitosis is defined as the process of nuclear division that produces two genetically identical
+                      daughter cells from a single parent cell, and is used for growth and tissue repair in
+                      multicellular organisms. That is why the process of nuclear division that produces two
+                      genetically identical daughter cells from a single parent cell is correct.
+    quality score   : 0.946
+
+Q3. [short-answer] [difficulty: medium]
+    prompt          : By what mechanism does Transcription occur?
+    correct answer  : the enzyme RNA polymerase synthesizes a strand of messenger RNA, or mRNA, using one strand of DNA as a template
+    concept         : Transcription (transcription)
+    knowledge target: explain how Transcription works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; the document flags it as important
+    source pages    : [2]
+    evidence        : Transcription is defined as the process by which the enzyme RNA polymerase synthesizes a strand
+                      of messenger RNA, or mRNA, using one strand of DNA as a template.
+    explanation     : Transcription is defined as the process by which the enzyme RNA polymerase synthesizes a strand
+                      of messenger RNA, or mRNA, using one strand of DNA as a template. That is why the enzyme RNA
+                      polymerase synthesizes a strand of messenger RNA, or mRNA, using one strand of DNA as a template
+                      is correct.
+    quality score   : 0.898
+
+Q4. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the cell?
+    options         :
+        [distractor] the molecular machines responsible for protein synthesis
+        [distractor] a cell that contains a true, membrane-bound nucleus along with other membrane-bound organelles
+        [distractor] the biological process by which a cell duplicates its DNA before cell division
+        [CORRECT  ] the smallest structural and functional unit of all living organisms
+    concept         : cell (cell)
+    knowledge target: understand what cell is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; is explained in depth; other taught concepts depend on it; developed across several pages
+    source pages    : [1]
+    evidence        : The cell is defined as the smallest structural and functional unit of all living organisms.
+    explanation     : The cell is defined as the smallest structural and functional unit of all living organisms. That
+                      is why the smallest structural and functional unit of all living organisms is correct.
+    quality score   : 0.887
+
+Q5. [mcq] [difficulty: hard]
+    prompt          : What is the direct result of Translation?
+    options         :
+        [distractor] two genetically identical daughter cells from a single parent cell
+        [CORRECT  ] a specific chain of amino acids, which then folds into a functional protein
+        [distractor] each daughter cell receives an identical copy of the genetic material
+        [distractor] four genetically distinct daughter cells, each with half the number of chromosomes as the parent cell
+    concept         : Translation (translation)
+    knowledge target: explain what results from Translation
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : defines a term the rest of the document builds on; the document flags it as important
+    source pages    : [2]
+    evidence        : Translation is defined as the process by which ribosomes decode the sequence of a messenger RNA
+                      molecule to produce a specific chain of amino acids, which then folds into a functional protein.
+    explanation     : Translation is defined as the process by which ribosomes decode the sequence of a messenger RNA
+                      molecule to produce a specific chain of amino acids, which then folds into a functional protein.
+                      That is why a specific chain of amino acids, which then folds into a functional protein is
+                      correct.
+    quality score   : 0.926
+
+Q6. [true-false] [difficulty: medium]
+    prompt          : In DNA replication, a cell duplicates its DNA before cell division.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : DNA replication (dna-replication)
+    knowledge target: explain how DNA replication works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; is explained in depth
+    source pages    : [1]
+    evidence        : DNA replication refers to the biological process by which a cell duplicates its DNA before cell
+                      division, ensuring that each daughter cell receives an identical copy of the genetic material.
+    explanation     : DNA replication refers to the biological process by which a cell duplicates its DNA before cell
+                      division, ensuring that each daughter cell receives an identical copy of the genetic material.
+                      That is why this statement is correct.
+    quality score   : 0.887
+
+Q7. [true-false] [difficulty: medium]
+    prompt          : Translation results in most of the cell's supply of adenosine triphosphate.
+    options         : ['True', 'False']
+    correct answer  : False
+    concept         : Mitochondria (mitochondria)
+    knowledge target: recognise whether a stated relationship really belongs to Mitochondria
+    cognitive skill : misconception   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : explains a mechanism the document teaches; is explained in depth; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Mitochondria are membrane-bound organelles that generate most of the cell's supply of adenosine
+                      triphosphate, commonly abbreviated as ATP, through a process called cellular respiration.
+    explanation     : Mitochondria are membrane-bound organelles that generate most of the cell's supply of adenosine
+                      triphosphate, commonly abbreviated as ATP, through a process called cellular respiration. The
+                      statement is false because this describes mitochondria, not Translation.
+    quality score   : 0.918
+
+Q8. [short-answer] [difficulty: hard]
+    prompt          : Why does meiosis matter?
+    correct answer  : produces four genetically distinct daughter cells, each with half the number of chromosomes as the parent cell
+    concept         : Meiosis (meiosis)
+    knowledge target: explain why Meiosis matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on; is explained in depth; the document flags it as important
+    source pages    : [2]
+    evidence        : Meiosis is defined as a specialized type of cell division that produces four genetically
+                      distinct daughter cells, each with half the number of chromosomes as the parent cell, and is
+                      used specifically in the production of gametes for sexual reproduction.
+    explanation     : Meiosis is defined as a specialized type of cell division that produces four genetically
+                      distinct daughter cells, each with half the number of chromosomes as the parent cell, and is
+                      used specifically in the production of gametes for sexual reproduction. That is why produces
+                      four genetically distinct daughter cells, each with half the number of chromosomes as the parent
+                      cell is correct.
+    quality score   : 0.939
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 16
+    concepts tested     : 8
+      NOT TESTED: rough-endoplasmic-reticulum (importance 0.780)
+      NOT TESTED: plasma-membrane (importance 0.747)
+      NOT TESTED: ribosomes (importance 0.683)
+      NOT TESTED: nucleolus (importance 0.670)
+      NOT TESTED: protein-synthesis (importance 0.667)
+      NOT TESTED: golgi-apparatus (importance 0.661)
+      NOT TESTED: endoplasmic-reticulum (importance 0.627)
+      NOT TESTED: process-relies-on-the-enzyme (importance 0.611)
+    tiers               : T1=7 T2=1 T3=0
+    cognitive skills    : {'cause_effect': 3, 'comparison': 1, 'process_order': 2, 'understanding': 1, 'misconception': 1}
+    question types      : {'mcq': 3, 'short-answer': 3, 'true-false': 2}
+    T/F polarity        : True=1 False=1
+    duplicate targets   : 0
+
+==================================================================================================
+cell-biology-ch3.pdf   seed=5   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [true-false] [difficulty: hard]
+    prompt          : The nucleus houses the cell's genetic material in the form of chromatin.
+    options         : ['True', 'False']
+    correct answer  : True
+    concept         : nucleus (nucleus)
+    knowledge target: explain why nucleus matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : states a causal relationship; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : The nucleus is defined as the membrane-bound organelle that houses the cell's genetic material
+                      in the form of chromatin, which condenses into chromosomes during cell division.
+    explanation     : The nucleus is defined as the membrane-bound organelle that houses the cell's genetic material
+                      in the form of chromatin, which condenses into chromosomes during cell division. That is why
+                      this statement is correct.
+    quality score   : 0.957
+
+Q2. [mcq] [difficulty: hard]
+    prompt          : How does mitosis differ from meiosis?
+    options         :
+        [distractor] the smooth endoplasmic reticulum lacks ribosomes and is responsible for lipid synthesis and detoxification of harmful substances
+        [CORRECT  ] the process of nuclear division that produces two genetically identical daughter cells from a single parent cell
+        [distractor] produces four genetically distinct daughter cells, each with half the number of chromosomes as the parent cell
+        [distractor] houses the cell's genetic material in the form of chromatin, which condenses into chromosomes during cell division
+    concept         : Mitosis (mitosis)
+    knowledge target: distinguish Mitosis from what it is contrasted with (Meiosis)
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : explains a mechanism the document teaches; is explained in depth; the document flags it as important
+    source pages    : [2]
+    evidence        : Mitosis is defined as the process of nuclear division that produces two genetically identical
+                      daughter cells from a single parent cell, and is used for growth and tissue repair in
+                      multicellular organisms.
+    explanation     : Mitosis is defined as the process of nuclear division that produces two genetically identical
+                      daughter cells from a single parent cell, and is used for growth and tissue repair in
+                      multicellular organisms. That is why the process of nuclear division that produces two
+                      genetically identical daughter cells from a single parent cell is correct.
+    quality score   : 0.946
+
+Q3. [true-false] [difficulty: medium]
+    prompt          : The golgi apparatus works by means of processes such as diffusion, osmosis, and active transport.
+    options         : ['True', 'False']
+    correct answer  : False
+    concept         : plasma membrane (plasma-membrane)
+    knowledge target: recognise whether a stated relationship really belongs to plasma membrane
+    cognitive skill : misconception   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; is explained in depth
+    source pages    : [1]
+    evidence        : It regulates what substances enter and exit the cell through processes such as diffusion,
+                      osmosis, and active transport.
+    explanation     : It regulates what substances enter and exit the cell through processes such as diffusion,
+                      osmosis, and active transport. The statement is false because this describes the plasma
+                      membrane, not golgi apparatus.
+    quality score   : 0.911
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : By what mechanism does Translation occur?
+    correct answer  : ribosomes decode the sequence of a messenger RNA molecule to produce a specific chain of amino acids
+    concept         : Translation (translation)
+    knowledge target: explain how Translation works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; the document flags it as important
+    source pages    : [2]
+    evidence        : Translation is defined as the process by which ribosomes decode the sequence of a messenger RNA
+                      molecule to produce a specific chain of amino acids, which then folds into a functional protein.
+    explanation     : Translation is defined as the process by which ribosomes decode the sequence of a messenger RNA
+                      molecule to produce a specific chain of amino acids, which then folds into a functional protein.
+                      That is why ribosomes decode the sequence of a messenger RNA molecule to produce a specific
+                      chain of amino acids is correct.
+    quality score   : 0.922
+
+Q5. [short-answer] [difficulty: medium]
+    prompt          : What is the cell?
+    correct answer  : the smallest structural and functional unit of all living organisms
+    concept         : cell (cell)
+    knowledge target: understand what cell is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; is explained in depth; other taught concepts depend on it; developed across several pages
+    source pages    : [1]
+    evidence        : The cell is defined as the smallest structural and functional unit of all living organisms.
+    explanation     : The cell is defined as the smallest structural and functional unit of all living organisms. That
+                      is why the smallest structural and functional unit of all living organisms is correct.
+    quality score   : 0.887
+
+Q6. [mcq] [difficulty: hard]
+    prompt          : Why is the rough endoplasmic reticulum important?
+    options         :
+        [distractor] the production of ribosomal RNA and the assembly of ribosomal subunits
+        [CORRECT  ] studded with ribosomes and is responsible for protein synthesis
+        [distractor] produces two genetically identical daughter cells from a single parent cell
+        [distractor] contains a true, membrane-bound nucleus along with other membrane-bound organelles
+    concept         : rough endoplasmic reticulum (rough-endoplasmic-reticulum)
+    knowledge target: explain why rough endoplasmic reticulum matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : explains a mechanism the document teaches
+    source pages    : [2]
+    evidence        : The rough endoplasmic reticulum is studded with ribosomes and is responsible for protein
+                      synthesis, while the smooth endoplasmic reticulum lacks ribosomes and is responsible for lipid
+                      synthesis and detoxification of harmful substances.
+    explanation     : The rough endoplasmic reticulum is studded with ribosomes and is responsible for protein
+                      synthesis, while the smooth endoplasmic reticulum lacks ribosomes and is responsible for lipid
+                      synthesis and detoxification of harmful substances. That is why studded with ribosomes and is
+                      responsible for protein synthesis is correct.
+    quality score   : 0.930
+
+Q7. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the process relies on the enzyme?
+    options         :
+        [distractor] membrane-bound organelles that generate most of the cell's supply of adenosine triphosphate
+        [distractor] studded with ribosomes and is responsible for protein synthesis
+        [CORRECT  ] DNA polymerase, which reads the existing strand as a template and synthesizes a new complementary strand
+        [distractor] the process of nuclear division that produces two genetically identical daughter cells from a single parent cell
+    concept         : process relies on the enzyme (process-relies-on-the-enzyme)
+    knowledge target: understand what process relies on the enzyme is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : explains a mechanism the document teaches
+    source pages    : [1]
+    evidence        : The process relies on the enzyme DNA polymerase, which reads the existing strand as a template
+                      and synthesizes a new complementary strand.
+    explanation     : The process relies on the enzyme DNA polymerase, which reads the existing strand as a template
+                      and synthesizes a new complementary strand. That is why DNA polymerase, which reads the existing
+                      strand as a template and synthesizes a new complementary strand is correct.
+    quality score   : 0.866
+
+Q8. [short-answer] [difficulty: hard]
+    prompt          : Why does meiosis matter?
+    correct answer  : produces four genetically distinct daughter cells, each with half the number of chromosomes as the parent cell
+    concept         : Meiosis (meiosis)
+    knowledge target: explain why Meiosis matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on; is explained in depth; the document flags it as important
+    source pages    : [2]
+    evidence        : Meiosis is defined as a specialized type of cell division that produces four genetically
+                      distinct daughter cells, each with half the number of chromosomes as the parent cell, and is
+                      used specifically in the production of gametes for sexual reproduction.
+    explanation     : Meiosis is defined as a specialized type of cell division that produces four genetically
+                      distinct daughter cells, each with half the number of chromosomes as the parent cell, and is
+                      used specifically in the production of gametes for sexual reproduction. That is why produces
+                      four genetically distinct daughter cells, each with half the number of chromosomes as the parent
+                      cell is correct.
+    quality score   : 0.939
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 16
+    concepts tested     : 8
+      NOT TESTED: mitochondria (importance 0.776)
+      NOT TESTED: transcription (importance 0.696)
+      NOT TESTED: ribosomes (importance 0.683)
+      NOT TESTED: nucleolus (importance 0.670)
+      NOT TESTED: protein-synthesis (importance 0.667)
+      NOT TESTED: golgi-apparatus (importance 0.661)
+      NOT TESTED: dna-replication (importance 0.651)
+      NOT TESTED: endoplasmic-reticulum (importance 0.627)
+    tiers               : T1=6 T2=2 T3=0
+    cognitive skills    : {'cause_effect': 3, 'comparison': 1, 'misconception': 1, 'process_order': 1, 'understanding': 2}
+    question types      : {'true-false': 2, 'mcq': 3, 'short-answer': 3}
+    T/F polarity        : True=1 False=1
+    duplicate targets   : 0
+
+==================================================================================================
+operating-systems-scheduling.pdf   seed=1   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [true-false] [difficulty: medium]
+    prompt          : The multilevel queue scheduling algorithm partitions partitions the ready queue into several separate queues based on process characteristics.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : multilevel queue scheduling algorithm partitions (multilevel-queue-scheduling-algorithm-partitions)
+    knowledge target: explain how multilevel queue scheduling algorithm partitions works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; is explained in depth
+    source pages    : [2]
+    evidence        : A multilevel queue scheduling algorithm partitions the ready queue into several separate queues
+                      based on process characteristics, such as foreground versus background processes, with each
+                      queue having its own scheduling algorithm.
+    explanation     : A multilevel queue scheduling algorithm partitions the ready queue into several separate queues
+                      based on process characteristics, such as foreground versus background processes, with each
+                      queue having its own scheduling algorithm. That is why this statement is correct.
+    quality score   : 0.960
+
+Q2. [mcq] [difficulty: hard]
+    prompt          : Why is Response time important?
+    options         :
+        [distractor] can lead to the convoy effect, where a long process delays all subsequent shorter processes
+        [distractor] commonly abbreviated as PCB, is a data structure maintained by the operating system for every process
+        [CORRECT  ] the time from process submission until the first response is produced, which is particularly important for interactive systems
+        [distractor] the operating system decides which process in the ready queue is allocated the CPU next
+    concept         : Response time (response-time)
+    knowledge target: explain why Response time matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : Response time is defined as the time from process submission until the first response is
+                      produced, which is particularly important for interactive systems.
+    explanation     : Response time is defined as the time from process submission until the first response is
+                      produced, which is particularly important for interactive systems. That is why the time from
+                      process submission until the first response is produced, which is particularly important for
+                      interactive systems is correct.
+    quality score   : 0.917
+
+Q3. [true-false] [difficulty: medium]
+    prompt          : FCFS selects the process with the smallest estimated execution time next.
+    options         : ['True', 'False']
+    correct answer  : False
+    concept         : Shortest Job First (shortest-job-first)
+    knowledge target: recognise whether a stated relationship really belongs to Shortest Job First
+    cognitive skill : misconception   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches
+    source pages    : [1]
+    evidence        : Shortest Job First, abbreviated SJF, selects the process with the smallest estimated execution
+                      time next.
+    explanation     : Shortest Job First, abbreviated SJF, selects the process with the smallest estimated execution
+                      time next. The statement is false because this describes Shortest Job First, not FCFS.
+    quality score   : 0.909
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : What is Turnaround time?
+    correct answer  : the total time taken from process submission to process completion
+    concept         : Turnaround time (turnaround-time)
+    knowledge target: understand what Turnaround time is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : Turnaround time is defined as the total time taken from process submission to process
+                      completion.
+    explanation     : Turnaround time is defined as the total time taken from process submission to process
+                      completion. That is why the total time taken from process submission to process completion is
+                      correct.
+    quality score   : 0.884
+
+Q5. [short-answer] [difficulty: hard]
+    prompt          : Explain how Waiting time differs from Turnaround time.
+    correct answer  : the total time a process spends waiting in the ready queue
+    concept         : Waiting time (waiting-time)
+    knowledge target: distinguish Waiting time from what it is contrasted with (Turnaround time)
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Waiting time is defined as the total time a process spends waiting in the ready queue.
+    explanation     : Waiting time is defined as the total time a process spends waiting in the ready queue. That is
+                      why the total time a process spends waiting in the ready queue is correct.
+    quality score   : 0.918
+
+Q6. [mcq] [difficulty: hard]
+    prompt          : What does FCFS produce?
+    options         :
+        [CORRECT  ] the convoy effect, where a long process delays all subsequent shorter processes
+        [distractor] partitions the ready queue into several separate queues based on process characteristics
+        [distractor] abbreviated SJF, selects the process with the smallest estimated execution time next
+        [distractor] the total time a process spends waiting in the ready queue
+    concept         : FCFS (fcfs)
+    knowledge target: explain what results from FCFS
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : states a causal relationship
+    source pages    : [1]
+    evidence        : Although simple to implement, FCFS can lead to the convoy effect, where a long process delays
+                      all subsequent shorter processes.
+    explanation     : Although simple to implement, FCFS can lead to the convoy effect, where a long process delays
+                      all subsequent shorter processes. That is why the convoy effect, where a long process delays all
+                      subsequent shorter processes is correct.
+    quality score   : 0.946
+
+Q7. [true-false] [difficulty: medium]
+    prompt          : Priority scheduling assigns a priority number to each process.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : Priority scheduling (priority-scheduling)
+    knowledge target: explain how Priority scheduling works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches
+    source pages    : [2]
+    evidence        : Priority scheduling assigns a priority number to each process, and the CPU is allocated to the
+                      process with the highest priority.
+    explanation     : Priority scheduling assigns a priority number to each process, and the CPU is allocated to the
+                      process with the highest priority. That is why this statement is correct.
+    quality score   : 0.909
+
+Q8. [mcq] [difficulty: medium]
+    prompt          : By what mechanism does CPU scheduling occur?
+    options         :
+        [distractor] selects the process with the smallest estimated execution time next
+        [distractor] assigns a priority number to each process
+        [distractor] partitions the ready queue into several separate queues based on process characteristics
+        [CORRECT  ] the operating system decides which process in the ready queue is allocated the CPU next
+    concept         : CPU scheduling (cpu-scheduling)
+    knowledge target: explain how CPU scheduling works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : CPU scheduling is defined as the process by which the operating system decides which process in
+                      the ready queue is allocated the CPU next.
+    explanation     : CPU scheduling is defined as the process by which the operating system decides which process in
+                      the ready queue is allocated the CPU next. That is why the operating system decides which
+                      process in the ready queue is allocated the CPU next is correct.
+    quality score   : 0.952
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 9
+    concepts tested     : 8
+      NOT TESTED: round-robin-scheduling (importance 0.849)
+    tiers               : T1=7 T2=1 T3=0
+    cognitive skills    : {'process_order': 3, 'cause_effect': 2, 'misconception': 1, 'understanding': 1, 'comparison': 1}
+    question types      : {'true-false': 3, 'mcq': 3, 'short-answer': 2}
+    T/F polarity        : True=2 False=1
+    duplicate targets   : 0
+
+==================================================================================================
+operating-systems-scheduling.pdf   seed=3   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [true-false] [difficulty: medium]
+    prompt          : The multilevel queue scheduling algorithm partitions partitions the ready queue into several separate queues based on process characteristics.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : multilevel queue scheduling algorithm partitions (multilevel-queue-scheduling-algorithm-partitions)
+    knowledge target: explain how multilevel queue scheduling algorithm partitions works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; is explained in depth
+    source pages    : [2]
+    evidence        : A multilevel queue scheduling algorithm partitions the ready queue into several separate queues
+                      based on process characteristics, such as foreground versus background processes, with each
+                      queue having its own scheduling algorithm.
+    explanation     : A multilevel queue scheduling algorithm partitions the ready queue into several separate queues
+                      based on process characteristics, such as foreground versus background processes, with each
+                      queue having its own scheduling algorithm. That is why this statement is correct.
+    quality score   : 0.960
+
+Q2. [mcq] [difficulty: hard]
+    prompt          : Why is Response time important?
+    options         :
+        [CORRECT  ] the time from process submission until the first response is produced, which is particularly important for interactive systems
+        [distractor] commonly abbreviated as PCB, is a data structure maintained by the operating system for every process
+        [distractor] can lead to the convoy effect, where a long process delays all subsequent shorter processes
+        [distractor] the operating system decides which process in the ready queue is allocated the CPU next
+    concept         : Response time (response-time)
+    knowledge target: explain why Response time matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : Response time is defined as the time from process submission until the first response is
+                      produced, which is particularly important for interactive systems.
+    explanation     : Response time is defined as the time from process submission until the first response is
+                      produced, which is particularly important for interactive systems. That is why the time from
+                      process submission until the first response is produced, which is particularly important for
+                      interactive systems is correct.
+    quality score   : 0.917
+
+Q3. [true-false] [difficulty: medium]
+    prompt          : FCFS selects the process with the smallest estimated execution time next.
+    options         : ['False', 'True']
+    correct answer  : False
+    concept         : Shortest Job First (shortest-job-first)
+    knowledge target: recognise whether a stated relationship really belongs to Shortest Job First
+    cognitive skill : misconception   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches
+    source pages    : [1]
+    evidence        : Shortest Job First, abbreviated SJF, selects the process with the smallest estimated execution
+                      time next.
+    explanation     : Shortest Job First, abbreviated SJF, selects the process with the smallest estimated execution
+                      time next. The statement is false because this describes Shortest Job First, not FCFS.
+    quality score   : 0.909
+
+Q4. [short-answer] [difficulty: hard]
+    prompt          : Explain how Waiting time differs from Turnaround time.
+    correct answer  : the total time a process spends waiting in the ready queue
+    concept         : Waiting time (waiting-time)
+    knowledge target: distinguish Waiting time from what it is contrasted with (Turnaround time)
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Waiting time is defined as the total time a process spends waiting in the ready queue.
+    explanation     : Waiting time is defined as the total time a process spends waiting in the ready queue. That is
+                      why the total time a process spends waiting in the ready queue is correct.
+    quality score   : 0.918
+
+Q5. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes Turnaround time?
+    options         :
+        [distractor] the time from process submission until the first response is produced
+        [distractor] a program is a passive entity stored on disk
+        [distractor] the total time a process spends waiting in the ready queue
+        [CORRECT  ] the total time taken from process submission to process completion
+    concept         : Turnaround time (turnaround-time)
+    knowledge target: understand what Turnaround time is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : Turnaround time is defined as the total time taken from process submission to process
+                      completion.
+    explanation     : Turnaround time is defined as the total time taken from process submission to process
+                      completion. That is why the total time taken from process submission to process completion is
+                      correct.
+    quality score   : 0.884
+
+Q6. [true-false] [difficulty: medium]
+    prompt          : In CPU scheduling, the operating system decides which process in the ready queue is allocated the CPU next.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : CPU scheduling (cpu-scheduling)
+    knowledge target: explain how CPU scheduling works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : CPU scheduling is defined as the process by which the operating system decides which process in
+                      the ready queue is allocated the CPU next.
+    explanation     : CPU scheduling is defined as the process by which the operating system decides which process in
+                      the ready queue is allocated the CPU next. That is why this statement is correct.
+    quality score   : 0.952
+
+Q7. [mcq] [difficulty: hard]
+    prompt          : What does FCFS produce?
+    options         :
+        [CORRECT  ] the convoy effect, where a long process delays all subsequent shorter processes
+        [distractor] the total time a process spends waiting in the ready queue
+        [distractor] abbreviated SJF, selects the process with the smallest estimated execution time next
+        [distractor] partitions the ready queue into several separate queues based on process characteristics
+    concept         : FCFS (fcfs)
+    knowledge target: explain what results from FCFS
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : states a causal relationship
+    source pages    : [1]
+    evidence        : Although simple to implement, FCFS can lead to the convoy effect, where a long process delays
+                      all subsequent shorter processes.
+    explanation     : Although simple to implement, FCFS can lead to the convoy effect, where a long process delays
+                      all subsequent shorter processes. That is why the convoy effect, where a long process delays all
+                      subsequent shorter processes is correct.
+    quality score   : 0.946
+
+Q8. [short-answer] [difficulty: medium]
+    prompt          : By what mechanism does Priority scheduling occur?
+    correct answer  : assigns a priority number to each process
+    concept         : Priority scheduling (priority-scheduling)
+    knowledge target: explain how Priority scheduling works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches
+    source pages    : [2]
+    evidence        : Priority scheduling assigns a priority number to each process, and the CPU is allocated to the
+                      process with the highest priority.
+    explanation     : Priority scheduling assigns a priority number to each process, and the CPU is allocated to the
+                      process with the highest priority. That is why assigns a priority number to each process is
+                      correct.
+    quality score   : 0.909
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 9
+    concepts tested     : 8
+      NOT TESTED: round-robin-scheduling (importance 0.849)
+    tiers               : T1=7 T2=1 T3=0
+    cognitive skills    : {'process_order': 3, 'cause_effect': 2, 'misconception': 1, 'comparison': 1, 'understanding': 1}
+    question types      : {'true-false': 3, 'mcq': 3, 'short-answer': 2}
+    T/F polarity        : True=2 False=1
+    duplicate targets   : 0
+
+==================================================================================================
+operating-systems-scheduling.pdf   seed=5   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [short-answer] [difficulty: medium]
+    prompt          : How does the multilevel queue scheduling algorithm partitions carry out its function?
+    correct answer  : partitions the ready queue into several separate queues based on process characteristics
+    concept         : multilevel queue scheduling algorithm partitions (multilevel-queue-scheduling-algorithm-partitions)
+    knowledge target: explain how multilevel queue scheduling algorithm partitions works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; is explained in depth
+    source pages    : [2]
+    evidence        : A multilevel queue scheduling algorithm partitions the ready queue into several separate queues
+                      based on process characteristics, such as foreground versus background processes, with each
+                      queue having its own scheduling algorithm.
+    explanation     : A multilevel queue scheduling algorithm partitions the ready queue into several separate queues
+                      based on process characteristics, such as foreground versus background processes, with each
+                      queue having its own scheduling algorithm. That is why partitions the ready queue into several
+                      separate queues based on process characteristics is correct.
+    quality score   : 0.960
+
+Q2. [short-answer] [difficulty: hard]
+    prompt          : What does FCFS produce?
+    correct answer  : the convoy effect, where a long process delays all subsequent shorter processes
+    concept         : FCFS (fcfs)
+    knowledge target: explain what results from FCFS
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : effect
+    importance      : states a causal relationship
+    source pages    : [1]
+    evidence        : Although simple to implement, FCFS can lead to the convoy effect, where a long process delays
+                      all subsequent shorter processes.
+    explanation     : Although simple to implement, FCFS can lead to the convoy effect, where a long process delays
+                      all subsequent shorter processes. That is why the convoy effect, where a long process delays all
+                      subsequent shorter processes is correct.
+    quality score   : 0.946
+
+Q3. [mcq] [difficulty: hard]
+    prompt          : How does Waiting time differ from Turnaround time?
+    options         :
+        [CORRECT  ] the total time a process spends waiting in the ready queue
+        [distractor] the ready queue into several separate queues based on process characteristics
+        [distractor] abbreviated SJF, selects the process with the smallest estimated execution time next
+        [distractor] the convoy effect, where a long process delays all subsequent shorter processes
+    concept         : Waiting time (waiting-time)
+    knowledge target: distinguish Waiting time from what it is contrasted with (Turnaround time)
+    cognitive skill : comparison   tier: T1 reasoning
+    facet/relation  : contrast
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Waiting time is defined as the total time a process spends waiting in the ready queue.
+    explanation     : Waiting time is defined as the total time a process spends waiting in the ready queue. That is
+                      why the total time a process spends waiting in the ready queue is correct.
+    quality score   : 0.918
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : What is Turnaround time?
+    correct answer  : the total time taken from process submission to process completion
+    concept         : Turnaround time (turnaround-time)
+    knowledge target: understand what Turnaround time is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : Turnaround time is defined as the total time taken from process submission to process
+                      completion.
+    explanation     : Turnaround time is defined as the total time taken from process submission to process
+                      completion. That is why the total time taken from process submission to process completion is
+                      correct.
+    quality score   : 0.884
+
+Q5. [true-false] [difficulty: medium]
+    prompt          : Shortest Job First selects the process with the smallest estimated execution time next.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : Shortest Job First (shortest-job-first)
+    knowledge target: explain how Shortest Job First works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches
+    source pages    : [1]
+    evidence        : Shortest Job First, abbreviated SJF, selects the process with the smallest estimated execution
+                      time next.
+    explanation     : Shortest Job First, abbreviated SJF, selects the process with the smallest estimated execution
+                      time next. That is why this statement is correct.
+    quality score   : 0.909
+
+Q6. [mcq] [difficulty: hard]
+    prompt          : Why is Response time important?
+    options         :
+        [distractor] commonly abbreviated as PCB, is a data structure maintained by the operating system for every process
+        [distractor] the operating system decides which process in the ready queue is allocated the CPU next
+        [CORRECT  ] the time from process submission until the first response is produced, which is particularly important for interactive systems
+        [distractor] can lead to the convoy effect, where a long process delays all subsequent shorter processes
+    concept         : Response time (response-time)
+    knowledge target: explain why Response time matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : Response time is defined as the time from process submission until the first response is
+                      produced, which is particularly important for interactive systems.
+    explanation     : Response time is defined as the time from process submission until the first response is
+                      produced, which is particularly important for interactive systems. That is why the time from
+                      process submission until the first response is produced, which is particularly important for
+                      interactive systems is correct.
+    quality score   : 0.917
+
+Q7. [short-answer] [difficulty: medium]
+    prompt          : By what mechanism does Round Robin scheduling occur?
+    correct answer  : assigns each process a fixed time slice, called a time quantum, and cycles through all processes in the ready queue
+    concept         : Round Robin scheduling (round-robin-scheduling)
+    knowledge target: explain how Round Robin scheduling works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; developed across several pages
+    source pages    : [1]
+    evidence        : Round Robin scheduling assigns each process a fixed time slice, called a time quantum, and
+                      cycles through all processes in the ready queue.
+    explanation     : Round Robin scheduling assigns each process a fixed time slice, called a time quantum, and
+                      cycles through all processes in the ready queue. That is why assigns each process a fixed time
+                      slice, called a time quantum, and cycles through all processes in the ready queue is correct.
+    quality score   : 0.937
+
+Q8. [mcq] [difficulty: medium]
+    prompt          : By what mechanism does CPU scheduling occur?
+    options         :
+        [distractor] selects the process with the smallest estimated execution time next
+        [distractor] assigns a priority number to each process
+        [CORRECT  ] the operating system decides which process in the ready queue is allocated the CPU next
+        [distractor] partitions the ready queue into several separate queues based on process characteristics
+    concept         : CPU scheduling (cpu-scheduling)
+    knowledge target: explain how CPU scheduling works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : CPU scheduling is defined as the process by which the operating system decides which process in
+                      the ready queue is allocated the CPU next.
+    explanation     : CPU scheduling is defined as the process by which the operating system decides which process in
+                      the ready queue is allocated the CPU next. That is why the operating system decides which
+                      process in the ready queue is allocated the CPU next is correct.
+    quality score   : 0.952
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 9
+    concepts tested     : 8
+      NOT TESTED: priority-scheduling (importance 0.778)
+    tiers               : T1=7 T2=1 T3=0
+    cognitive skills    : {'process_order': 4, 'cause_effect': 2, 'comparison': 1, 'understanding': 1}
+    question types      : {'short-answer': 4, 'mcq': 3, 'true-false': 1}
+    T/F polarity        : True=1 False=0
+    duplicate targets   : 0
+
+==================================================================================================
+physics-newtonian-mechanics.pdf   seed=1   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [short-answer] [difficulty: medium]
+    prompt          : What does Newton's Second Law state?
+    correct answer  : the net force acting on an object is equal to the mass of the object multiplied by its acceleration, expressed by the formula F = ma
+    concept         : Newton's Second Law (newton-s-second-law)
+    knowledge target: explain how Newton's Second Law works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a rule the learner must apply; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's Second Law states that the net force acting on an object is equal to the mass of the
+                      object multiplied by its acceleration, expressed by the formula F = ma.
+    explanation     : Newton's Second Law states that the net force acting on an object is equal to the mass of the
+                      object multiplied by its acceleration, expressed by the formula F = ma. That is why the net
+                      force acting on an object is equal to the mass of the object multiplied by its acceleration,
+                      expressed by the formula F = ma is correct.
+    quality score   : 0.975
+
+Q2. [short-answer] [difficulty: medium]
+    prompt          : What is Newton's three laws of motion?
+    correct answer  : describe the relationship between the forces acting on an object and its resulting motion
+    concept         : Newton's three laws of motion (newton-s-three-laws-of-motion)
+    knowledge target: understand what Newton's three laws of motion is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : explains a mechanism the document teaches; is explained in depth
+    source pages    : [2]
+    evidence        : In summary, Newton's three laws of motion describe the relationship between the forces acting on
+                      an object and its resulting motion: the first law describes inertia, the second law quantifies
+                      force as the product of mass and acceleration, and the third law describes the pairwise nature
+                      of forces between interacting objects.
+    explanation     : In summary, Newton's three laws of motion describe the relationship between the forces acting on
+                      an object and its resulting motion: the first law describes inertia, the second law quantifies
+                      force as the product of mass and acceleration, and the third law describes the pairwise nature
+                      of forces between interacting objects. That is why describe the relationship between the forces
+                      acting on an object and its resulting motion is correct.
+    quality score   : 0.908
+
+Q3. [mcq] [difficulty: hard]
+    prompt          : Why does Friction matter?
+    options         :
+        [distractor] describe the relationship between the forces acting on an object and its resulting motion
+        [distractor] the net force required to keep an object moving in a circular path
+        [distractor] correctly applying Newton's Second Law in problems involving multiple forces
+        [CORRECT  ] opposes relative motion or the tendency toward relative motion between two surfaces in contact
+    concept         : Friction (friction)
+    knowledge target: explain why Friction matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Friction is defined as a force that opposes relative motion or the tendency toward relative
+                      motion between two surfaces in contact.
+    explanation     : Friction is defined as a force that opposes relative motion or the tendency toward relative
+                      motion between two surfaces in contact. That is why opposes relative motion or the tendency
+                      toward relative motion between two surfaces in contact is correct.
+    quality score   : 0.940
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : What does Newton's First Law state?
+    correct answer  : an object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced external force
+    concept         : Newton's First Law (newton-s-first-law)
+    knowledge target: explain how Newton's First Law works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; is explained in depth; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's First Law, also known as the law of inertia, states that an object at rest stays at
+                      rest and an object in motion stays in motion with the same speed and in the same direction
+                      unless acted upon by an unbalanced external force.
+    explanation     : Newton's First Law, also known as the law of inertia, states that an object at rest stays at
+                      rest and an object in motion stays in motion with the same speed and in the same direction
+                      unless acted upon by an unbalanced external force. That is why an object at rest stays at rest
+                      and an object in motion stays in motion with the same speed and in the same direction unless
+                      acted upon by an unbalanced external force is correct.
+    quality score   : 0.973
+
+Q5. [true-false] [difficulty: hard]
+    prompt          : The free body diagram is responsible for correctly applying Newton's Second Law in problems involving multiple forces.
+    options         : ['True', 'False']
+    correct answer  : True
+    concept         : free body diagram (free-body-diagram)
+    knowledge target: explain why free body diagram matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : A free body diagram is a diagrammatic tool used to visualize all forces acting on an object,
+                      which is essential for correctly applying Newton's Second Law in problems involving multiple
+                      forces.
+    explanation     : A free body diagram is a diagrammatic tool used to visualize all forces acting on an object,
+                      which is essential for correctly applying Newton's Second Law in problems involving multiple
+                      forces. That is why this statement is correct.
+    quality score   : 0.930
+
+Q6. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes Newton's Third Law?
+    options         :
+        [CORRECT  ] for every action there is an equal and opposite reaction
+        [distractor] a diagrammatic tool used to visualize all forces acting on an object
+        [distractor] correctly applying Newton's Second Law in problems involving multiple forces
+        [distractor] the vector sum of all individual forces
+    concept         : Newton's Third Law (newton-s-third-law)
+    knowledge target: understand what Newton's Third Law is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : states a rule the learner must apply; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's Third Law states that for every action there is an equal and opposite reaction:
+                      whenever object A exerts a force on object B, object B simultaneously exerts a force of equal
+                      magnitude and opposite direction on object A.
+    explanation     : Newton's Third Law states that for every action there is an equal and opposite reaction:
+                      whenever object A exerts a force on object B, object B simultaneously exerts a force of equal
+                      magnitude and opposite direction on object A. That is why for every action there is an equal and
+                      opposite reaction is correct.
+    quality score   : 0.925
+
+Q7. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes the net force?
+    options         :
+        [distractor] for every action there is an equal and opposite reaction
+        [distractor] correctly applying Newton's Second Law in problems involving multiple forces
+        [CORRECT  ] the vector sum of all individual forces
+        [distractor] a diagrammatic tool used to visualize all forces acting on an object
+    concept         : net force (net-force)
+    knowledge target: understand what net force is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : When multiple forces act on an object, the net force is the vector sum of all individual forces.
+    explanation     : When multiple forces act on an object, the net force is the vector sum of all individual forces.
+                      That is why the vector sum of all individual forces is correct.
+    quality score   : 0.901
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 8
+    concepts tested     : 7
+      NOT TESTED: centripetal-force (importance 0.653)
+    tiers               : T1=4 T2=3 T3=0
+    cognitive skills    : {'process_order': 2, 'understanding': 3, 'cause_effect': 2}
+    question types      : {'short-answer': 3, 'mcq': 3, 'true-false': 1}
+    T/F polarity        : True=1 False=0
+    duplicate targets   : 0
+
+==================================================================================================
+physics-newtonian-mechanics.pdf   seed=3   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [short-answer] [difficulty: medium]
+    prompt          : What does Newton's First Law state?
+    correct answer  : an object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced external force
+    concept         : Newton's First Law (newton-s-first-law)
+    knowledge target: explain how Newton's First Law works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; is explained in depth; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's First Law, also known as the law of inertia, states that an object at rest stays at
+                      rest and an object in motion stays in motion with the same speed and in the same direction
+                      unless acted upon by an unbalanced external force.
+    explanation     : Newton's First Law, also known as the law of inertia, states that an object at rest stays at
+                      rest and an object in motion stays in motion with the same speed and in the same direction
+                      unless acted upon by an unbalanced external force. That is why an object at rest stays at rest
+                      and an object in motion stays in motion with the same speed and in the same direction unless
+                      acted upon by an unbalanced external force is correct.
+    quality score   : 0.973
+
+Q2. [true-false] [difficulty: hard]
+    prompt          : Friction opposes relative motion or the tendency toward relative motion between two surfaces in contact.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : Friction (friction)
+    knowledge target: explain why Friction matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Friction is defined as a force that opposes relative motion or the tendency toward relative
+                      motion between two surfaces in contact.
+    explanation     : Friction is defined as a force that opposes relative motion or the tendency toward relative
+                      motion between two surfaces in contact. That is why this statement is correct.
+    quality score   : 0.940
+
+Q3. [short-answer] [difficulty: medium]
+    prompt          : What is the net force?
+    correct answer  : the vector sum of all individual forces
+    concept         : net force (net-force)
+    knowledge target: understand what net force is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : When multiple forces act on an object, the net force is the vector sum of all individual forces.
+    explanation     : When multiple forces act on an object, the net force is the vector sum of all individual forces.
+                      That is why the vector sum of all individual forces is correct.
+    quality score   : 0.901
+
+Q4. [true-false] [difficulty: medium]
+    prompt          : The Centripetal force is responsible for correctly applying Newton's Second Law in problems involving multiple forces.
+    options         : ['True', 'False']
+    correct answer  : False
+    concept         : free body diagram (free-body-diagram)
+    knowledge target: recognise whether a stated relationship really belongs to free body diagram
+    cognitive skill : misconception   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : A free body diagram is a diagrammatic tool used to visualize all forces acting on an object,
+                      which is essential for correctly applying Newton's Second Law in problems involving multiple
+                      forces.
+    explanation     : A free body diagram is a diagrammatic tool used to visualize all forces acting on an object,
+                      which is essential for correctly applying Newton's Second Law in problems involving multiple
+                      forces. The statement is false because this describes the free body diagram, not Centripetal
+                      force.
+    quality score   : 0.919
+
+Q5. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes Newton's three laws of motion?
+    options         :
+        [distractor] opposes relative motion or the tendency toward relative motion between two surfaces in contact
+        [CORRECT  ] describe the relationship between the forces acting on an object and its resulting motion
+        [distractor] the net force required to keep an object moving in a circular path
+        [distractor] a quantitative measure of an object's resistance to acceleration when a net force is applied
+    concept         : Newton's three laws of motion (newton-s-three-laws-of-motion)
+    knowledge target: understand what Newton's three laws of motion is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : explains a mechanism the document teaches; is explained in depth
+    source pages    : [2]
+    evidence        : In summary, Newton's three laws of motion describe the relationship between the forces acting on
+                      an object and its resulting motion: the first law describes inertia, the second law quantifies
+                      force as the product of mass and acceleration, and the third law describes the pairwise nature
+                      of forces between interacting objects.
+    explanation     : In summary, Newton's three laws of motion describe the relationship between the forces acting on
+                      an object and its resulting motion: the first law describes inertia, the second law quantifies
+                      force as the product of mass and acceleration, and the third law describes the pairwise nature
+                      of forces between interacting objects. That is why describe the relationship between the forces
+                      acting on an object and its resulting motion is correct.
+    quality score   : 0.908
+
+Q6. [short-answer] [difficulty: medium]
+    prompt          : What does Newton's Second Law state?
+    correct answer  : the net force acting on an object is equal to the mass of the object multiplied by its acceleration, expressed by the formula F = ma
+    concept         : Newton's Second Law (newton-s-second-law)
+    knowledge target: explain how Newton's Second Law works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a rule the learner must apply; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's Second Law states that the net force acting on an object is equal to the mass of the
+                      object multiplied by its acceleration, expressed by the formula F = ma.
+    explanation     : Newton's Second Law states that the net force acting on an object is equal to the mass of the
+                      object multiplied by its acceleration, expressed by the formula F = ma. That is why the net
+                      force acting on an object is equal to the mass of the object multiplied by its acceleration,
+                      expressed by the formula F = ma is correct.
+    quality score   : 0.975
+
+Q7. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes Newton's Third Law?
+    options         :
+        [distractor] the vector sum of all individual forces
+        [distractor] a diagrammatic tool used to visualize all forces acting on an object
+        [distractor] correctly applying Newton's Second Law in problems involving multiple forces
+        [CORRECT  ] for every action there is an equal and opposite reaction
+    concept         : Newton's Third Law (newton-s-third-law)
+    knowledge target: understand what Newton's Third Law is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : states a rule the learner must apply; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's Third Law states that for every action there is an equal and opposite reaction:
+                      whenever object A exerts a force on object B, object B simultaneously exerts a force of equal
+                      magnitude and opposite direction on object A.
+    explanation     : Newton's Third Law states that for every action there is an equal and opposite reaction:
+                      whenever object A exerts a force on object B, object B simultaneously exerts a force of equal
+                      magnitude and opposite direction on object A. That is why for every action there is an equal and
+                      opposite reaction is correct.
+    quality score   : 0.925
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 8
+    concepts tested     : 7
+      NOT TESTED: centripetal-force (importance 0.653)
+    tiers               : T1=4 T2=3 T3=0
+    cognitive skills    : {'process_order': 2, 'cause_effect': 1, 'understanding': 3, 'misconception': 1}
+    question types      : {'short-answer': 3, 'true-false': 2, 'mcq': 2}
+    T/F polarity        : True=1 False=1
+    duplicate targets   : 0
+
+==================================================================================================
+physics-newtonian-mechanics.pdf   seed=5   count requested=8
+==================================================================================================
+provider=deterministic  model=learnx-study-map-v1  fallback_used=True
+
+Q1. [short-answer] [difficulty: medium]
+    prompt          : What does Newton's Second Law state?
+    correct answer  : the net force acting on an object is equal to the mass of the object multiplied by its acceleration, expressed by the formula F = ma
+    concept         : Newton's Second Law (newton-s-second-law)
+    knowledge target: explain how Newton's Second Law works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : states a rule the learner must apply; is explained in depth; other taught concepts depend on it; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's Second Law states that the net force acting on an object is equal to the mass of the
+                      object multiplied by its acceleration, expressed by the formula F = ma.
+    explanation     : Newton's Second Law states that the net force acting on an object is equal to the mass of the
+                      object multiplied by its acceleration, expressed by the formula F = ma. That is why the net
+                      force acting on an object is equal to the mass of the object multiplied by its acceleration,
+                      expressed by the formula F = ma is correct.
+    quality score   : 0.975
+
+Q2. [mcq] [difficulty: hard]
+    prompt          : Why does Friction matter?
+    options         :
+        [CORRECT  ] opposes relative motion or the tendency toward relative motion between two surfaces in contact
+        [distractor] correctly applying Newton's Second Law in problems involving multiple forces
+        [distractor] the net force required to keep an object moving in a circular path
+        [distractor] describe the relationship between the forces acting on an object and its resulting motion
+    concept         : Friction (friction)
+    knowledge target: explain why Friction matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : Friction is defined as a force that opposes relative motion or the tendency toward relative
+                      motion between two surfaces in contact.
+    explanation     : Friction is defined as a force that opposes relative motion or the tendency toward relative
+                      motion between two surfaces in contact. That is why opposes relative motion or the tendency
+                      toward relative motion between two surfaces in contact is correct.
+    quality score   : 0.940
+
+Q3. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes Newton's three laws of motion?
+    options         :
+        [distractor] the net force required to keep an object moving in a circular path
+        [distractor] a quantitative measure of an object's resistance to acceleration when a net force is applied
+        [distractor] opposes relative motion or the tendency toward relative motion between two surfaces in contact
+        [CORRECT  ] describe the relationship between the forces acting on an object and its resulting motion
+    concept         : Newton's three laws of motion (newton-s-three-laws-of-motion)
+    knowledge target: understand what Newton's three laws of motion is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : explains a mechanism the document teaches; is explained in depth
+    source pages    : [2]
+    evidence        : In summary, Newton's three laws of motion describe the relationship between the forces acting on
+                      an object and its resulting motion: the first law describes inertia, the second law quantifies
+                      force as the product of mass and acceleration, and the third law describes the pairwise nature
+                      of forces between interacting objects.
+    explanation     : In summary, Newton's three laws of motion describe the relationship between the forces acting on
+                      an object and its resulting motion: the first law describes inertia, the second law quantifies
+                      force as the product of mass and acceleration, and the third law describes the pairwise nature
+                      of forces between interacting objects. That is why describe the relationship between the forces
+                      acting on an object and its resulting motion is correct.
+    quality score   : 0.908
+
+Q4. [short-answer] [difficulty: medium]
+    prompt          : What is the net force?
+    correct answer  : the vector sum of all individual forces
+    concept         : net force (net-force)
+    knowledge target: understand what net force is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : defines a term the rest of the document builds on; other taught concepts depend on it
+    source pages    : [1]
+    evidence        : When multiple forces act on an object, the net force is the vector sum of all individual forces.
+    explanation     : When multiple forces act on an object, the net force is the vector sum of all individual forces.
+                      That is why the vector sum of all individual forces is correct.
+    quality score   : 0.901
+
+Q5. [short-answer] [difficulty: medium]
+    prompt          : What does Newton's First Law state?
+    correct answer  : an object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced external force
+    concept         : Newton's First Law (newton-s-first-law)
+    knowledge target: explain how Newton's First Law works
+    cognitive skill : process_order   tier: T1 reasoning
+    facet/relation  : mechanism
+    importance      : explains a mechanism the document teaches; is explained in depth; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's First Law, also known as the law of inertia, states that an object at rest stays at
+                      rest and an object in motion stays in motion with the same speed and in the same direction
+                      unless acted upon by an unbalanced external force.
+    explanation     : Newton's First Law, also known as the law of inertia, states that an object at rest stays at
+                      rest and an object in motion stays in motion with the same speed and in the same direction
+                      unless acted upon by an unbalanced external force. That is why an object at rest stays at rest
+                      and an object in motion stays in motion with the same speed and in the same direction unless
+                      acted upon by an unbalanced external force is correct.
+    quality score   : 0.973
+
+Q6. [true-false] [difficulty: hard]
+    prompt          : The free body diagram is responsible for correctly applying Newton's Second Law in problems involving multiple forces.
+    options         : ['False', 'True']
+    correct answer  : True
+    concept         : free body diagram (free-body-diagram)
+    knowledge target: explain why free body diagram matters and what it accomplishes
+    cognitive skill : cause_effect   tier: T1 reasoning
+    facet/relation  : purpose
+    importance      : defines a term the rest of the document builds on
+    source pages    : [1]
+    evidence        : A free body diagram is a diagrammatic tool used to visualize all forces acting on an object,
+                      which is essential for correctly applying Newton's Second Law in problems involving multiple
+                      forces.
+    explanation     : A free body diagram is a diagrammatic tool used to visualize all forces acting on an object,
+                      which is essential for correctly applying Newton's Second Law in problems involving multiple
+                      forces. That is why this statement is correct.
+    quality score   : 0.930
+
+Q7. [mcq] [difficulty: medium]
+    prompt          : Which statement best describes Newton's Third Law?
+    options         :
+        [distractor] a diagrammatic tool used to visualize all forces acting on an object
+        [distractor] the vector sum of all individual forces
+        [CORRECT  ] for every action there is an equal and opposite reaction
+        [distractor] correctly applying Newton's Second Law in problems involving multiple forces
+    concept         : Newton's Third Law (newton-s-third-law)
+    knowledge target: understand what Newton's Third Law is and what role it plays
+    cognitive skill : understanding   tier: T2 understanding
+    facet/relation  : -
+    importance      : states a rule the learner must apply; the document flags it as important
+    source pages    : [1]
+    evidence        : Newton's Third Law states that for every action there is an equal and opposite reaction:
+                      whenever object A exerts a force on object B, object B simultaneously exerts a force of equal
+                      magnitude and opposite direction on object A.
+    explanation     : Newton's Third Law states that for every action there is an equal and opposite reaction:
+                      whenever object A exerts a force on object B, object B simultaneously exerts a force of equal
+                      magnitude and opposite direction on object A. That is why for every action there is an equal and
+                      opposite reaction is correct.
+    quality score   : 0.925
+
+--------------------------------------------------------------------------------------------------
+COVERAGE
+    important concepts  : 8
+    concepts tested     : 7
+      NOT TESTED: centripetal-force (importance 0.653)
+    tiers               : T1=4 T2=3 T3=0
+    cognitive skills    : {'process_order': 2, 'cause_effect': 2, 'understanding': 3}
+    question types      : {'short-answer': 3, 'mcq': 3, 'true-false': 1}
+    T/F polarity        : True=1 False=0
+    duplicate targets   : 0
+

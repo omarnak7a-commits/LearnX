@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
@@ -20,7 +20,11 @@ class AIBaseModel(BaseModel):
 
 
 class AIProviderMetadata(AIBaseModel):
-    provider: Literal["gemini", "groq"]
+    # "deterministic" identifies LearnX's provider-free study-map writer, which
+    # produces the quiz from the same semantic understanding and the same
+    # quality gates when Gemini/Groq are unavailable. The response shape is
+    # unchanged; this is an additive value so existing clients keep working.
+    provider: Literal["gemini", "groq", "deterministic"]
     model: str
     fallback_used: bool = False
 
@@ -120,6 +124,18 @@ class AIQuizRequest(AISourceRequest):
     )
     difficulty: Difficulty | Literal["mixed"] = "mixed"
     kind: Literal["practice", "exam"] = "practice"
+    #: Which part of the PDF the quiz may draw on.
+    #:
+    #:  ``document``   -- the whole uploaded PDF (the default, and what
+    #:                    "make me an exam from this PDF" means).
+    #:  ``pages-read`` -- only the pages the student actually opened, for the
+    #:                    deliberate "quiz me on what I've read" flow.
+    #:
+    #: Defaulting to ``document`` matters: sourcing a whole-PDF quiz from
+    #: ``pagesRead`` is how a 20-page textbook was reduced to its title page,
+    #: which yielded zero concepts and the misleading "not enough material"
+    #: error even though the document was full of teachable content.
+    scope: Literal["document", "pages-read"] = "document"
     allowed_pages: list[int] | None = Field(default=None, min_length=1, max_length=300)
     # Optional determinism + history knobs (backward compatible; the frontend
     # does not need to send them). A seed makes selection/randomization
@@ -127,6 +143,10 @@ class AIQuizRequest(AISourceRequest):
     # backend also merges persisted analysis questions as additional history.
     seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
     previous_questions: list[str] = Field(default_factory=list, max_length=100)
+    #: Return the stage-by-stage generation funnel alongside the quiz. Counts
+    #: and rejection reasons only -- never prompts, credentials or provider
+    #: configuration.
+    diagnostics: bool = False
 
 
 class AIQuizQuestion(AIBaseModel):
@@ -154,8 +174,60 @@ class AIQuizResult(AIBaseModel):
     questions: list[AIQuizQuestion] = Field(min_length=1, max_length=20)
 
 
+class AIQuizDiagnostics(BaseModel):
+    """Where questions were lost, stage by stage.
+
+    Exists because "could only verify 1" is unactionable on its own: it cannot
+    distinguish a thin PDF from a page-scoping mistake from an over-strict
+    validator. Contains counts and rejection reasons only.
+    """
+
+    requested: int
+    extracted_pages: int
+    #: Pages whose text survived extraction AND boilerplate cleaning.
+    pages_used: int
+    #: Pages that yielded some extractable text.
+    text_pages: int = 0
+    #: Pages with (almost) no text but embedded imagery -- scans, diagrams,
+    #: slide screenshots. These are candidates for multimodal understanding
+    #: rather than evidence that the document is empty.
+    image_only_pages: int = 0
+    #: Pages whose text was extracted but then discarded by cleaning. A high
+    #: number here means content was lost after extraction, not absent.
+    pages_dropped_in_cleaning: int = 0
+    concepts: int
+    evidence_items: int
+    relationships: int = 0
+    plans: int
+    candidates_generated: int
+    accepted: int
+    rejected: int
+    provider_errors: int = 0
+    rejections: dict[str, int] = Field(default_factory=dict)
+    #: Concepts the provider actually proposed, before verification. When this
+    #: is high and ``concepts`` is low, the shortfall is ours, not the PDF's.
+    concepts_proposed_by_provider: int = 0
+    #: Why proposed concepts were dropped, keyed by gate.
+    concepts_dropped_in_filtering: dict[str, int] = Field(default_factory=dict)
+    #: "provider" or "deterministic". "deterministic" after a provider call
+    #: succeeded means the provider's study map was discarded.
+    understanding_source: str = ""
+    #: Provider call outcomes: calls attempted, valid, empty, discarded.
+    provider_calls: dict[str, int] = Field(default_factory=dict)
+    #: Plans and candidate drops broken down by question type, so a
+    #: type-allocation failure cannot masquerade as a thin document.
+    plans_by_type: dict[str, int] = Field(default_factory=dict)
+    candidates_by_type: dict[str, int] = Field(default_factory=dict)
+    grounding_rejected: int = 0
+    diversity_rejected: int = 0
+    #: One entry per dropped candidate: stage, reason, concept, pages, type.
+    rejection_details: list[dict[str, Any]] = Field(default_factory=list)
+    #: Per-page extraction quality, capped so the payload stays small.
+    page_quality: list[str] = Field(default_factory=list)
+
+
 class AIQuizResponse(AIProviderMetadata, AIQuizResult):
-    pass
+    diagnostics: AIQuizDiagnostics | None = None
 
 
 class AIFlashcardsRequest(AISourceRequest):
