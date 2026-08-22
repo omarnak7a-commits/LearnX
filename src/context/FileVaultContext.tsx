@@ -22,7 +22,8 @@ import { extractPdf, estimateReadingMinutes, loadPdfDocument } from '../lib/file
 import { analyzeDocument, hashString } from '../lib/fileVault/textAnalysis'
 import { weekKeyFor, weekLabelFor } from '../lib/fileVault/weeks'
 import { vaultApi, apiVaultFileToFrontend, vaultFileToPatch } from '../lib/fileVault/apiClient'
-import { aiApi } from '../lib/ai/apiClient'
+import { aiApi, diagnosticsFragment, quizDiagnosticsFromError } from '../lib/ai/apiClient'
+import { ApiError } from '../lib/apiClient'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 const COURSE_COLORS: Record<string, { color: string; icon: string }> = {
@@ -73,7 +74,8 @@ interface FileVaultContextValue {
   generateExam: (
     id: string,
     count: number,
-    types: VaultQuestionType[]
+    types: VaultQuestionType[],
+    options?: GenerateExamOptions
   ) => Promise<VaultQuizQuestion[]>
   recordAttempt: (
     id: string,
@@ -95,6 +97,18 @@ interface FileVaultContextValue {
  *                "quiz me on what I've read so far" request.
  */
 export type QuizSourceScope = 'document' | 'pages-read'
+
+/**
+ * Per-call knobs for `generateExam`.
+ *
+ * `diagnostics` asks the backend to return the stage-by-stage generation
+ * funnel. It is opt-in and off by default: the normal exam flow sends exactly
+ * the request body it always has, and only a deliberate debugging call (the
+ * `window.learnxDiagnoseExam` console helper) turns it on.
+ */
+export interface GenerateExamOptions {
+  diagnostics?: boolean
+}
 
 /** Coalescing window for backend progress writes. */
 const REMOTE_SYNC_DEBOUNCE_MS = 1200
@@ -555,7 +569,8 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
     async (
       id: string,
       count: number,
-      types: VaultQuestionType[]
+      types: VaultQuestionType[],
+      options?: GenerateExamOptions
     ): Promise<VaultQuizQuestion[]> => {
       const file = files.find((f) => f.id === id)
       if (!file || !file.analysis || !isFullyRead(file)) return []
@@ -565,17 +580,98 @@ export function FileVaultProvider({ children }: { children: ReactNode }) {
       // a truncated document.
       // As with the practice quiz: an exam is either genuinely grounded in the
       // backend's semantic study map or it is not offered at all.
+      // `diagnostics` is forwarded only when the caller explicitly asked for
+      // it, so the exam the UI generates sends the identical body it always
+      // did and cannot be changed by the debugging path existing.
       const generated = await aiApi.quiz({
         fileId: id,
         count,
         questionTypes: types,
         kind: 'exam',
         scope: 'document',
+        ...diagnosticsFragment(options),
       })
       return generated.questions
     },
     [files]
   )
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Console helper: window.learnxDiagnoseExam('<fileId>')
+  //
+  // Answers "why did my exam come back short?" from the browser console, on
+  // the real request path — the same `generateExam` the Exam tab calls, with
+  // the same auth, the same file lookup and the same body, plus diagnostics.
+  // A separate hand-rolled fetch would be free to diverge from production and
+  // would then diagnose something the user never ran.
+  //
+  // Logs the funnel on success, and on a 422 shortfall logs the funnel the
+  // backend attached to the error instead of leaving "could only verify N"
+  // unexplained. Read-only: it stores nothing and mutates no state.
+  // ──────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const helper = async (fileId: string, count = 8, types?: VaultQuestionType[]) => {
+      const requestedTypes: VaultQuestionType[] = types ?? [
+        'mcq',
+        'true-false',
+        'fill-blank',
+        'short-answer',
+      ]
+      const file = filesRef.current.find((f) => f.id === fileId)
+      if (!file) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[learnx] No file with id "${fileId}". Available:`,
+          filesRef.current.map((f) => ({ id: f.id, title: f.title }))
+        )
+        return undefined
+      }
+      // generateExam returns [] without calling the backend when these fail,
+      // so say which precondition stopped it rather than reporting an empty exam.
+      if (!file.analysis || !isFullyRead(file)) {
+        // eslint-disable-next-line no-console
+        console.error('[learnx] Exam preconditions not met — no request was sent.', {
+          title: file.title,
+          hasAnalysis: Boolean(file.analysis),
+          fullyRead: isFullyRead(file),
+          readingPercent: readingPercent(file),
+        })
+        return undefined
+      }
+      try {
+        const questions = await generateExam(fileId, count, requestedTypes, {
+          diagnostics: true,
+        })
+        // eslint-disable-next-line no-console
+        console.info(`[learnx] Exam generated: ${questions.length}/${count} question(s).`, {
+          title: file.title,
+          questions,
+        })
+        return questions
+      } catch (error) {
+        const diagnostics = quizDiagnosticsFromError(error)
+        if (diagnostics) {
+          // eslint-disable-next-line no-console
+          console.error('[learnx] Exam fell short — backend funnel:', {
+            detail: error instanceof ApiError ? error.detail : String(error),
+            ...diagnostics,
+          })
+        } else {
+          // eslint-disable-next-line no-console
+          console.error('[learnx] Exam request failed (no diagnostics returned):', error)
+        }
+        return undefined
+      }
+    }
+
+    const target = window as typeof window & {
+      learnxDiagnoseExam?: typeof helper
+    }
+    target.learnxDiagnoseExam = helper
+    return () => {
+      delete target.learnxDiagnoseExam
+    }
+  }, [generateExam])
 
   const recordAttempt = useCallback(
     (
