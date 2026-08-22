@@ -259,12 +259,24 @@ export function waitForAuthReady(timeoutMs = 20000): Promise<void> {
 export class ApiError extends Error {
   status: number
   detail: string
+  /**
+   * The parsed JSON error body, when the response had one.
+   *
+   * A failure is exactly the case that needs explaining, yet the error path
+   * used to keep `detail` and discard everything else — so a 422 quiz
+   * shortfall arrived with "could only verify 1" and nothing behind it, even
+   * though the backend had attached the whole funnel as a sibling `diagnostics`
+   * key. Keeping the body preserves that without changing `detail`, which is
+   * what every existing caller reads.
+   */
+  body?: unknown
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, body?: unknown) {
     super(detail)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
+    this.body = body
   }
 }
 
@@ -389,11 +401,13 @@ async function requestArrayBuffer(
 
   if (!response.ok) {
     let detail = response.statusText
+    let body: unknown
     try {
       const text = await response.text()
       if (text) {
         try {
           const parsed = JSON.parse(text) as { detail?: unknown }
+          body = parsed
           if (parsed && typeof parsed.detail === 'string') {
             detail = parsed.detail
           } else {
@@ -406,7 +420,7 @@ async function requestArrayBuffer(
     } catch {
       // ignore secondary read errors
     }
-    throw new ApiError(response.status, detail)
+    throw new ApiError(response.status, detail, body)
   }
 
   return response.arrayBuffer()
@@ -503,7 +517,9 @@ async function requestJson<T>(
       (typeof data === 'object' && data !== null && 'detail' in data
         ? String((data as { detail: unknown }).detail)
         : undefined) ?? text ?? response.statusText
-    throw new ApiError(response.status, detail)
+    // Carry the parsed body so opt-in sibling keys (e.g. the quiz funnel on a
+    // 422 shortfall) survive; `detail` is unchanged for existing callers.
+    throw new ApiError(response.status, detail, data ?? undefined)
   }
 
   return data as T
