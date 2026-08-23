@@ -1305,6 +1305,7 @@ def _top_up_candidates(
     previous_questions: list[str],
     quality_threshold: float,
     rejections: list[RejectionNote],
+    provider_trace: dict[str, Any] | None = None,
 ) -> tuple[list[ScoredCandidate], dict[str, float]]:
     """Plan and write additional questions until the pool can fill the quiz.
 
@@ -1413,6 +1414,11 @@ def _top_up_candidates(
         raw = deterministic_candidates(
             renumbered, language=language, understanding=understanding
         )
+        if provider_trace is not None:
+            provider_trace["deterministic_topup_used"] = True
+            provider_trace["deterministic_topup_generated"] = (
+                provider_trace.get("deterministic_topup_generated", 0) + len(raw)
+            )
         for item in raw:
             item.setdefault("origin", DETERMINISTIC_ORIGIN)
         records = _collect_records(
@@ -1964,6 +1970,9 @@ def generate_quiz(
             rejections=rejections,
             quality_threshold=quality_threshold,
         )
+        if provider_trace is not None:
+            provider_trace["deterministic_topup_used"] = True
+            provider_trace["deterministic_topup_generated"] = len(deterministic_raw)
         if extra_scored:
             existing_objectives = {candidate.objective_key for candidate in scored}
             added = [
@@ -1972,7 +1981,10 @@ def generate_quiz(
                 if candidate.objective_key not in existing_objectives
             ]
             if added:
-                used_deterministic = completion is None or not scored
+                # Keep provider metadata for mixed quizzes, while the
+                # provenance IDs below still mark deterministic top-up output.
+                # A completely unavailable provider is reported as deterministic.
+                used_deterministic = completion is None
                 scored.extend(added)
                 scores.update(extra_scores)
                 context.blueprints = [*context.blueprints, *renumbered]
@@ -2002,6 +2014,7 @@ def generate_quiz(
         previous_questions=previous_questions,
         quality_threshold=quality_threshold,
         rejections=rejections,
+        provider_trace=provider_trace,
     )
 
     rng = random.Random(seed)
