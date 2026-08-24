@@ -4,7 +4,7 @@ Application settings loaded from environment variables.
 
 import os
 from functools import lru_cache
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -30,7 +30,10 @@ class Settings(BaseSettings):
     signed_url_ttl_seconds: int = 900
 
     # --- Online AI (backend-only secrets; never VITE_ variables) ---
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    gemini_api_key: str = Field(
+        default_factory=lambda: os.getenv("GEMINI_API_KEY", ""),
+        validation_alias=AliasChoices("gemini_api_key", "GEMINI_API_KEY"),
+    )
     # gemini-3.7-flash was confirmed available and working against the
     # production API key; gemini-2.5-flash returned 404 NOT_FOUND for it.
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
@@ -41,7 +44,10 @@ class Settings(BaseSettings):
     # Range for 2.5 Flash is 0-24576; use -1 to omit the field entirely and let
     # the model decide (required for 2.5 Pro, which cannot disable thinking).
     gemini_thinking_budget: int = int(os.getenv("GEMINI_THINKING_BUDGET", "0"))
-    groq_api_key: str = os.getenv("GROQ_API_KEY", "")
+    groq_api_key: str = Field(
+        default_factory=lambda: os.getenv("GROQ_API_KEY", ""),
+        validation_alias=AliasChoices("groq_api_key", "GROQ_API_KEY"),
+    )
     # llama-3.3-70b-versatile was shut down by Groq on 2026-08-16 and now
     # returns HTTP 400 model_decommissioned. Override with GROQ_MODEL if a
     # different model is preferred.

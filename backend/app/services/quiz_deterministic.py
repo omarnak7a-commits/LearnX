@@ -17,6 +17,7 @@ controlled "AI quiz generation unavailable" state rather than padding.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
 
 from app.services.quiz_blueprints import QuestionBlueprint
@@ -139,8 +140,8 @@ _NEEDS_A_COMPLEMENT = re.compile(
     # A capitalised token is a name, so require lower case.
     # (?-i:...) keeps this one alternative case-sensitive inside an otherwise
     # case-insensitive pattern.
-    r"\b(?:(?-i:[a-z]+ly)|more|less|fewer|most|least|other|such|same|both|either|"
-    r"neither|very|quite|rather|nearly|almost|"
+    r"\b(?:necessarily|nearly|almost|more|less|fewer|most|least|other|such|same|both|either|"
+    r"neither|very|quite|rather|"
     # A transitive verb stranded without its object: "the operating system
     # decides" stops before saying what it decides.
     r"decides?|determines?|selects?|chooses?|controls?|produces?|causes?|"
@@ -1644,6 +1645,72 @@ def writable_question_types(
         if remaining:
             allowed = remaining
     return allowed
+
+
+def replan_unsafe_mcq_blueprints(
+    blueprints: list[QuestionBlueprint],
+    *,
+    selected_question_types: list[str],
+    understanding: DocumentUnderstanding,
+) -> list[QuestionBlueprint]:
+    """Convert an MCQ slot to a safer selected type when decoys are not grounded.
+
+    A multiple-choice question is only valid when the same PDF supplies three
+    clearly different, incorrect sibling claims.  If the plan asks for MCQ but
+    the document cannot safely furnish those distractors, the target itself may
+    still be perfectly grounded as a short-answer, true/false, or fill-blank
+    question.  This helper performs that bounded re-plan before writing so a
+    missing MCQ option pool does not discard an otherwise valid evidence span.
+
+    Only user-selected types are considered, and the replacement blueprint is
+    accepted only if the existing deterministic writer can already construct it.
+    Grounding, scoring, deduplication, and validation still run later exactly as
+    for every other candidate.
+    """
+    selected = list(dict.fromkeys(selected_question_types))
+    if not selected or "mcq" not in selected:
+        return list(blueprints)
+    alternatives = [
+        value
+        for value in ("short-answer", "true-false", "fill-blank")
+        if value in selected
+    ]
+    if not alternatives:
+        return list(blueprints)
+
+    pool = _claim_pool(understanding)
+    replanned: list[QuestionBlueprint] = []
+    for blueprint in blueprints:
+        if blueprint.question_type != "mcq":
+            replanned.append(blueprint)
+            continue
+        sink: list[str] = []
+        if _candidate_for(
+            blueprint, understanding=understanding, pool=pool, reason_sink=sink
+        ) is not None or not sink or sink[0] != "too_few_distractors":
+            replanned.append(blueprint)
+            continue
+        for question_type in alternatives:
+            replacement = replace(
+                blueprint,
+                id=f"{blueprint.id}-{question_type}",
+                question_type=question_type,
+            )
+            if question_type not in target_writable_types(replacement, [question_type]):
+                continue
+            if _candidate_for(
+                replacement,
+                understanding=understanding,
+                pool=pool,
+                reason_sink=[],
+            ) is not None:
+                replanned.append(replacement)
+                break
+        else:
+            # No selected non-MCQ shape can honestly express this target; keep
+            # the original so diagnostics still report the precise MCQ failure.
+            replanned.append(blueprint)
+    return replanned
 
 
 def deterministic_candidates(
