@@ -393,6 +393,18 @@ def _diagnostics_from_telemetry(
             for key, value in (telemetry.get("provider_trace") or {}).items()
             if isinstance(value, int)
         },
+        provider_candidates=telemetry.get("provider_candidates", 0),
+        deterministic_candidates=telemetry.get("deterministic_candidates", 0),
+        quality_generated=telemetry.get("quality_generated", 0),
+        quality_passed=telemetry.get("quality_passed", accepted),
+        quality_rejected=telemetry.get("quality_rejected", 0),
+        grounding_passed=telemetry.get("grounding_passed", accepted),
+        validation_passed=telemetry.get("validation_passed", accepted),
+        validation_rejected=telemetry.get("validation_rejected", 0),
+        duplicate_rejected=telemetry.get("duplicate_rejected", 0),
+        ambiguity_rejected=telemetry.get("ambiguity_rejected", 0),
+        provider_model_used=str(telemetry.get("provider_model_used", "") or ""),
+        provider_fallback_used=bool(telemetry.get("provider_fallback_used", False)),
     )
 
 

@@ -213,6 +213,13 @@ _DETERMINERS_BEFORE_NOUN = frozenset(
 )
 
 
+#: Words that when appearing as participles or nouns in titles/headings do not constitute finite predicates.
+_PARTICIPLE_OR_NOUN_TOKENS = frozenset({
+    "stored", "worked", "form", "forms", "formed", "read", "reads", "result", "results",
+    "use", "uses", "used", "state", "states", "process", "processes", "store", "stores"
+})
+
+
 def is_heading_like(text: str) -> bool:
     """True when a fragment is a title/heading rather than a teaching claim.
 
@@ -226,8 +233,24 @@ def is_heading_like(text: str) -> bool:
     words = stripped.split()
     if len(words) > 12:
         return False
+    if _NUMBERED_HEADING.match(stripped) or _NAMED_HEADING.match(stripped):
+        return True
     tokens = [re.sub(r"[^\w\u0600-\u06FF]", "", word).lower() for word in words]
-    lowered = set(tokens)
+    ends_open = not re.search(r"[.!?؟:;]$", stripped)
+
+    # Short Title-Case / Header lines without terminal punctuation
+    if ends_open and len(words) <= 8:
+        title_case = all(
+            w[0].isupper()
+            for w in words
+            if len(w) > 2 and w.isascii() and w.isalpha()
+        )
+        if title_case and not any(
+            t in {"is", "are", "was", "were", "has", "have", "had", "can", "could", "must", "should"}
+            for t in tokens
+        ):
+            return True
+
     # A predicate word only proves this is a sentence when it is used AS a
     # predicate. In the title "World History: The Causes of the First World
     # War", "Causes" is a plural noun sitting under a determiner -- treating it
@@ -240,13 +263,16 @@ def is_heading_like(text: str) -> bool:
         previous = tokens[index - 1] if index else ""
         if previous in _DETERMINERS_BEFORE_NOUN:
             continue
+        # Initial participle (e.g. "Stored Procedures", "Worked Example") modifying following noun
+        if index == 0 and len(tokens) > 1 and token in {"stored", "worked", "read"}:
+            continue
+        # Final noun in noun phrase (e.g. "First Normal Form", "Wave Form")
+        if index == len(tokens) - 1 and token in _PARTICIPLE_OR_NOUN_TOKENS:
+            continue
         has_predicate = True
         break
     if has_predicate:
         return False
-    if _NUMBERED_HEADING.match(stripped) or _NAMED_HEADING.match(stripped):
-        return True
-    ends_open = not re.search(r"[.!?؟:;]$", stripped)
     if len(words) <= 9 and ends_open:
         return True
     return bool(re.fullmatch(r"[A-Z][A-Z0-9&'’\-\s]{3,60}", stripped))

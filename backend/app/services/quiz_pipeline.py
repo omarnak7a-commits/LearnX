@@ -64,6 +64,7 @@ from app.services.quiz_deterministic import (
 )
 from app.services.quiz_grounding import (
     SourceSentence,
+    is_layout_detail,
     iter_sentences,
     quote_is_grounded,
     quotes_equivalent,
@@ -516,11 +517,11 @@ def build_candidate_prompt(
         "KNOWLEDGE TARGETS:",
         targets_block(knowledge_targets),
         "",
-        "QUIZ BLUEPRINT (write one variant per blueprint before writing a second for any):",
+        "QUIZ BLUEPRINT (generate candidate variants for each blueprint slot so the quality judge can select the highest quality):",
         blueprint_block(blueprints),
         "",
         "HARD RULES:",
-        "- Use a blueprint_id exactly as written. Test that blueprint's knowledge target and nothing else.",
+        "- Set blueprint_id to the matching blueprint ID (e.g. 'bp-1' or 'bp-1-a', 'bp-1-b'). Test that blueprint's knowledge target and nothing else.",
         "- Use only the blueprint's verbatim evidence. No outside facts, names, numbers, or examples.",
         "- Copy that evidence verbatim into source_quote and cite only its source pages.",
         "- Match the planned question type, cognitive skill, and difficulty.",
@@ -757,7 +758,7 @@ def _meaningful_fill_blank(question: AIQuizQuestion, blueprint: QuestionBlueprin
 
 def _meaningful_true_false(raw: _RawCandidate, question: AIQuizQuestion, blueprint: QuestionBlueprint) -> bool:
     prompt_tokens = content_tokens(question.prompt)
-    evidence_tokens = content_tokens(blueprint.evidence)
+    evidence_tokens = content_tokens(blueprint.evidence) | content_tokens(blueprint.concept)
     if len(prompt_tokens) < 4 or question.prompt.rstrip().endswith("?"):
         return False
     if normalize_question_text(question.prompt) == normalize_question_text(blueprint.evidence):
@@ -903,9 +904,16 @@ def normalize_blueprinted_candidate(
     is only ever reported as "failed validation" -- which is exactly the kind
     of unexplained drop that made a short quiz impossible to debug.
     """
-    blueprint = blueprints.get(raw.blueprint_id.strip())
+    raw_bp_id = raw.blueprint_id.strip()
+    blueprint = blueprints.get(raw_bp_id)
+    if blueprint is None and ("-" in raw_bp_id or "_" in raw_bp_id):
+        for sep in ("-", "_"):
+            prefix = raw_bp_id.rsplit(sep, 1)[0]
+            if prefix in blueprints:
+                blueprint = blueprints[prefix]
+                break
     if blueprint is None:
-        _note(reasons, f"blueprint {raw.blueprint_id.strip()!r} is not part of this quiz plan")
+        _note(reasons, f"blueprint {raw_bp_id!r} is not part of this quiz plan")
         return None
     question = normalize_candidate(
         raw,
@@ -922,6 +930,9 @@ def normalize_blueprinted_candidate(
             reasons,
             f"type {question.type!r} does not match the planned {blueprint.question_type!r}",
         )
+        return None
+    if is_layout_detail(question.prompt) or is_layout_detail(question.explanation) or is_layout_detail(question.correct_answer):
+        _note(reasons, "question tests slide layout/metadata instead of subject matter")
         return None
     if not set(question.source_pages).issubset(set(blueprint.pages)):
         _note(
@@ -974,6 +985,10 @@ def normalize_blueprinted_candidate(
             return None
         if distractor_quality_score(question, vocab) < _MIN_DISTRACTORS:
             _note(reasons, "MCQ distractors are too weak to be plausible")
+            return None
+        normalized_options = [normalize_question_text(o) for o in (question.options or [])]
+        if len(set(normalized_options)) != len(normalized_options):
+            _note(reasons, "MCQ has duplicate or ambiguous options")
             return None
     else:
         rationales = ()
@@ -1758,6 +1773,33 @@ def _quiz_telemetry(
             (provider_trace or {}).get("concept_drops", {}).get("reasons", {})
         ),
         "understanding_source": getattr(understanding, "source", ""),
+        "provider_candidates": (funnel or {}).get("provider_candidates_returned", 0),
+        "deterministic_candidates": (funnel or {}).get(
+            "deterministic_candidates_returned", 0
+        ),
+        "quality_generated": candidates_generated,
+        "quality_passed": validated,
+        "quality_rejected": sum(
+            1 for note in real_rejections if note.stage == "quality_gate"
+        ),
+        "grounding_passed": validated,
+        "validation_passed": validated,
+        "validation_rejected": sum(
+            1 for note in real_rejections if note.stage == "validation"
+        ),
+        "duplicate_rejected": sum(
+            1 for note in real_rejections if note.stage in {"near_duplicate", "duplicate"}
+        ),
+        "ambiguity_rejected": sum(
+            1
+            for note in real_rejections
+            if "ambiguous" in (note.reason or "").lower()
+            or "multiple" in (note.reason or "").lower()
+        ),
+        "provider_model_used": str((provider_trace or {}).get("model", "") or ""),
+        "provider_fallback_used": bool(
+            (provider_trace or {}).get("fallback_used", False)
+        ),
     }
 
 

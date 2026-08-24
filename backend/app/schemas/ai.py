@@ -255,6 +255,19 @@ class AIQuizDiagnostics(BaseModel):
     #: loop stopped. `stop_reason` is one of pool_sufficient, no_targets_left,
     #: planner_returned_no_blueprints, no_new_objectives, continued.
     topup_rounds: list[dict[str, Any]] = Field(default_factory=list)
+    #: ── Quality metrics (Section 17) ─────────────────────────────────────
+    provider_candidates: int = 0
+    deterministic_candidates: int = 0
+    quality_generated: int = 0
+    quality_passed: int = 0
+    quality_rejected: int = 0
+    grounding_passed: int = 0
+    validation_passed: int = 0
+    validation_rejected: int = 0
+    duplicate_rejected: int = 0
+    ambiguity_rejected: int = 0
+    provider_model_used: str = ""
+    provider_fallback_used: bool = False
 
 
 class AIQuizResponse(AIProviderMetadata, AIQuizResult):

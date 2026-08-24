@@ -330,3 +330,78 @@ def test_analysis_blueprint_rejects_recall_disguised_as_higher_order() -> None:
 
     disguised_recall = valid.model_copy(update={"prompt": "What is a base case?"})
     assert _normalize(disguised_recall, blueprint, evidence) is None
+
+
+def test_quality_judge_rejects_slide_layout_metadata() -> None:
+    evidence = "A base case stops recursion by returning without another recursive call."
+    blueprint = _blueprint(question_type="short-answer", evidence=evidence, concept="Base case")
+    layout_raw = _RawCandidate.model_validate(
+        {
+            "blueprint_id": "bp-1",
+            "type": "short-answer",
+            "prompt": "What appears in the blue box at the top of the page?",
+            "correct_answer": "A base case stops recursion by returning without another recursive call.",
+            "explanation": evidence,
+            "source_pages": [1],
+            "source_quote": evidence,
+        }
+    )
+    assert _normalize(layout_raw, blueprint, evidence) is None
+
+
+def test_quality_judge_accepts_candidate_variants_per_blueprint() -> None:
+    evidence = "A base case stops recursion by returning without another recursive call."
+    blueprint = _blueprint(question_type="short-answer", evidence=evidence, concept="Base case")
+    variant_a = _RawCandidate.model_validate(
+        {
+            "blueprint_id": "bp-1-a",
+            "type": "short-answer",
+            "prompt": "Explain how a base case prevents infinite recursion.",
+            "correct_answer": "By returning without another recursive call.",
+            "explanation": evidence,
+            "source_pages": [1],
+            "source_quote": evidence,
+        }
+    )
+    variant_b = _RawCandidate.model_validate(
+        {
+            "blueprint_id": "bp-1-b",
+            "type": "short-answer",
+            "prompt": "What does a base case do to stop recursion?",
+            "correct_answer": "Returning without another recursive call.",
+            "explanation": evidence,
+            "source_pages": [1],
+            "source_quote": evidence,
+        }
+    )
+    assert _normalize(variant_a, blueprint, evidence) is not None
+    assert _normalize(variant_b, blueprint, evidence) is not None
+
+
+def test_quality_judge_rejects_duplicate_options_in_mcq() -> None:
+    evidence = "A base case stops recursive calls before another smaller problem is created."
+    page = (
+        evidence
+        + " A recursive case reduces the problem. A loop repeats an operation. "
+        + "A stack frame records an active call."
+    )
+    blueprint = _blueprint(question_type="mcq", evidence=evidence)
+    dupe_options = _RawCandidate.model_validate(
+        {
+            "blueprint_id": "bp-1",
+            "type": "mcq",
+            "prompt": "Which recursion component stops recursive calls?",
+            "options": ["A base case", "A base case", "A loop", "A stack frame"],
+            "correct_answer": "A base case",
+            "explanation": evidence,
+            "difficulty": "medium",
+            "source_pages": [1],
+            "source_quote": evidence,
+            "distractor_rationales": [
+                "A recursive case instead reduces the current problem.",
+                "A loop repeats work but is not the recursion stopping condition.",
+                "A stack frame records a call rather than stopping recursion.",
+            ],
+        }
+    )
+    assert _normalize(dupe_options, blueprint, page) is None

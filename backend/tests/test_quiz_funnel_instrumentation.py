@@ -167,3 +167,23 @@ def test_non_english_run_counts_the_english_only_drop():
         == dropped
         or dropped == 0
     )
+
+
+def test_quality_metrics_in_telemetry():
+    telemetry, accepted, _ = _run(sql18_source())
+    assert accepted == 8
+    assert "provider_candidates" in telemetry
+    assert "deterministic_candidates" in telemetry
+    assert "quality_generated" in telemetry
+    assert "quality_passed" in telemetry
+    assert "quality_rejected" in telemetry
+    assert "grounding_passed" in telemetry
+    assert "validation_passed" in telemetry
+    assert "validation_rejected" in telemetry
+    assert "duplicate_rejected" in telemetry
+    assert "ambiguity_rejected" in telemetry
+    assert "provider_model_used" in telemetry
+    assert "provider_fallback_used" in telemetry
+    assert telemetry["quality_passed"] == accepted
+    assert telemetry["deterministic_candidates"] >= accepted
+

@@ -133,6 +133,19 @@ export interface AIQuizDiagnostics {
   candidate_generation_empty?: number
   /** Per-round top-up accounting with a stop_reason per round. */
   topup_rounds?: Array<Record<string, unknown>>
+  /** ── Quality metrics (Section 17) ── */
+  provider_candidates?: number
+  deterministic_candidates?: number
+  quality_generated?: number
+  quality_passed?: number
+  quality_rejected?: number
+  grounding_passed?: number
+  validation_passed?: number
+  validation_rejected?: number
+  duplicate_rejected?: number
+  ambiguity_rejected?: number
+  provider_model_used?: string
+  provider_fallback_used?: boolean
 }
 
 export interface AIQuizResponse extends AIProviderMetadata {
