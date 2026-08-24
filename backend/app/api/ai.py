@@ -352,6 +352,39 @@ def _diagnostics_from_telemetry(
         understanding_source=telemetry.get("understanding_source", ""),
         plans_by_type=dict(telemetry.get("plans_by_type") or {}),
         candidates_by_type=dict(telemetry.get("candidates_by_type") or {}),
+        rejected_by_type=dict(telemetry.get("rejected_by_type") or {}),
+        plans_created=telemetry.get("plans_created", 0),
+        plans_attempted=telemetry.get("plans_attempted", 0),
+        plans_skipped=telemetry.get("plans_skipped", 0),
+        plans_skipped_reason=dict(telemetry.get("plans_skipped_reason") or {}),
+        provider_candidates_returned=telemetry.get(
+            "provider_candidates_returned", 0
+        ),
+        provider_candidates_dropped=telemetry.get(
+            "provider_candidates_dropped", 0
+        ),
+        deterministic_candidates_attempted=telemetry.get(
+            "deterministic_candidates_attempted", 0
+        ),
+        deterministic_candidates_returned=telemetry.get(
+            "deterministic_candidates_returned", 0
+        ),
+        deterministic_candidates_dropped=telemetry.get(
+            "deterministic_candidates_dropped", 0
+        ),
+        deterministic_drop_reasons=dict(
+            telemetry.get("deterministic_drop_reasons") or {}
+        ),
+        deterministic_targets_writable=telemetry.get(
+            "deterministic_targets_writable", 0
+        ),
+        candidate_generation_errors=telemetry.get(
+            "candidate_generation_errors", 0
+        ),
+        candidate_generation_empty=telemetry.get(
+            "candidate_generation_empty", 0
+        ),
+        topup_rounds=list(telemetry.get("topup_rounds") or []),
         grounding_rejected=telemetry.get("grounding_rejected", 0),
         diversity_rejected=telemetry.get("diversity_rejected", 0),
         rejection_details=list(telemetry.get("rejection_details") or []),

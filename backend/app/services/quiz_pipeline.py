@@ -43,6 +43,7 @@ from app.services.quiz_blueprints import (
     QuestionBlueprint,
     blueprint_block,
     build_question_blueprints,
+    semantic_objective_key,
 )
 from app.services.quiz_boilerplate import (
     clean_source_units,
@@ -1169,6 +1170,7 @@ def _collect_records(
     blueprint_by_id: dict[str, QuestionBlueprint],
     previous_questions: list[str],
     rejections: list[RejectionNote] | None = None,
+    candidates_by_type: Counter | None = None,
 ) -> list[CandidateRecord]:
     records: list[CandidateRecord] = []
     used_ids: set[str] = set()
@@ -1191,6 +1193,19 @@ def _collect_records(
         )
 
     for index, raw in enumerate(candidates):
+        # Diagnostics-only: count every candidate the writers produced by the
+        # type of the plan it was written for, so `candidates_by_type` reflects
+        # what generation actually returned. A candidate whose blueprint_id
+        # matches no plan is counted as `unknown_blueprint` -- that is itself a
+        # finding (a provider inventing plan ids), not noise to hide.
+        if candidates_by_type is not None:
+            blueprint_for_type = blueprint_by_id.get(raw.blueprint_id.strip())
+            type_key = (
+                blueprint_for_type.question_type
+                if blueprint_for_type is not None
+                else "unknown_blueprint"
+            )
+            candidates_by_type[type_key] += 1
         gate_reasons: list[str] = []
         record = normalize_blueprinted_candidate(
             raw,
@@ -1236,6 +1251,54 @@ _OPTION_TYPES = {"mcq", "true-false"}
 #: How many extra planning rounds may run when the pool is short of the
 #: requested count. Bounded so a thin document fails fast instead of looping.
 _MAX_TOPUP_ROUNDS = 3
+
+
+def _account_plan_skips(
+    targets: list[Any],
+    *,
+    question_types: list[str],
+    allowed_skills: frozenset[str],
+    type_filter: Any,
+    skip_reasons: dict[str, int],
+    excluded_objectives: set[str] | None = None,
+) -> int:
+    """Count, with reasons, why each knowledge target yields no plan slot.
+
+    Diagnostics-only: recomputes the exact predicates ``build_question_blueprints``
+    applies (skill whitelist, per-skill question-type map, writer type veto,
+    excluded objectives) so every target the planner could not use carries a
+    reason in telemetry. It calls the same pure functions with the same inputs
+    and never feeds anything back into planning.
+    """
+    writable = 0
+    for target in targets:
+        if excluded_objectives is not None and (
+            semantic_objective_key(
+                target.concept_id, target.target_id, target.cognitive_skill
+            )
+            in excluded_objectives
+        ):
+            skip_reasons["duplicate_objective"] = skip_reasons.get("duplicate_objective", 0) + 1
+            continue
+        if target.cognitive_skill not in allowed_skills:
+            key = f"unsupported_skill:{target.cognitive_skill}"
+            skip_reasons[key] = skip_reasons.get(key, 0) + 1
+            continue
+        options = [
+            value for value in question_types if value in target.question_types
+        ]
+        if not options:
+            key = f"type_not_supported_by_skill:{target.cognitive_skill}"
+            skip_reasons[key] = skip_reasons.get(key, 0) + 1
+            continue
+        vetoed = type_filter(target, options)
+        if not vetoed:
+            skip_reasons["all_types_vetoed_by_writer"] = (
+                skip_reasons.get("all_types_vetoed_by_writer", 0) + 1
+            )
+            continue
+        writable += 1
+    return writable
 
 
 def _insufficient_material_message(
@@ -1306,6 +1369,8 @@ def _top_up_candidates(
     quality_threshold: float,
     rejections: list[RejectionNote],
     provider_trace: dict[str, Any] | None = None,
+    funnel: dict[str, Any] | None = None,
+    candidates_by_type: Counter | None = None,
 ) -> tuple[list[ScoredCandidate], dict[str, float]]:
     """Plan and write additional questions until the pool can fill the quiz.
 
@@ -1316,7 +1381,15 @@ def _top_up_candidates(
     results through the identical grounding and scoring gates. Nothing here
     weakens a gate -- the only thing that changes is how much material has been
     attempted.
+
+    ``funnel`` / ``candidates_by_type`` are diagnostics-only counters threaded
+    in by the caller; when omitted (unit tests) behaviour is identical.
     """
+    topup_rounds: list[dict[str, Any]] = []
+
+    def _count(key: str, amount: int = 1) -> None:
+        if funnel is not None:
+            funnel[key] = funnel.get(key, 0) + amount
     important = {
         concept.concept_id for concept in understanding.important_concepts()
     }
@@ -1343,6 +1416,7 @@ def _top_up_candidates(
             target for target in uncovered if target.concept_id in important
         ]
         if len(scored) >= count and not missing_concepts:
+            topup_rounds.append({"round": round_index + 1, "stop_reason": "pool_sufficient"})
             break
         # Plan over uncovered concepts *first* but never only over them. Once
         # every concept has one question, `uncovered` is empty -- and planning
@@ -1362,6 +1436,7 @@ def _top_up_candidates(
             ),
         ]
         if not targets:
+            topup_rounds.append({"round": round_index + 1, "stop_reason": "no_targets_left"})
             break
         # Ask for more than the shortfall: some plans will not survive the
         # writer or the gates, and an exhausted pool is what caused the
@@ -1375,10 +1450,11 @@ def _top_up_candidates(
         # size keeps the strict pass in charge; `exclude_objectives` is what
         # actually makes the round return *new* material.
         wanted = max(count, len(missing_concepts) + 4)
+        round_writable_types = writable_question_types(question_types, understanding)
         planned = build_question_blueprints(
             targets,
             count=wanted,
-            question_types=writable_question_types(question_types, understanding),
+            question_types=round_writable_types,
             difficulty=difficulty,
             # A different seed per round explores different valid material
             # instead of re-planning the identical slots we already have.
@@ -1403,7 +1479,23 @@ def _top_up_candidates(
             # with the strong questions already selected.
             allow_relaxation=len(scored) < count,
         )
+        if funnel is not None:
+            excluded = {
+                candidate.objective_key for candidate in scored
+            } | attempted_objectives
+            round_writable = _account_plan_skips(
+                targets,
+                question_types=round_writable_types,
+                allowed_skills=DETERMINISTIC_SKILLS,
+                type_filter=target_writable_types,
+                skip_reasons=funnel["plans_skipped_reason"],
+                excluded_objectives=excluded,
+            )
+            funnel["plans_skipped"] += len(targets) - round_writable
         if not planned:
+            topup_rounds.append(
+                {"round": round_index + 1, "stop_reason": "planner_returned_no_blueprints"}
+            )
             break
         renumbered: list[QuestionBlueprint] = []
         for index, blueprint in enumerate(planned, start=1):
@@ -1412,8 +1504,19 @@ def _top_up_candidates(
             renumbered.append(renamed)
 
         raw = deterministic_candidates(
-            renumbered, language=language, understanding=understanding
+            renumbered,
+            language=language,
+            understanding=understanding,
+            drop_reasons=(funnel or {}).get("deterministic_drop_reasons"),
         )
+        _count("plans_attempted", len(renumbered))
+        _count("deterministic_candidates_attempted", len(renumbered))
+        _count("deterministic_candidates_returned", len(raw))
+        _count(
+            "deterministic_candidates_dropped", len(renumbered) - len(raw)
+        )
+        if not raw:
+            _count("candidate_generation_empty")
         if provider_trace is not None:
             provider_trace["deterministic_topup_used"] = True
             provider_trace["deterministic_topup_generated"] = (
@@ -1428,6 +1531,7 @@ def _top_up_candidates(
             blueprint_by_id=blueprint_by_id,
             previous_questions=previous_questions,
             rejections=rejections,
+            candidates_by_type=candidates_by_type,
         )
         extra, extra_scores = _score_and_filter(
             records,
@@ -1447,10 +1551,31 @@ def _top_up_candidates(
         ]
         if not added:
             # Another round would re-plan the same exhausted material.
+            topup_rounds.append(
+                {
+                    "round": round_index + 1,
+                    "stop_reason": "no_new_objectives",
+                    "planned": len(renumbered),
+                    "written": len(raw),
+                    "survived_gates": len(extra),
+                }
+            )
             break
+        topup_rounds.append(
+            {
+                "round": round_index + 1,
+                "stop_reason": "continued",
+                "planned": len(renumbered),
+                "written": len(raw),
+                "survived_gates": len(extra),
+                "added": len(added),
+            }
+        )
         scored = _dedupe_scored([*scored, *added])
         scores.update(extra_scores)
         context.blueprints = [*context.blueprints, *renumbered]
+    if funnel is not None:
+        funnel["topup_rounds"] = topup_rounds
     return scored, scores
 
 
@@ -1468,6 +1593,7 @@ def _quiz_telemetry(
     candidates_generated: int = 0,
     provider_errors: int = 0,
     provider_trace: dict[str, Any] | None = None,
+    funnel: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The stage-by-stage funnel, as data so tests can assert on it."""
     pages_used = sorted(context.included_pages)
@@ -1511,6 +1637,42 @@ def _quiz_telemetry(
         "candidates_generated": candidates_generated,
         "quiz_requested": requested,
         "quiz_plans_created": len(blueprints),
+        # ── Candidate-funnel instrumentation (diagnostics-only) ──────────
+        # Every counter a short quiz needs to be explained end-to-end:
+        # what was planned, what each writer returned, what was skipped and
+        # why. Emitted verbatim from generate_quiz's observation dict.
+        "plans_created": (funnel or {}).get("plans_created", 0),
+        "plans_attempted": (funnel or {}).get("plans_attempted", 0),
+        "plans_skipped": (funnel or {}).get("plans_skipped", 0),
+        "plans_skipped_reason": dict((funnel or {}).get("plans_skipped_reason") or {}),
+        "provider_candidates_returned": (funnel or {}).get(
+            "provider_candidates_returned", 0
+        ),
+        "provider_candidates_dropped": (funnel or {}).get(
+            "provider_candidates_dropped", 0
+        ),
+        "deterministic_candidates_attempted": (funnel or {}).get(
+            "deterministic_candidates_attempted", 0
+        ),
+        "deterministic_candidates_returned": (funnel or {}).get(
+            "deterministic_candidates_returned", 0
+        ),
+        "deterministic_candidates_dropped": (funnel or {}).get(
+            "deterministic_candidates_dropped", 0
+        ),
+        "deterministic_drop_reasons": dict(
+            (funnel or {}).get("deterministic_drop_reasons") or {}
+        ),
+        "deterministic_targets_writable": (funnel or {}).get(
+            "deterministic_targets_writable", 0
+        ),
+        "candidate_generation_errors": (funnel or {}).get(
+            "candidate_generation_errors", 0
+        ),
+        "candidate_generation_empty": (funnel or {}).get(
+            "candidate_generation_empty", 0
+        ),
+        "topup_rounds": list((funnel or {}).get("topup_rounds") or []),
         "questions_generated": generated,
         "questions_validated": validated,
         "questions_rejected": len(real_rejections),
@@ -1536,7 +1698,17 @@ def _quiz_telemetry(
         # Per-type funnel: a request for four types that plans only one is a
         # distinct failure from a document that is simply thin.
         "plans_by_type": dict(Counter(plan.question_type for plan in blueprints)),
+        # What the writers actually produced, by the type of the plan each
+        # candidate was written for. The previous implementation counted
+        # *rejected* candidates here, so a run with zero rejections reported
+        # `candidates_by_type = {}` even while candidates existed -- exactly
+        # the misleading signal that hid the SQL18 shortfall.
         "candidates_by_type": dict(
+            (funnel or {}).get("candidates_by_type") or {}
+        ),
+        # Rejections by type, the signal the old candidates_by_type actually
+        # carried. Kept under its honest name.
+        "rejected_by_type": dict(
             Counter(
                 blueprint.question_type
                 for note in real_rejections
@@ -1845,6 +2017,24 @@ def generate_quiz(
         )
 
     # --- Stage 3: candidate pool ------------------------------------------- #
+    # Funnel instrumentation (diagnostics-only): every counter below observes
+    # a stage without influencing it, so a short quiz can be explained by
+    # telemetry instead of guessed at. See _quiz_telemetry for emission.
+    funnel: dict[str, Any] = {
+        "plans_created": len(context.blueprints),
+        "plans_attempted": 0,
+        "plans_skipped": 0,
+        "plans_skipped_reason": {},
+        "provider_candidates_returned": 0,
+        "provider_candidates_dropped": 0,
+        "deterministic_candidates_attempted": 0,
+        "deterministic_candidates_returned": 0,
+        "deterministic_candidates_dropped": 0,
+        "deterministic_drop_reasons": {},
+        "candidate_generation_errors": 0,
+        "candidate_generation_empty": 0,
+    }
+    candidates_by_type: Counter = Counter()
     candidate_count = min(36, max(20, len(context.blueprints) * 2, count * 2))
     writer_prompt = build_candidate_prompt(
         understanding=understanding,
@@ -1860,6 +2050,7 @@ def generate_quiz(
     raw_candidates: list[_RawCandidate] = []
     provider_errors = 0 if map_completion is not None else 1
     provider_trace["writer_calls"] = provider_trace.get("writer_calls", 0) + 1
+    funnel["plans_attempted"] += len(context.blueprints)
     try:
         completion = service.complete_structured(
             response_model=_RawQuizPool,
@@ -1881,6 +2072,10 @@ def generate_quiz(
         # shortfall message from blaming the document for a provider problem.
         provider_errors += 1
         provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
+        funnel["candidate_generation_errors"] += 1
+    funnel["provider_candidates_returned"] += len(raw_candidates)
+    if not raw_candidates:
+        funnel["candidate_generation_empty"] += 1
 
     blueprint_by_id = {blueprint.id: blueprint for blueprint in context.blueprints}
     rejections: list[RejectionNote] = []
@@ -1891,7 +2086,9 @@ def generate_quiz(
         blueprint_by_id=blueprint_by_id,
         previous_questions=previous_questions,
         rejections=rejections,
+        candidates_by_type=candidates_by_type,
     )
+    funnel["provider_candidates_dropped"] += len(raw_candidates) - len(records)
     scored, scores = _score_and_filter(
         records,
         context=context,
@@ -1926,10 +2123,24 @@ def generate_quiz(
             if target.concept_id not in covered
         ]
         supplement_targets = uncovered_targets or context.knowledge_targets
+        writable_types = writable_question_types(question_types, understanding)
+        # Diagnostics-only: account for every supplement target the
+        # deterministic re-planning below cannot use, with a reason, BEFORE
+        # planning runs. Pure recomputation of the planner's own predicates;
+        # it never feeds anything back into planning.
+        writable_targets = _account_plan_skips(
+            supplement_targets,
+            question_types=writable_types,
+            allowed_skills=DETERMINISTIC_SKILLS,
+            type_filter=target_writable_types,
+            skip_reasons=funnel["plans_skipped_reason"],
+        )
+        funnel["plans_skipped"] += len(supplement_targets) - writable_targets
+        funnel["deterministic_targets_writable"] = writable_targets
         deterministic_blueprints = build_question_blueprints(
             supplement_targets,
             count=count,
-            question_types=writable_question_types(question_types, understanding),
+            question_types=writable_types,
             difficulty=difficulty,
             seed=seed,
             allowed_skills=DETERMINISTIC_SKILLS,
@@ -1947,8 +2158,19 @@ def generate_quiz(
             blueprint_by_id[renamed.id] = renamed
             renumbered.append(renamed)
         deterministic_raw = deterministic_candidates(
-            renumbered, language=language, understanding=understanding
+            renumbered,
+            language=language,
+            understanding=understanding,
+            drop_reasons=funnel["deterministic_drop_reasons"],
         )
+        funnel["deterministic_candidates_attempted"] += len(renumbered)
+        funnel["deterministic_candidates_returned"] += len(deterministic_raw)
+        funnel["deterministic_candidates_dropped"] += (
+            len(renumbered) - len(deterministic_raw)
+        )
+        funnel["plans_attempted"] += len(renumbered)
+        if not deterministic_raw:
+            funnel["candidate_generation_empty"] += 1
         for item in deterministic_raw:
             # Honest provenance: label the writer so deterministic text is
             # never reported as model output.
@@ -1961,6 +2183,7 @@ def generate_quiz(
             blueprint_by_id=blueprint_by_id,
             previous_questions=previous_questions,
             rejections=rejections,
+            candidates_by_type=candidates_by_type,
         )
         extra_scored, extra_scores = _score_and_filter(
             extra_records,
@@ -2015,6 +2238,8 @@ def generate_quiz(
         quality_threshold=quality_threshold,
         rejections=rejections,
         provider_trace=provider_trace,
+        funnel=funnel,
+        candidates_by_type=candidates_by_type,
     )
 
     rng = random.Random(seed)
@@ -2091,6 +2316,7 @@ def generate_quiz(
         relaxed_gates=outcome.relaxed_gates,
         provider_errors=provider_errors,
         provider_trace=provider_trace,
+        funnel={**funnel, "candidates_by_type": candidates_by_type},
         # Everything the writers produced across the initial pass and every
         # top-up round, so "generated" can be compared against "accepted".
         candidates_generated=len(scored) + len(

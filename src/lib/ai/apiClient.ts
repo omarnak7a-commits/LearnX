@@ -107,13 +107,32 @@ export interface AIQuizDiagnostics {
   /** Provider call outcomes, e.g. understanding_calls / writer_failed. */
   provider_calls?: Record<string, number>
   plans_by_type?: Record<string, number>
+  /** Candidates the writers actually produced, by plan type. */
   candidates_by_type?: Record<string, number>
+  /** Rejected candidates by plan type (what candidates_by_type used to mean). */
+  rejected_by_type?: Record<string, number>
   grounding_rejected?: number
   diversity_rejected?: number
   /** One entry per dropped candidate: stage, reason, concept, pages, type. */
   rejection_details?: Array<Record<string, unknown>>
   /** Per-page extraction quality, capped so the payload stays small. */
   page_quality?: string[]
+  /** ── Candidate-funnel instrumentation (plans → candidates) ── */
+  plans_created?: number
+  plans_attempted?: number
+  plans_skipped?: number
+  plans_skipped_reason?: Record<string, number>
+  provider_candidates_returned?: number
+  provider_candidates_dropped?: number
+  deterministic_candidates_attempted?: number
+  deterministic_candidates_returned?: number
+  deterministic_candidates_dropped?: number
+  deterministic_drop_reasons?: Record<string, number>
+  deterministic_targets_writable?: number
+  candidate_generation_errors?: number
+  candidate_generation_empty?: number
+  /** Per-round top-up accounting with a stop_reason per round. */
+  topup_rounds?: Array<Record<string, unknown>>
 }
 
 export interface AIQuizResponse extends AIProviderMetadata {

@@ -217,13 +217,44 @@ class AIQuizDiagnostics(BaseModel):
     #: Plans and candidate drops broken down by question type, so a
     #: type-allocation failure cannot masquerade as a thin document.
     plans_by_type: dict[str, int] = Field(default_factory=dict)
+    #: Candidates the writers actually produced, by plan type. (Previously
+    #: this counted *rejected* candidates, which read as {} whenever
+    #: rejected == 0 -- misleading exactly when a quiz came back short.)
     candidates_by_type: dict[str, int] = Field(default_factory=dict)
+    #: Rejected candidates by plan type -- the signal candidates_by_type used
+    #: to carry, under its honest name.
+    rejected_by_type: dict[str, int] = Field(default_factory=dict)
     grounding_rejected: int = 0
     diversity_rejected: int = 0
     #: One entry per dropped candidate: stage, reason, concept, pages, type.
     rejection_details: list[dict[str, Any]] = Field(default_factory=list)
     #: Per-page extraction quality, capped so the payload stays small.
     page_quality: list[str] = Field(default_factory=list)
+    #: ── Candidate-funnel instrumentation ─────────────────────────────────
+    #: Plans created by stage-2 planning, before any writer ran.
+    plans_created: int = 0
+    #: Plans handed to a writer (provider pass + deterministic passes).
+    plans_attempted: int = 0
+    #: Knowledge targets that could not become a plan, with reasons.
+    plans_skipped: int = 0
+    plans_skipped_reason: dict[str, int] = Field(default_factory=dict)
+    #: Provider writer candidates: returned, and dropped before scoring.
+    provider_candidates_returned: int = 0
+    provider_candidates_dropped: int = 0
+    #: Deterministic writer: blueprints attempted, candidates returned, and
+    #: blueprints declined (with reasons in deterministic_drop_reasons).
+    deterministic_candidates_attempted: int = 0
+    deterministic_candidates_returned: int = 0
+    deterministic_candidates_dropped: int = 0
+    deterministic_drop_reasons: dict[str, int] = Field(default_factory=dict)
+    deterministic_targets_writable: int = 0
+    #: Writer passes that raised (service errors) or returned nothing.
+    candidate_generation_errors: int = 0
+    candidate_generation_empty: int = 0
+    #: Per-round top-up accounting: planned/written/survived/added + why the
+    #: loop stopped. `stop_reason` is one of pool_sufficient, no_targets_left,
+    #: planner_returned_no_blueprints, no_new_objectives, continued.
+    topup_rounds: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AIQuizResponse(AIProviderMetadata, AIQuizResult):
