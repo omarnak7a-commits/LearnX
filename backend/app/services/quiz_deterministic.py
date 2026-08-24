@@ -1379,11 +1379,17 @@ def _candidate_for(
     *,
     understanding: DocumentUnderstanding,
     pool: list[tuple[str, str, str]],
+    reason_sink: list[str] | None = None,
 ) -> dict[str, Any] | None:
+    # `reason_sink` is diagnostics-only: when provided, every decline below
+    # appends why, so a short quiz can be explained without changing what the
+    # writer writes. It never influences the return value.
     if blueprint.cognitive_skill not in SUPPORTED_SKILLS:
         # Application/transfer questions need a scenario the source does not
         # state. Inventing one would be exactly the failure mode this rewrite
         # exists to remove, so nothing is written.
+        if reason_sink is not None:
+            reason_sink.append(f"unsupported_skill:{blueprint.cognitive_skill}")
         return None
 
     partner_name = _partner_name(blueprint, understanding)
@@ -1411,6 +1417,8 @@ def _candidate_for(
     if blueprint.question_type == "fill-blank":
         built = _fill_blank(blueprint)
         if built is None:
+            if reason_sink is not None:
+                reason_sink.append("fill_blank_not_constructible")
             return None
         prompt, term = built
         return {
@@ -1424,6 +1432,8 @@ def _candidate_for(
         if blueprint.cognitive_skill == "misconception":
             built = _false_statement(blueprint, understanding)
             if built is None:
+                if reason_sink is not None:
+                    reason_sink.append("false_statement_not_constructible")
                 return None
             statement, basis, decoy = built
             return {
@@ -1436,6 +1446,8 @@ def _candidate_for(
             }
         statement = _true_statement(blueprint)
         if statement is None:
+            if reason_sink is not None:
+                reason_sink.append("true_statement_not_constructible")
             return None
         return {
             **base,
@@ -1471,6 +1483,8 @@ def _candidate_for(
             if own is not None:
                 answer = _shorten(_claim(own.primary_evidence, own.name))
         if not answer:
+            if reason_sink is not None:
+                reason_sink.append("contrast_answer_unavailable")
             return None
     elif blueprint.facet_kind:
         # A reasoning question is answered by the relation the document
@@ -1488,18 +1502,26 @@ def _candidate_for(
             or _claim(blueprint.evidence, blueprint.concept, max_words=_MAX_STATEMENT_WORDS)
         )
         if not answer:
+            if reason_sink is not None:
+                reason_sink.append("facet_answer_unavailable")
             return None
     elif blueprint.cognitive_skill == "cause_effect":
         effect = _effect_clause(blueprint.evidence)
         if not effect:
+            if reason_sink is not None:
+                reason_sink.append("cause_effect_clause_unavailable")
             return None
         answer = effect
 
     if not answer:
+        if reason_sink is not None:
+            reason_sink.append("no_answer_claim")
         return None
 
     stem = _stem(blueprint, partner_name, mcq=blueprint.question_type == "mcq")
     if stem is None:
+        if reason_sink is not None:
+            reason_sink.append("stem_not_constructible")
         return None
 
     if blueprint.question_type == "short-answer":
@@ -1513,6 +1535,8 @@ def _candidate_for(
     if blueprint.question_type == "mcq":
         distractors = _distractors(blueprint, answer, pool)
         if len(distractors) < 3:
+            if reason_sink is not None:
+                reason_sink.append("too_few_distractors")
             return None
         return {
             **base,
@@ -1526,6 +1550,8 @@ def _candidate_for(
             ],
         }
 
+    if reason_sink is not None:
+        reason_sink.append(f"unsupported_question_type:{blueprint.question_type}")
     return None
 
 
@@ -1625,19 +1651,31 @@ def deterministic_candidates(
     *,
     language: str,
     understanding: DocumentUnderstanding,
+    drop_reasons: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Write one candidate per blueprint using only the study map.
 
     English-only by design: writing natural Arabic prose without a provider
     would produce awkward questions, so an Arabic quiz reports the unavailable
     state rather than shipping poor language.
+
+    ``drop_reasons`` is diagnostics-only instrumentation: when provided, every
+    blueprint this writer declines is counted under the reason it declined.
+    It never changes which candidates are written.
     """
     if language != "en":
+        if drop_reasons is not None:
+            drop_reasons["deterministic_writer_english_only"] = len(blueprints)
         return []
     pool = _claim_pool(understanding)
     candidates: list[dict[str, Any]] = []
     for blueprint in blueprints:
-        candidate = _candidate_for(blueprint, understanding=understanding, pool=pool)
+        sink: list[str] | None = None if drop_reasons is None else []
+        candidate = _candidate_for(
+            blueprint, understanding=understanding, pool=pool, reason_sink=sink
+        )
         if candidate is not None:
             candidates.append(candidate)
+        elif drop_reasons is not None and sink:
+            drop_reasons[sink[0]] = drop_reasons.get(sink[0], 0) + 1
     return candidates
