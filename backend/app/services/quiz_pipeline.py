@@ -58,6 +58,7 @@ from app.services.quiz_concepts import (
 from app.services.quiz_deterministic import (
     SUPPORTED_SKILLS as DETERMINISTIC_SKILLS,
     deterministic_candidates,
+    replan_unsafe_mcq_blueprints,
     target_writable_types,
     writable_question_types,
 )
@@ -1503,6 +1504,13 @@ def _top_up_candidates(
             blueprint_by_id[renamed.id] = renamed
             renumbered.append(renamed)
 
+        renumbered = replan_unsafe_mcq_blueprints(
+            renumbered,
+            selected_question_types=question_types,
+            understanding=understanding,
+        )
+        for blueprint in renumbered:
+            blueprint_by_id[blueprint.id] = blueprint
         raw = deterministic_candidates(
             renumbered,
             language=language,
@@ -1550,7 +1558,10 @@ def _top_up_candidates(
             if candidate.objective_key not in existing
         ]
         if not added:
-            # Another round would re-plan the same exhausted material.
+            # This round produced no new objective, but the attempted-objective
+            # set above now excludes those slots.  If the quiz is still short,
+            # keep exploring the remaining grounded targets within the bounded
+            # top-up limit instead of stopping on the first dry round.
             topup_rounds.append(
                 {
                     "round": round_index + 1,
@@ -1560,6 +1571,8 @@ def _top_up_candidates(
                     "survived_gates": len(extra),
                 }
             )
+            if len(scored) < count:
+                continue
             break
         topup_rounds.append(
             {
@@ -2157,6 +2170,13 @@ def generate_quiz(
             renamed = replace(blueprint, id=f"det-bp-{index}")
             blueprint_by_id[renamed.id] = renamed
             renumbered.append(renamed)
+        renumbered = replan_unsafe_mcq_blueprints(
+            renumbered,
+            selected_question_types=question_types,
+            understanding=understanding,
+        )
+        for blueprint in renumbered:
+            blueprint_by_id[blueprint.id] = blueprint
         deterministic_raw = deterministic_candidates(
             renumbered,
             language=language,

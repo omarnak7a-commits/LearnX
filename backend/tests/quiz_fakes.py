@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Any, Callable
+from typing import Any
 
 from app.services.quiz_blueprints import QuestionBlueprint
 from app.services.quiz_deterministic import deterministic_candidates
@@ -138,10 +138,10 @@ class FakeQuizService:
 
     def __init__(
         self,
-        pool: _RawQuizPool | None = None,
+        pool: Any = None,
         *,
         title: str = "Source",
-        understanding_hook: Callable[[DocumentUnderstanding], DocumentUnderstanding] | None = None,
+        understanding_hook: Any = None,
     ):
         self.pool = pool
         self.title = title
@@ -166,23 +166,36 @@ class FakeQuizService:
         return _RawQuizPool(questions=self._attach_pool(plan))
 
     def _write_from_blueprints(self, plan: list[dict[str, Any]]) -> _RawQuizPool:
-        blueprints = [
-            QuestionBlueprint(
-                id=item["id"],
-                concept_id=item["concept_id"],
-                concept=item["concept"],
-                knowledge_target_id=item["target_id"],
-                knowledge_target=item["target"],
-                knowledge_type="definition",
-                cognitive_skill=item["skill"],
-                question_type=item["type"],
-                difficulty=item["difficulty"],
-                importance=0.9,
-                evidence=item["evidence"],
-                pages=tuple(item["pages"]),
+        from app.services.quiz_knowledge_targets import build_knowledge_targets
+
+        targets = (
+            build_knowledge_targets(self.understanding)
+            if self.understanding is not None
+            else []
+        )
+        by_id = {target.target_id: target for target in targets}
+        blueprints = []
+        for item in plan:
+            target = by_id.get(item["target_id"])
+            blueprints.append(
+                QuestionBlueprint(
+                    id=item["id"],
+                    concept_id=item["concept_id"],
+                    concept=item["concept"],
+                    knowledge_target_id=item["target_id"],
+                    knowledge_target=item["target"],
+                    knowledge_type=(target.knowledge_type if target else "definition"),
+                    cognitive_skill=item["skill"],
+                    question_type=item["type"],
+                    difficulty=item["difficulty"],
+                    importance=(target.importance if target else 0.9),
+                    evidence=item["evidence"],
+                    pages=tuple(item["pages"]),
+                    supporting_ids=(target.supporting_ids if target else ()),
+                    facet_kind=(target.facet_kind if target else ""),
+                    answer_clause=(target.answer_clause if target else ""),
+                )
             )
-            for item in plan
-        ]
         assert self.understanding is not None
         written = deterministic_candidates(
             blueprints, language="en", understanding=self.understanding
