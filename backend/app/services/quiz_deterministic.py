@@ -1056,7 +1056,7 @@ _FACET_STEMS_AGENT: dict[str, str] = {
     "purpose": "Why {is_are} {concept} important?",
     "cause": "What causes {concept} to form or act?",
     "effect": "What does {concept} produce?",
-    "mechanism": "How does {concept} carry out its function?",
+    "mechanism": "How does {concept} function?",
     "category": "Into which categories does {concept} divide?",
     "condition": "What does {concept} depend on?",
 }
@@ -1080,6 +1080,33 @@ _FACET_STEMS_PRINCIPLE: dict[str, str] = {
     "category": "Into which cases does {concept} divide?",
     "condition": "What condition must hold for {concept} to apply?",
 }
+
+_FACET_STEMS_TOOL: dict[str, str] = {
+    "purpose": "What is the primary function of {concept}?",
+    "cause": "Under what circumstances is {concept} used?",
+    "effect": "What is the primary result or output of {concept}?",
+    "mechanism": "How does {concept} operate?",
+    "category": "Into which categories does {concept} divide?",
+    "condition": "What does {concept} require or depend on?",
+}
+
+_FACET_STEMS_CONDITION: dict[str, str] = {
+    "purpose": "Why is {concept} significant?",
+    "cause": "What causes {concept} to occur?",
+    "effect": "How is {concept} resolved or handled?",
+    "mechanism": "Under what conditions does {concept} occur?",
+    "category": "Into which categories does {concept} divide?",
+    "condition": "What condition leads to {concept}?",
+}
+
+_CONDITION_LIKE = re.compile(
+    r"\b(?:deadlock|starvation|collision|fault|anomaly|anomalies|exception|failure|hazard|error|leak)\b",
+    re.IGNORECASE,
+)
+_TOOL_OR_FUNCTION_LIKE = re.compile(
+    r"\b(?:function|procedure|query|join|clause|operator|algorithm|method|statement|expression|index|view|trigger|table)\b",
+    re.IGNORECASE,
+)
 
 #: Names that denote a stated rule rather than an actor or an occurrence.
 _PRINCIPLE_LIKE = re.compile(
@@ -1138,7 +1165,9 @@ def _stem(blueprint: QuestionBlueprint, partner_name: str, *, mcq: bool) -> str 
 
     # A facet-backed target asks about the relation the document states.
     if blueprint.facet_kind:
-        if blueprint.facet_kind == "contrast" and partner_name:
+        if blueprint.facet_kind == "contrast":
+            if not partner_name or partner_name.casefold() == blueprint.concept.casefold():
+                return None
             # The other side of a comparison must be a *name*, not a clause.
             # "How does friction differ from kinetic friction acts on objects
             # that are sliding?" is unreadable, so a clause-shaped partner
@@ -1168,6 +1197,15 @@ def _stem(blueprint: QuestionBlueprint, partner_name: str, *, mcq: bool) -> str 
             )
         if _is_principle_concept(blueprint.concept, blueprint.evidence):
             stems = _FACET_STEMS_PRINCIPLE
+        elif _CONDITION_LIKE.search(blueprint.concept):
+            stems = dict(_FACET_STEMS_CONDITION)
+            if any(w in blueprint.evidence.lower() for w in ("resolv", "abort", "handl", "correct")):
+                stems["mechanism"] = "How is {concept} resolved?"
+                stems["effect"] = "How is {concept} resolved?"
+            elif any(w in blueprint.evidence.lower() for w in ("occur", "when", "lead", "cause")):
+                stems["mechanism"] = "Under what conditions does {concept} occur?"
+        elif _TOOL_OR_FUNCTION_LIKE.search(blueprint.concept):
+            stems = _FACET_STEMS_TOOL
         elif _is_event_concept(blueprint.concept, blueprint.evidence):
             stems = _FACET_STEMS_EVENT
         else:
@@ -1182,7 +1220,7 @@ def _stem(blueprint: QuestionBlueprint, partner_name: str, *, mcq: bool) -> str 
             return None
 
     if skill == "comparison":
-        if not partner_name:
+        if not partner_name or partner_name.casefold() == blueprint.concept.casefold():
             # Nothing concrete to compare against; no honest question exists.
             return None
         other = _display(partner_name, blueprint.evidence)
@@ -1303,34 +1341,31 @@ _COMPLEMENT_AFTER_VERB = re.compile(
 def _partner_name(
     blueprint: QuestionBlueprint, understanding: DocumentUnderstanding
 ) -> str:
+    concept_folded = blueprint.concept.casefold()
     # A contrast facet already carries the other side of the comparison in its
     # answer clause ("the difference between turnaround time and waiting
     # time"), so prefer it over relationship lookup.
     if blueprint.facet_kind == "contrast" and blueprint.answer_clause.strip():
         clause = blueprint.answer_clause.strip()
-        # The clause is a normalised, lower-cased copy of the term. When it
-        # names a concept the study map already knows, use that concept's own
-        # name: only the original casing distinguishes a proper name that takes
-        # no article ("Meiosis") from a common noun that needs one ("limit"),
-        # and lower-casing has erased it.
-        for concept in understanding.concepts:
-            if concept.name.casefold() == clause.casefold():
-                return concept.name
-        return clause
+        if clause.casefold() != concept_folded:
+            for concept in understanding.concepts:
+                if concept.name.casefold() == clause.casefold():
+                    return concept.name
+            return clause
     for supporting in blueprint.supporting_ids:
         concept = understanding.concept(supporting)
-        if concept is not None:
+        if concept is not None and concept.name.casefold() != concept_folded:
             return concept.name
     for relationship in understanding.relationships:
         if relationship.kind != "contrast":
             continue
         if relationship.source_id == blueprint.concept_id:
             partner = understanding.concept(relationship.target_id)
-            if partner:
+            if partner and partner.name.casefold() != concept_folded:
                 return partner.name
         if relationship.target_id == blueprint.concept_id:
             partner = understanding.concept(relationship.source_id)
-            if partner:
+            if partner and partner.name.casefold() != concept_folded:
                 return partner.name
     return ""
 
@@ -1568,7 +1603,11 @@ def target_writable_types(target: Any, allowed_types: list[str]) -> list[str]:
     writable: list[str] = []
     for question_type in allowed_types:
         if question_type == "true-false":
-            # Mirrors _true_statement's requirements.
+            # Mirrors _true_statement's and _false_statement's requirements.
+            skill = getattr(target, "cognitive_skill", "")
+            if skill == "misconception":
+                writable.append(question_type)
+                continue
             if not facet_kind or not clause:
                 continue
             shortened = _shorten(clause, 16)
@@ -1576,10 +1615,14 @@ def target_writable_types(target: Any, allowed_types: list[str]) -> list[str]:
                 continue
             if _is_unassertable(shortened):
                 continue
-            # Mirror _true_statement's rejection of a clause that cannot follow
-            # the frame's preposition. Without this the planner commits a slot
-            # the writer then declines, and the quiz comes back short.
             if _opens_with_bare_verb(shortened) and not _is_bare_predicate(shortened):
+                continue
+            if _is_bare_predicate(shortened) or _states_a_proposition(
+                getattr(target, "evidence", "") or "",
+                getattr(target, "concept_name", "") or "",
+                shortened,
+            ):
+                writable.append(question_type)
                 continue
             table = (
                 _FACET_ASSERTION_FINITE if _is_finite_clause(shortened) else _FACET_ASSERTION

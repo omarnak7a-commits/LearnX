@@ -973,20 +973,33 @@ def _usable_clause(clause: str) -> bool:
     return len(content_tokens(clause)) >= 2
 
 
+#: Question-bearing and formal scientific ordinal heads (1NF, 2NF, 3NF, laws, orders).
+_ORDINAL_CONCEPT_HEADS = re.compile(
+    r"^\s*(?:the\s+)?(first|second|third|fourth|fifth|1st|2nd|3rd)\s+"
+    r"(normal\s+form|law|order|derivative|stage|phase|generation|step|condition|rule|tier|level|postulate|principle)\b",
+    re.IGNORECASE,
+)
+
+#: SQL query statement detection so code examples are not mistaken for concept names.
+_SQL_QUERY_RE = re.compile(
+    r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|WITH)\b.*(?:FROM|INTO|TABLE|SET|WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|;)",
+    re.IGNORECASE,
+)
+
 #: A subordinate clause opening the sentence, up to the comma that closes it.
 #: What follows the comma carries the sentence's actual claim.
 #: The subordinators recognised above, as a single-token test. A subordinator
 #: opens a new clause, so a concept name can never continue through one.
 _SUBORDINATOR_TOKEN = re.compile(
     r"^(?:although|though|while|whereas|whilst|if|unless|when|whenever|because|"
-    r"since|after|before|until|so|that|which|who|whose|where|why|how)$",
+    r"since|after|before|until|so|that|which|who|whose|where|why|how|given)$",
     re.IGNORECASE,
 )
 
 
 _LEADING_SUBORDINATE = re.compile(
     r"^\s*(?:although|though|even\s+though|while|whereas|whilst|if|unless|"
-    r"when|whenever|because|since|as\s+long\s+as|provided\s+that|"
+    r"when|whenever|because|since|as\s+long\s+as|provided\s+that|given\s+that|"
     r"in\s+order\s+that|so\s+that|after|before|until)\b[^,]{3,120},\s*",
     re.IGNORECASE,
 )
@@ -1008,6 +1021,9 @@ def sentence_subject(text: str) -> str:
     # before adverb stripping, which would otherwise remove the very
     # conjunction that marks the clause as subordinate.
     stripped = text.strip()
+    m_ord = _ORDINAL_CONCEPT_HEADS.match(stripped)
+    if m_ord:
+        return f"{m_ord.group(1)} {m_ord.group(2)}"
     subordinate = _LEADING_SUBORDINATE.match(stripped)
     if subordinate:
         stripped = stripped[subordinate.end():].strip()
@@ -2486,6 +2502,15 @@ def _acceptable_term(term: str) -> bool:
     # is a sentence about studying, not a concept called "mastery".
     if tokens_in_order and tokens_in_order[0] in _META_HEAD_WORDS:
         return False
+    # Legitimate multi-word domain concepts that would otherwise be stemmed
+    # to single non-concept stopwords
+    if cleaned.lower() in {
+        "primary key", "foreign key", "candidate key", "surrogate key",
+        "composite key", "superkey", "alternate key", "unique key",
+        "primary structure", "secondary structure", "tertiary structure",
+        "public key", "private key", "session key"
+    }:
+        return True
     tokens = content_tokens(cleaned)
     if not tokens or tokens <= _NON_CONCEPT_WORDS:
         return False
@@ -2614,7 +2639,7 @@ def _trim_to_subject(term: str, following: str = "") -> str:
     kept: list[str] = []
     for index, word in enumerate(words):
         bare = re.sub(r"[^\w\u0600-\u06FF]", "", word).lower()
-        if bare in _PREDICATE_STOP:
+        if index > 0 and bare in _PREDICATE_STOP:
             break
         # A subordinator starts a new clause, so the name ended before it:
         # "Imperialism increased friction BECAUSE industrial powers competed".
@@ -2630,30 +2655,6 @@ def _trim_to_subject(term: str, following: str = "") -> str:
             nxt = following.split()[0] if following.split() else ""
         # Never cut at the very first word: the head noun itself may end in -s
         # ("Ribosomes are ...", "Buffers are ...").
-        #
-        # A verb must also be the LAST token for the cut to be safe. In
-        # "Related rates problems use ...", "rates" is morphologically a verb
-        # but is followed by "problems", so it is a noun modifier inside the
-        # name. A genuine predicate runs to the end of the candidate span,
-        # because _SUBJECT_HEAD only ever captures the sentence's opening
-        # words -- so a verb with more name-like tokens after it is not one.
-        # A morphological verb is only a real predicate when what follows opens
-        # a complement ("problems use THE chain rule") or nothing follows. When
-        # another bare noun follows ("Related rates PROBLEMS"), the token was a
-        # noun modifier inside the name.
-        # Structural, not lexical: a token is the predicate when a complement
-        # follows it ("... partitions THE ready queue", "... differs FROM
-        # deposition"), or when nothing follows and its shape is unambiguously
-        # verbal. When another bare noun follows ("Related rates PROBLEMS") the
-        # token is a modifier inside the name. This is what lets the rule work
-        # on vocabulary it has never seen.
-        # A bare-form verb agreeing with a plural subject ("Ionic bonds DIFFER
-        # from ...", "Glaciers SHAPE landscapes") carries no -s or -ed, so
-        # morphology cannot see it. Its position does: it sits after the head
-        # noun and takes a complement, which is the signature of a predicate
-        # rather than of a noun modifier. Requiring BOTH a preceding plural
-        # head and a following complement keeps compound names intact --
-        # "Related rates problems" has no complement after "problems".
         if (
             index > 0
             and not _looks_like_finite_verb(word)
@@ -2663,11 +2664,6 @@ def _trim_to_subject(term: str, following: str = "") -> str:
             and not word[:1].isupper()
         ):
             break
-        # An irregular past tense carries no -ed or -s ("the Triple Alliance
-        # BOUND Germany", "the plan HELD the line"), so morphology cannot see
-        # it. Capitalisation can: a lower-case token sitting between two
-        # capitalised words inside a proper name is the verb joining them, not
-        # part of either name. Orthographic, so it needs no verb vocabulary.
         if (
             index > 0
             and kept
@@ -2684,29 +2680,10 @@ def _trim_to_subject(term: str, following: str = "") -> str:
                 re.sub(r"[^\w]", "", word).lower()
             ):
                 break
-            # A subject noun phrase is followed by its predicate. When the text
-            # after the span supplies one ("Related rates problems USE ..."),
-            # the ambiguous token was a modifier inside the name. When no
-            # predicate follows, the sentence's verb must lie *within* the span
-            # -- which is exactly what "Foreshadowing shapes expectation" and
-            # "sediment settles and builds" are -- so cut here. This reads the
-            # sentence's own structure rather than any vocabulary, so it holds
-            # on documents whose verbs no list anticipates.
-            # "No predicate after this token" must consider the rest of the
-            # span as well as the text beyond it. In "Golgi apparatus IS
-            # defined as", the real predicate ("is") sits later in the span, so
-            # the ambiguous "apparatus" is a head noun, not the verb.
             rest = " ".join(words[index + 1 :])
             if nxt and not _predicate_follows(f"{rest} {following}".strip()):
                 break
         kept.append(word)
-    # A trailing prepositional phrase that opens a new modifier is not part of
-    # the name: "assassination of Archduke Franz Ferdinand IN JUNE" names the
-    # event, and "in June" is circumstance. "of"-phrases are kept because they
-    # are the head's own complement ("assassination OF Archduke ...").
-    # Cutting at a predicate can leave a stranded adverb ("Germany THEN").
-    # An adverb modifies the verb that was just removed, so it is not part of
-    # the name either.
     while len(kept) >= 2 and _STRANDED_MODIFIER.match(kept[-1]):
         kept = kept[:-1]
     while len(kept) >= 2 and kept[-2].lower() in _TRAILING_MODIFIER_PREPOSITIONS:
@@ -2749,7 +2726,21 @@ _PREDICATE_STOP = frozenset(
     schedule executes execute runs run holds hold requires require provides provide
     describes describe measures measure represents represent equals equal gives give
     takes take makes make keeps keep prevents prevent enables enable causes cause
-    determines determine depends depend applies apply write writes writing said says""".split()
+    determines determine determined depends depend depended applies apply write writes writing said says
+    reintroduces reintroduce reintroduced reduces reduce reduced filters filter filtered
+    forbids forbid forbidden returns return returned removes remove removed computes compute computed
+    enforces enforce enforced references reference referenced partitions partition partitioned
+    compares compare compared stores store stored presents present presented commits commit committed
+    aborts abort aborted survives survive survived flushes flush flushed resolves resolve resolved
+    creates create created deletes delete deleted updates update updated inserts insert inserted
+    identifies identify identified retrieves retrieve retrieved allocates allocate allocated
+    implements implement implemented maintains maintain maintained binds bind bound links link linked
+    connects connect connected combines combine combined separates separate separated protects protect protected
+    controls control controlled manages manage managed handles handle handled transfers transfer transferred
+    transmits transmit transmitted processes process processed evaluates evaluate evaluated ensures ensure ensured
+    yields yield yielded matches match matched defines define defined improves improve improved
+    supports support supported indicates indicate indicated specifies specify specified guarantees guarantee guaranteed
+    avoids avoid avoided""".split()
 )
 
 # A concept name cannot begin with a preposition, conjunction, or pronoun: a
@@ -2757,7 +2748,7 @@ _PREDICATE_STOP = frozenset(
 _FUNCTION_WORD_START = re.compile(
     r"^(?:for|with|from|by|to|in|on|at|as|of|into|about|between|within|through|during|"
     r"after|before|since|because|if|when|while|that|which|we|you|they|it|he|she|there|"
-    r"here|its|their|our|his|her)\b",
+    r"here|its|their|our|his|her|given)\b",
     re.IGNORECASE,
 )
 
@@ -2787,6 +2778,15 @@ def _candidate_terms(sentence: str) -> list[tuple[str, str]]:
     """
     if not re.match(r"^[A-Z\u0600-\u06FF]", sentence.strip()):
         return []
+    trimmed = sentence.strip()
+    if _FUNCTION_WORD_START.match(trimmed) or _ANAPHORIC_SUBJECT.match(trimmed):
+        return []
+    if _SQL_QUERY_RE.match(trimmed):
+        return []
+    m_ord = _ORDINAL_CONCEPT_HEADS.match(trimmed)
+    if m_ord:
+        term = f"{m_ord.group(1)} {m_ord.group(2)}"
+        return [(term, infer_knowledge_type(sentence))]
     found: list[tuple[str, str]] = []
     for pattern, knowledge_type in _TERM_PATTERNS:
         for match in pattern.finditer(sentence):
@@ -2808,7 +2808,6 @@ def _candidate_terms(sentence: str) -> list[tuple[str, str]]:
     # speed and asserts something about direction. Naming "speed" from it makes
     # a concept whose evidence, once its name is removed, is only the fragment
     # "constant, the direction of velocity is continuously changing".
-    trimmed = sentence.strip()
     if _CORRELATIVE_COMPARATIVE.match(trimmed):
         return found
     subordinate = _LEADING_SUBORDINATE.match(trimmed)
@@ -2995,6 +2994,8 @@ def _consolidate_prefix_names(
         if len(tokens) > 1:
             head_index.setdefault(tokens[-1:], []).append(key)
     for key, entry in list(grouped.items()):
+        if _has_own_definition(key, entry):
+            continue
         tokens = _name_key(entry["name"])
         if len(tokens) != 1:
             continue
