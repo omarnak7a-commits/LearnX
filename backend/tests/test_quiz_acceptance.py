@@ -71,16 +71,22 @@ def _generate(*, seed: int = 7, count: int = 8, **overrides):
 def test_the_document_is_understood_before_any_question_is_written() -> None:
     service, result = _generate()
 
-    # Two provider calls, in order: understand, then write.
-    assert len(service.calls) == 2
+    # Understanding is always the first provider call; writing is batched.
+    assert service.calls
     assert service.calls[0]["response_model"] is _RawUnderstanding
     assert "UNDERSTAND what this document teaches" in service.calls[0]["user_prompt"]
     assert "Do not write any quiz" in service.calls[0]["user_prompt"]
 
-    writer_prompt = service.calls[1]["user_prompt"]
-    assert "DOCUMENT UNDERSTANDING" in writer_prompt
-    assert "KNOWLEDGE TARGETS" in writer_prompt
-    assert "QUIZ BLUEPRINT" in writer_prompt
+    writer_calls = [
+        call
+        for call in service.calls[1:]
+        if "QUIZ BLUEPRINT" in call["user_prompt"]
+        or "UNFILLED BLUEPRINTS" in call["user_prompt"]
+    ]
+    assert writer_calls
+    writer_prompt = writer_calls[0]["user_prompt"]
+    assert "DOCUMENT UNDERSTANDING" in writer_prompt or "RELEVANT CONCEPTS" in writer_prompt
+    assert "KNOWLEDGE TARGETS" in writer_prompt or "RELEVANT KNOWLEDGE TARGETS" in writer_prompt
 
     assert result.understanding is not None
     assert result.understanding.summary

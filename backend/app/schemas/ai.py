@@ -268,6 +268,18 @@ class AIQuizDiagnostics(BaseModel):
     ambiguity_rejected: int = 0
     provider_model_used: str = ""
     provider_fallback_used: bool = False
+    provider_generation_calls: int = 0
+    provider_topup_calls: int = 0
+    provider_candidates_received: int = 0
+    provider_candidates_accepted: int = 0
+    quality_judge_attempts: int = 0
+    quality_judge_passed: int = 0
+    quality_judge_rejected: int = 0
+    regeneration_attempts: int = 0
+    regeneration_successes: int = 0
+    deterministic_candidates_used: int = 0
+    final_questions_by_origin: dict[str, int] = Field(default_factory=dict)
+    final_questions_by_type: dict[str, int] = Field(default_factory=dict)
 
 
 class AIQuizResponse(AIProviderMetadata, AIQuizResult):

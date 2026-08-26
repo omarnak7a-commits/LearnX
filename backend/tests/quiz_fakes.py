@@ -23,6 +23,7 @@ from typing import Any
 from app.services.quiz_blueprints import QuestionBlueprint
 from app.services.quiz_deterministic import deterministic_candidates
 from app.services.quiz_pipeline import _RawCandidate, _RawQuizPool
+from app.services.quiz_quality_judge import _RawQualityJudgement
 from app.services.quiz_understanding import (
     DocumentUnderstanding,
     _RawUnderstanding,

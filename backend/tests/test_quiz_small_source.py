@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.services.ai_documents import source_from_text
 from app.services.ai_service import AIStructuredCompletion
 from app.services.quiz_pipeline import _RawQuizPool, generate_quiz
+from app.services.quiz_quality_judge import _RawQualityJudgement
 from app.services.quiz_understanding import _RawUnderstanding
 
 EVIDENCE = "Evaporation is the process by which liquid water changes into water vapor."
@@ -19,7 +20,9 @@ class SmallSourceService:
 
     def complete_structured(self, **kwargs):
         self.calls += 1
-        if kwargs["response_model"] is _RawUnderstanding:
+        if kwargs["response_model"] is _RawQualityJudgement:
+            value = _RawQualityJudgement(verdicts=[])
+        elif kwargs["response_model"] is _RawUnderstanding:
             value = _RawUnderstanding.model_validate(
                 {
                     "subject": "Earth science",
@@ -100,7 +103,7 @@ def test_small_educational_source_still_yields_a_grounded_question() -> None:
         require_exact_count=False,
     )
 
-    assert service.calls == 2  # understand first, then write
+    assert service.calls >= 2  # understand first, then batched write / judge
     assert result.questions
     question = result.questions[0]
     assert question.prompt == "How does evaporation change liquid water?"
