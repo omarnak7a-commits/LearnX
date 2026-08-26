@@ -405,6 +405,18 @@ def _diagnostics_from_telemetry(
         ambiguity_rejected=telemetry.get("ambiguity_rejected", 0),
         provider_model_used=str(telemetry.get("provider_model_used", "") or ""),
         provider_fallback_used=bool(telemetry.get("provider_fallback_used", False)),
+        provider_generation_calls=telemetry.get("provider_generation_calls", 0),
+        provider_topup_calls=telemetry.get("provider_topup_calls", 0),
+        provider_candidates_received=telemetry.get("provider_candidates_received", 0),
+        provider_candidates_accepted=telemetry.get("provider_candidates_accepted", 0),
+        quality_judge_attempts=telemetry.get("quality_judge_attempts", 0),
+        quality_judge_passed=telemetry.get("quality_judge_passed", 0),
+        quality_judge_rejected=telemetry.get("quality_judge_rejected", 0),
+        regeneration_attempts=telemetry.get("regeneration_attempts", 0),
+        regeneration_successes=telemetry.get("regeneration_successes", 0),
+        deterministic_candidates_used=telemetry.get("deterministic_candidates_used", 0),
+        final_questions_by_origin=dict(telemetry.get("final_questions_by_origin") or {}),
+        final_questions_by_type=dict(telemetry.get("final_questions_by_type") or {}),
     )
 
 

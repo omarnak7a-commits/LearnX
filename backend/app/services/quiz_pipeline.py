@@ -93,6 +93,7 @@ from app.services.quiz_scoring import (
     select_diverse,
     select_quiz_questions,
 )
+from app.services.quiz_quality_judge import judge_records
 from app.services.quiz_understanding import (
     ConceptNode,
     DocumentUnderstanding,
@@ -493,6 +494,12 @@ def build_document_understanding(
 # --------------------------------------------------------------------------- #
 
 
+def _chunked(items: list[Any], size: int) -> list[list[Any]]:
+    if size <= 0:
+        return [items]
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
 def build_candidate_prompt(
     *,
     understanding: DocumentUnderstanding,
@@ -541,6 +548,59 @@ def build_candidate_prompt(
     if previous_questions:
         lines.extend(["", "PREVIOUS QUESTIONS — do not repeat or paraphrase:"])
         lines.extend(f"- {past}" for past in previous_questions[:30])
+    return "\n".join(lines)
+
+
+def build_recovery_prompt(
+    *,
+    understanding: DocumentUnderstanding,
+    blueprints: list[QuestionBlueprint],
+    knowledge_targets: list[KnowledgeTarget],
+    rejection_notes: list[str],
+    count: int,
+) -> str:
+    """Top-up prompt: only unfilled slots plus concise rejection feedback."""
+    relevant_ids = {blueprint.knowledge_target_id for blueprint in blueprints}
+    relevant_concepts = {
+        blueprint.concept_id for blueprint in blueprints
+    }
+    slim_targets = [
+        target
+        for target in knowledge_targets
+        if target.target_id in relevant_ids or target.concept_id in relevant_concepts
+    ]
+    slim_understanding = replace(
+        understanding,
+        concepts=tuple(
+            concept
+            for concept in understanding.concepts
+            if concept.concept_id in relevant_concepts
+        ),
+    )
+    lines = [
+        f"Write replacement questions for {len(blueprints)} unfilled exam slots.",
+        f"{count} high-quality questions are still needed.",
+        "Do not regenerate successful objectives. Use only the evidence below.",
+        "",
+        "RELEVANT CONCEPTS:",
+        understanding_block(slim_understanding),
+        "",
+        "RELEVANT KNOWLEDGE TARGETS:",
+        targets_block(slim_targets or knowledge_targets[:8]),
+        "",
+        "UNFILLED BLUEPRINTS:",
+        blueprint_block(blueprints),
+        "",
+        "REJECTION FEEDBACK (generate a *different* question for each):",
+    ]
+    lines.extend(f"- {note}" for note in rejection_notes[:24] or ["- previous attempt failed quality"])
+    lines.extend(
+        [
+            "",
+            "HARD RULES: one correct MCQ answer, unique fill-blank term from the evidence,",
+            "meaningful true/false claims, no slide metadata, no outside knowledge.",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -1178,6 +1238,75 @@ def _score_and_filter(
     return scored, scores
 
 
+def _ingest_provider_pool(
+    raw_candidates: list[_RawCandidate],
+    *,
+    context: QuizContext,
+    source: AIDocumentSource,
+    blueprint_by_id: dict[str, QuestionBlueprint],
+    previous_questions: list[str],
+    difficulty: str,
+    quality_threshold: float,
+    rejections: list[RejectionNote],
+    candidates_by_type: Counter | None,
+    service: Any,
+    system_prompt: str,
+    funnel: dict[str, Any],
+    scored: list[ScoredCandidate],
+    scores: dict[str, float],
+) -> tuple[list[ScoredCandidate], dict[str, float], list[str]]:
+    """Ground, judge, and score one provider batch. Returns quality-rejection notes."""
+    records = _collect_records(
+        raw_candidates,
+        context=context,
+        source=source,
+        blueprint_by_id=blueprint_by_id,
+        previous_questions=previous_questions,
+        rejections=rejections,
+        candidates_by_type=candidates_by_type,
+    )
+    judged, quality_drops = judge_records(
+        records,
+        service=service,
+        system_prompt=system_prompt,
+        funnel=funnel,
+    )
+    feedback: list[str] = []
+    for record, reason in quality_drops:
+        rejections.append(
+            RejectionNote(
+                stage="quality_judge",
+                blueprint_id=record.blueprint.id,
+                concept_id=record.blueprint.concept_id,
+                cognitive_skill=record.blueprint.cognitive_skill,
+                prompt=record.question.prompt,
+                reason=reason,
+                evidence_pages=tuple(record.blueprint.pages),
+                grounding_result="validator_false_negative",
+            )
+        )
+        feedback.append(f"Blueprint {record.blueprint.id}: {reason}. Generate a different question.")
+        funnel["regeneration_attempts"] = funnel.get("regeneration_attempts", 0) + 1
+    extra, extra_scores = _score_and_filter(
+        judged,
+        context=context,
+        difficulty=difficulty,
+        previous_questions=previous_questions,
+        quality_threshold=quality_threshold,
+        rejections=rejections,
+    )
+    existing = {candidate.objective_key for candidate in scored}
+    added = [item for item in extra if item.objective_key not in existing]
+    if added:
+        scored = _dedupe_scored([*scored, *added])
+        scores.update(extra_scores)
+        funnel["provider_candidates_accepted"] = funnel.get("provider_candidates_accepted", 0) + len(added)
+        funnel["regeneration_successes"] = funnel.get("regeneration_successes", 0) + sum(
+            1 for item in added if any(item.blueprint_id in note for note in feedback)
+        )
+    return scored, scores, feedback
+
+
 def _collect_records(
     candidates: list[_RawCandidate],
     *,
@@ -1267,6 +1396,8 @@ _OPTION_TYPES = {"mcq", "true-false"}
 #: How many extra planning rounds may run when the pool is short of the
 #: requested count. Bounded so a thin document fails fast instead of looping.
 _MAX_TOPUP_ROUNDS = 3
+_PROVIDER_BATCH_SIZE = 8
+_PROVIDER_TOPUP_CALLS = 2
 
 
 def _account_plan_skips(
@@ -1780,7 +1911,9 @@ def _quiz_telemetry(
         "quality_generated": candidates_generated,
         "quality_passed": validated,
         "quality_rejected": sum(
-            1 for note in real_rejections if note.stage == "quality_gate"
+            1
+            for note in real_rejections
+            if note.stage in {"quality_gate", "quality_judge"}
         ),
         "grounding_passed": validated,
         "validation_passed": validated,
@@ -1799,6 +1932,28 @@ def _quiz_telemetry(
         "provider_model_used": str((provider_trace or {}).get("model", "") or ""),
         "provider_fallback_used": bool(
             (provider_trace or {}).get("fallback_used", False)
+        ),
+        "provider_generation_calls": (funnel or {}).get("provider_generation_calls", 0),
+        "provider_topup_calls": (funnel or {}).get("provider_topup_calls", 0),
+        "provider_candidates_received": (funnel or {}).get(
+            "provider_candidates_received", 0
+        ),
+        "provider_candidates_accepted": (funnel or {}).get(
+            "provider_candidates_accepted", 0
+        ),
+        "quality_judge_attempts": (funnel or {}).get("quality_judge_attempts", 0),
+        "quality_judge_passed": (funnel or {}).get("quality_judge_passed", 0),
+        "quality_judge_rejected": (funnel or {}).get("quality_judge_rejected", 0),
+        "regeneration_attempts": (funnel or {}).get("regeneration_attempts", 0),
+        "regeneration_successes": (funnel or {}).get("regeneration_successes", 0),
+        "deterministic_candidates_used": (funnel or {}).get(
+            "deterministic_candidates_used", 0
+        ),
+        "final_questions_by_origin": dict(
+            (funnel or {}).get("final_questions_by_origin") or {}
+        ),
+        "final_questions_by_type": dict(
+            (funnel or {}).get("final_questions_by_type") or {}
         ),
     }
 
@@ -2090,71 +2245,154 @@ def generate_quiz(
         "candidate_generation_empty": 0,
     }
     candidates_by_type: Counter = Counter()
-    candidate_count = min(36, max(20, len(context.blueprints) * 2, count * 2))
-    writer_prompt = build_candidate_prompt(
-        understanding=understanding,
-        blueprints=context.blueprints,
-        knowledge_targets=context.knowledge_targets,
-        count=count,
-        candidate_count=candidate_count,
-        kind=kind,
-        difficulty=difficulty,
-        previous_questions=previous_questions,
-    )
+    funnel.setdefault("provider_generation_calls", 0)
+    funnel.setdefault("provider_topup_calls", 0)
+    funnel.setdefault("provider_candidates_received", 0)
+    funnel.setdefault("provider_candidates_accepted", 0)
+    funnel.setdefault("quality_judge_attempts", 0)
+    funnel.setdefault("quality_judge_passed", 0)
+    funnel.setdefault("quality_judge_rejected", 0)
+    funnel.setdefault("regeneration_attempts", 0)
+    funnel.setdefault("regeneration_successes", 0)
     completion = None
-    raw_candidates: list[_RawCandidate] = []
     provider_errors = 0 if map_completion is not None else 1
-    provider_trace["writer_calls"] = provider_trace.get("writer_calls", 0) + 1
-    funnel["plans_attempted"] += len(context.blueprints)
-    try:
-        completion = service.complete_structured(
-            response_model=_RawQuizPool,
-            system_prompt=shared_system_prompt,
-            user_prompt=writer_prompt,
-            temperature=0.45,
-            max_tokens=14000,
-        )
-        raw_candidates = list(completion.value.questions)
-        provider_trace["writer_ok"] = provider_trace.get("writer_ok", 0) + 1
-        provider_trace["writer_questions_returned"] = (
-            provider_trace.get("writer_questions_returned", 0) + len(raw_candidates)
-        )
-        if not raw_candidates:
-            provider_trace["writer_empty"] = provider_trace.get("writer_empty", 0) + 1
-    except AIServiceError:
-        completion = None
-        # A writer outage is a *service* failure. Recording it keeps the
-        # shortfall message from blaming the document for a provider problem.
-        provider_errors += 1
-        provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
-        funnel["candidate_generation_errors"] += 1
-    funnel["provider_candidates_returned"] += len(raw_candidates)
-    if not raw_candidates:
-        funnel["candidate_generation_empty"] += 1
-
+    provider_available = True
     blueprint_by_id = {blueprint.id: blueprint for blueprint in context.blueprints}
     rejections: list[RejectionNote] = []
-    records = _collect_records(
-        raw_candidates,
-        context=context,
-        source=source,
-        blueprint_by_id=blueprint_by_id,
-        previous_questions=previous_questions,
-        rejections=rejections,
-        candidates_by_type=candidates_by_type,
-    )
-    funnel["provider_candidates_dropped"] += len(raw_candidates) - len(records)
-    scored, scores = _score_and_filter(
-        records,
-        context=context,
-        difficulty=difficulty,
-        previous_questions=previous_questions,
-        quality_threshold=quality_threshold,
-        rejections=rejections,
-    )
+    scored: list[ScoredCandidate] = []
+    scores: dict[str, float] = {}
+    quality_feedback: list[str] = []
+
+    batches = _chunked(context.blueprints, _PROVIDER_BATCH_SIZE)
+    funnel["plans_attempted"] += len(context.blueprints)
+    for batch in batches:
+        candidate_count = max(len(batch), min(12, count * 2))
+        writer_prompt = build_candidate_prompt(
+            understanding=understanding,
+            blueprints=batch,
+            knowledge_targets=context.knowledge_targets,
+            count=count,
+            candidate_count=candidate_count,
+            kind=kind,
+            difficulty=difficulty,
+            previous_questions=previous_questions,
+        )
+        provider_trace["writer_calls"] = provider_trace.get("writer_calls", 0) + 1
+        funnel["provider_generation_calls"] += 1
+        try:
+            completion = service.complete_structured(
+                response_model=_RawQuizPool,
+                system_prompt=shared_system_prompt,
+                user_prompt=writer_prompt,
+                temperature=0.45,
+                max_tokens=8000,
+            )
+            raw_candidates = list(completion.value.questions)
+            provider_trace["writer_ok"] = provider_trace.get("writer_ok", 0) + 1
+            provider_trace["writer_questions_returned"] = (
+                provider_trace.get("writer_questions_returned", 0) + len(raw_candidates)
+            )
+            if not raw_candidates:
+                provider_trace["writer_empty"] = provider_trace.get("writer_empty", 0) + 1
+        except AIServiceError:
+            raw_candidates = []
+            provider_available = False
+            provider_errors += 1
+            provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
+            funnel["candidate_generation_errors"] += 1
+            funnel["candidate_generation_empty"] += 1
+            break
+        funnel["provider_candidates_returned"] += len(raw_candidates)
+        funnel["provider_candidates_received"] += len(raw_candidates)
+        if not raw_candidates:
+            funnel["candidate_generation_empty"] += 1
+        grounded_before = len(scored)
+        scored, scores, batch_feedback = _ingest_provider_pool(
+            raw_candidates,
+            context=context,
+            source=source,
+            blueprint_by_id=blueprint_by_id,
+            previous_questions=previous_questions,
+            difficulty=difficulty,
+            quality_threshold=quality_threshold,
+            rejections=rejections,
+            candidates_by_type=candidates_by_type,
+            service=service,
+            system_prompt=shared_system_prompt,
+            funnel=funnel,
+            scored=scored,
+            scores=scores,
+        )
+        quality_feedback.extend(batch_feedback)
+        funnel["provider_candidates_dropped"] += max(
+            0, len(raw_candidates) - max(0, len(scored) - grounded_before)
+        )
+
+    # Provider recovery happens BEFORE deterministic fallback whenever the
+    # writer is still reachable. Unfilled blueprints + rejection reasons only.
+    if provider_available and len(_dedupe_scored(scored)) < count:
+        filled = {candidate.objective_key for candidate in scored}
+        unfilled = [
+            blueprint
+            for blueprint in context.blueprints
+            if blueprint.objective_key not in filled
+        ]
+        for topup_index in range(_PROVIDER_TOPUP_CALLS):
+            if len(_dedupe_scored(scored)) >= count or not unfilled:
+                break
+            funnel["provider_topup_calls"] += 1
+            provider_trace["writer_calls"] = provider_trace.get("writer_calls", 0) + 1
+            recovery_prompt = build_recovery_prompt(
+                understanding=understanding,
+                blueprints=unfilled[:_PROVIDER_BATCH_SIZE],
+                knowledge_targets=context.knowledge_targets,
+                rejection_notes=quality_feedback[-16:],
+                count=count - len(_dedupe_scored(scored)),
+            )
+            try:
+                completion = service.complete_structured(
+                    response_model=_RawQuizPool,
+                    system_prompt=shared_system_prompt,
+                    user_prompt=recovery_prompt,
+                    temperature=0.4,
+                    max_tokens=8000,
+                )
+                raw_candidates = list(completion.value.questions)
+                provider_trace["writer_ok"] = provider_trace.get("writer_ok", 0) + 1
+            except AIServiceError:
+                provider_available = False
+                provider_errors += 1
+                provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
+                funnel["candidate_generation_errors"] += 1
+                break
+            funnel["provider_candidates_returned"] += len(raw_candidates)
+            funnel["provider_candidates_received"] += len(raw_candidates)
+            scored, scores, batch_feedback = _ingest_provider_pool(
+                raw_candidates,
+                context=context,
+                source=source,
+                blueprint_by_id=blueprint_by_id,
+                previous_questions=previous_questions,
+                difficulty=difficulty,
+                quality_threshold=quality_threshold,
+                rejections=rejections,
+                candidates_by_type=candidates_by_type,
+                service=service,
+                system_prompt=shared_system_prompt,
+                funnel=funnel,
+                scored=scored,
+                scores=scores,
+            )
+            quality_feedback.extend(batch_feedback)
+            filled = {candidate.objective_key for candidate in scored}
+            unfilled = [
+                blueprint
+                for blueprint in context.blueprints
+                if blueprint.objective_key not in filled
+            ]
 
     used_deterministic = False
-    if completion is None or len(_dedupe_scored(scored)) < count:
+    if (not provider_available) or len(_dedupe_scored(scored)) < count:
         # The provider is unavailable or produced too little. Rather than
         # silently degrading to sentence transformation, run the deterministic
         # writer over the SAME study map and the SAME gates. It plans its own
@@ -2365,6 +2603,16 @@ def generate_quiz(
     if final_notes:
         kept = {question.id for question in questions}
         provenance = [record for record in provenance if record.question_id in kept]
+
+    origin_counts: Counter = Counter()
+    for record in provenance:
+        if record.blueprint_id.startswith("det-") or record.blueprint_id.startswith("topup"):
+            origin_counts["deterministic"] += 1
+        else:
+            origin_counts["provider"] += 1
+    funnel["deterministic_candidates_used"] = origin_counts.get("deterministic", 0)
+    funnel["final_questions_by_origin"] = dict(origin_counts)
+    funnel["final_questions_by_type"] = dict(Counter(q.type for q in questions))
 
     telemetry = _quiz_telemetry(
         source=source,
