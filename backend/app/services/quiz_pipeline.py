@@ -1477,6 +1477,21 @@ def _insufficient_material_message(
             "because the AI provider failed part-way through. This is a "
             "service problem, not a problem with your PDF -- please retry."
         )
+    # The deterministic safety net declined for language reasons (non-English
+    # source with a non-English request), so the shortfall is bounded by what
+    # the provider alone could verify. Blaming the PDF's scanned pages here
+    # would misattribute a pipeline limitation to the document.
+    english_only = (telemetry.get("deterministic_drop_reasons") or {}).get(
+        "deterministic_writer_english_only", 0
+    )
+    if english_only and available:
+        return (
+            f"LearnX could only verify {available} of {requested} questions. "
+            "The AI provider could not supply the remaining questions for "
+            "this document, and LearnX's offline question writer supports "
+            "English-language sources only, so it could not fill the gap. "
+            f"Please try again, or ask for {available} questions."
+        )
     if dropped:
         return (
             f"LearnX could only verify {available} of {requested} questions. "

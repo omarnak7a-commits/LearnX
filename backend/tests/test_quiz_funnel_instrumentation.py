@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from app.services.ai_documents import _extract_pdf_uncached
 from app.services.ai_service import AIServiceError
 from app.services.quiz_concepts import split_source_units
@@ -144,29 +142,66 @@ def test_shortfall_returns_counters_on_422_path():
     assert telemetry["provider_candidates_returned"] == 0
 
 
-def test_non_english_run_counts_the_english_only_drop():
-    telemetry, _, exc = _run(sql18_source(), language="ar")
-    # Arabic + failing provider: the deterministic writer declines everything
-    # by design (English-only). The pipeline then raises AIUnavailableError
-    # with NO telemetry (a known diagnostics blind spot on the 503 empty-pool
-    # path — distinct from the 422 QuizMaterialError path, which carries the
-    # funnel). This test documents that fact rather than assuming data the
-    # error path does not provide.
-    assert exc is not None
-    if telemetry is None:
-        pytest.skip(
-            "empty-pool AIUnavailableError carries no telemetry (503 blind spot)"
-        )
-    attempted = telemetry["deterministic_candidates_attempted"]
-    dropped = telemetry["deterministic_candidates_dropped"]
-    assert attempted == dropped
+def test_non_english_request_on_english_source_recovers():
+    # Production regression (exam 075eb4af…): the quiz request carries no
+    # language, so it resolves from the user's profile preference (Arabic).
+    # The deterministic writer used to decline EVERY blueprint whenever the
+    # request language was not English — even on an English document — which
+    # silently disabled the deterministic fallback and all top-up rounds. With
+    # a failing provider that meant an unrecoverable shortfall. The writer now
+    # gates on the *source* language: this fixture is English, so an Arabic
+    # request must still recover to the full quiz through the same gates.
+    telemetry, accepted, exc = _run(sql18_source(), language="ar")
+    assert exc is None
+    assert accepted == 8
+    assert telemetry["deterministic_candidates_returned"] >= 8
     assert (
         telemetry["deterministic_drop_reasons"].get(
             "deterministic_writer_english_only", 0
         )
-        == dropped
-        or dropped == 0
+        == 0
     )
+
+
+def test_non_english_source_still_counts_the_english_only_drop():
+    # A genuinely non-English source is the case the English-only design
+    # protects: the writer must decline (it cannot write natural Arabic
+    # prose) and count every declined blueprint under the language reason.
+    from app.services.quiz_blueprints import QuestionBlueprint
+    from app.services.quiz_deterministic import deterministic_candidates
+    from app.services.quiz_boilerplate import clean_source_units
+
+    arabic_text = (
+        "المفتاح الأساسي يعرف كل صف في الجدول بشكل فريد. "
+        "المفتاح الأجنبي يشير إلى المفتاح الأساسي في جدول آخر. "
+        "التطبيع ينظم الأعمدة لتقليل تكرار البيانات في قاعدة البيانات."
+    )
+    understanding = deterministic_understanding(
+        clean_source_units(split_source_units(arabic_text)), title="قواعد البيانات"
+    )
+    blueprint = QuestionBlueprint(
+        id="bp-1",
+        concept_id="c1",
+        concept="المفتاح الأساسي",
+        knowledge_target_id="t1",
+        knowledge_target="عرف المفتاح الأساسي",
+        knowledge_type="definition",
+        cognitive_skill="understanding",
+        question_type="mcq",
+        difficulty="medium",
+        importance=0.9,
+        evidence="المفتاح الأساسي يعرف كل صف في الجدول بشكل فريد.",
+        pages=(1,),
+    )
+    drop_reasons: dict[str, int] = {}
+    written = deterministic_candidates(
+        [blueprint],
+        language="ar",
+        understanding=understanding,
+        drop_reasons=drop_reasons,
+    )
+    assert written == []
+    assert drop_reasons.get("deterministic_writer_english_only") == 1
 
 
 def test_quality_metrics_in_telemetry():
