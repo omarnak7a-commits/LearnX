@@ -1398,6 +1398,13 @@ _OPTION_TYPES = {"mcq", "true-false"}
 _MAX_TOPUP_ROUNDS = 3
 _PROVIDER_BATCH_SIZE = 8
 _PROVIDER_TOPUP_CALLS = 2
+#: Bounded provider rounds that plan *new* objectives instead of retrying the
+#: blueprints the provider already declined. Retrying an objective the writer
+#: cannot express reproduces the identical rejection, so once the original plan
+#: is unproductive the only way to reach the requested count -- without
+#: touching a single gate -- is to ask the provider about knowledge targets the
+#: quiz has not used yet. Bounded so a thin document still fails fast.
+_PROVIDER_REPLAN_CALLS = 2
 
 
 def _account_plan_skips(
@@ -1950,6 +1957,18 @@ def _quiz_telemetry(
         ),
         "provider_generation_calls": (funnel or {}).get("provider_generation_calls", 0),
         "provider_topup_calls": (funnel or {}).get("provider_topup_calls", 0),
+        # Provider recovery that planned *new* objectives rather than retrying
+        # the ones the writer already declined: how many such rounds ran, how
+        # many fresh objectives they offered, and what each round returned. A
+        # future shortfall can then be attributed to "the provider was never
+        # asked" versus "it was asked and could not answer".
+        "provider_replan_calls": (funnel or {}).get("provider_replan_calls", 0),
+        "provider_recovery_objectives_planned": (funnel or {}).get(
+            "provider_recovery_objectives_planned", 0
+        ),
+        "provider_recovery_rounds": list(
+            (funnel or {}).get("provider_recovery_rounds") or []
+        ),
         "provider_candidates_received": (funnel or {}).get(
             "provider_candidates_received", 0
         ),
@@ -2262,6 +2281,8 @@ def generate_quiz(
     candidates_by_type: Counter = Counter()
     funnel.setdefault("provider_generation_calls", 0)
     funnel.setdefault("provider_topup_calls", 0)
+    funnel.setdefault("provider_replan_calls", 0)
+    funnel.setdefault("provider_recovery_objectives_planned", 0)
     funnel.setdefault("provider_candidates_received", 0)
     funnel.setdefault("provider_candidates_accepted", 0)
     funnel.setdefault("quality_judge_attempts", 0)
@@ -2344,22 +2365,120 @@ def generate_quiz(
         )
 
     # Provider recovery happens BEFORE deterministic fallback whenever the
-    # writer is still reachable. Unfilled blueprints + rejection reasons only.
+    # writer is still reachable, in two bounded phases:
+    #
+    # 1. Retry the planned objectives the provider left unfilled, feeding back
+    #    the concrete rejection reasons (unchanged behaviour).
+    # 2. If the original plan is unproductive -- either every planned objective
+    #    is filled and the pool is still short, or the retries keep failing on
+    #    the same slots -- re-plan *new* objectives from knowledge targets the
+    #    quiz has not used and ask the provider about those instead.
+    #
+    # Phase 2 is what a 32-page document with 25 mapped concepts needs: before
+    # it, the only route to new material was the deterministic writer, so a
+    # provider that could not express two planned objectives capped the quiz at
+    # six even though nineteen concepts were never offered to it. Nothing here
+    # relaxes a gate: re-planned blueprints go through the identical
+    # normalization, grounding, quality-judge, scoring, dedupe and final
+    # validation path as the first batch.
+    provider_recovery_rounds: list[dict[str, Any]] = []
     if provider_available and len(_dedupe_scored(scored)) < count:
-        filled = {candidate.objective_key for candidate in scored}
-        unfilled = [
-            blueprint
-            for blueprint in context.blueprints
-            if blueprint.objective_key not in filled
-        ]
-        for topup_index in range(_PROVIDER_TOPUP_CALLS):
-            if len(_dedupe_scored(scored)) >= count or not unfilled:
+        # Objectives the provider has already been asked to write. Re-planning
+        # one of these would reproduce the rejection that made the quiz short.
+        attempted_objectives = {
+            blueprint.objective_key for blueprint in context.blueprints
+        }
+        replans_used = 0
+        for round_index in range(_PROVIDER_TOPUP_CALLS + _PROVIDER_REPLAN_CALLS):
+            if len(_dedupe_scored(scored)) >= count:
                 break
+            filled = {candidate.objective_key for candidate in scored}
+            unfilled = [
+                blueprint
+                for blueprint in context.blueprints
+                if blueprint.objective_key not in filled
+            ]
+            replanned = False
+            # Switch to new material once the retry budget for the existing
+            # plan is spent, or when there is nothing left to retry.
+            if not unfilled or round_index >= _PROVIDER_TOPUP_CALLS:
+                if replans_used >= _PROVIDER_REPLAN_CALLS:
+                    provider_recovery_rounds.append(
+                        {"round": round_index + 1, "stop_reason": "replan_budget_spent"}
+                    )
+                    break
+                replans_used += 1
+                # Plan over concepts the surviving pool does not cover first,
+                # then the rest of the study map -- the same breadth-first
+                # ordering the deterministic top-up uses.
+                covered_concepts = {
+                    blueprint_by_id[candidate.blueprint_id].concept_id
+                    for candidate in _dedupe_scored(scored)
+                    if candidate.blueprint_id in blueprint_by_id
+                }
+                uncovered = [
+                    target
+                    for target in context.knowledge_targets
+                    if target.concept_id not in covered_concepts
+                ]
+                seen_target_ids = {target.target_id for target in uncovered}
+                replan_targets = [
+                    *uncovered,
+                    *(
+                        target
+                        for target in context.knowledge_targets
+                        if target.target_id not in seen_target_ids
+                    ),
+                ]
+                planned = build_question_blueprints(
+                    replan_targets,
+                    count=count,
+                    question_types=question_types,
+                    difficulty=difficulty,
+                    # A different seed per round explores different valid
+                    # material rather than re-proposing identical slots.
+                    seed=seed + 6151 * replans_used,
+                    # No skill restriction and no writer veto: unlike the
+                    # deterministic writer, the provider can express every
+                    # cognitive skill and every requested question type.
+                    exclude_objectives=filled | attempted_objectives,
+                )
+                if not planned:
+                    provider_recovery_rounds.append(
+                        {
+                            "round": round_index + 1,
+                            "stop_reason": "no_uncovered_objectives_left",
+                        }
+                    )
+                    break
+                renumbered: list[QuestionBlueprint] = []
+                for index, blueprint in enumerate(planned, start=1):
+                    renamed = replace(
+                        blueprint, id=f"prov-recovery{replans_used}-bp-{index}"
+                    )
+                    blueprint_by_id[renamed.id] = renamed
+                    renumbered.append(renamed)
+                renumbered = replan_unsafe_mcq_blueprints(
+                    renumbered,
+                    selected_question_types=question_types,
+                    understanding=understanding,
+                )
+                for blueprint in renumbered:
+                    blueprint_by_id[blueprint.id] = blueprint
+                    attempted_objectives.add(blueprint.objective_key)
+                context.blueprints = [*context.blueprints, *renumbered]
+                funnel["provider_replan_calls"] += 1
+                funnel["provider_recovery_objectives_planned"] += len(renumbered)
+                funnel["plans_created"] += len(renumbered)
+                funnel["plans_attempted"] += len(renumbered)
+                unfilled = renumbered
+                replanned = True
+            batch = unfilled[:_PROVIDER_BATCH_SIZE]
             funnel["provider_topup_calls"] += 1
             provider_trace["writer_calls"] = provider_trace.get("writer_calls", 0) + 1
             recovery_prompt = build_recovery_prompt(
                 understanding=understanding,
-                blueprints=unfilled[:_PROVIDER_BATCH_SIZE],
+                blueprints=batch,
                 knowledge_targets=context.knowledge_targets,
                 rejection_notes=quality_feedback[-16:],
                 count=count - len(_dedupe_scored(scored)),
@@ -2379,9 +2498,17 @@ def generate_quiz(
                 provider_errors += 1
                 provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
                 funnel["candidate_generation_errors"] += 1
+                provider_recovery_rounds.append(
+                    {
+                        "round": round_index + 1,
+                        "replanned": replanned,
+                        "stop_reason": "provider_failed",
+                    }
+                )
                 break
             funnel["provider_candidates_returned"] += len(raw_candidates)
             funnel["provider_candidates_received"] += len(raw_candidates)
+            pool_before = len(_dedupe_scored(scored))
             scored, scores, batch_feedback = _ingest_provider_pool(
                 raw_candidates,
                 context=context,
@@ -2399,12 +2526,16 @@ def generate_quiz(
                 scores=scores,
             )
             quality_feedback.extend(batch_feedback)
-            filled = {candidate.objective_key for candidate in scored}
-            unfilled = [
-                blueprint
-                for blueprint in context.blueprints
-                if blueprint.objective_key not in filled
-            ]
+            provider_recovery_rounds.append(
+                {
+                    "round": round_index + 1,
+                    "replanned": replanned,
+                    "planned": len(batch),
+                    "returned": len(raw_candidates),
+                    "added": max(0, len(_dedupe_scored(scored)) - pool_before),
+                }
+            )
+    funnel["provider_recovery_rounds"] = provider_recovery_rounds
 
     used_deterministic = False
     if (not provider_available) or len(_dedupe_scored(scored)) < count:
