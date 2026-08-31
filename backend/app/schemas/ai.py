@@ -270,6 +270,9 @@ class AIQuizDiagnostics(BaseModel):
     provider_fallback_used: bool = False
     provider_generation_calls: int = 0
     provider_topup_calls: int = 0
+    provider_replan_calls: int = 0
+    provider_recovery_objectives_planned: int = 0
+    provider_recovery_rounds: list[dict[str, Any]] = Field(default_factory=list)
     provider_candidates_received: int = 0
     provider_candidates_accepted: int = 0
     quality_judge_attempts: int = 0

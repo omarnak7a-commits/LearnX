@@ -407,6 +407,11 @@ def _diagnostics_from_telemetry(
         provider_fallback_used=bool(telemetry.get("provider_fallback_used", False)),
         provider_generation_calls=telemetry.get("provider_generation_calls", 0),
         provider_topup_calls=telemetry.get("provider_topup_calls", 0),
+        provider_replan_calls=telemetry.get("provider_replan_calls", 0),
+        provider_recovery_objectives_planned=telemetry.get(
+            "provider_recovery_objectives_planned", 0
+        ),
+        provider_recovery_rounds=list(telemetry.get("provider_recovery_rounds") or []),
         provider_candidates_received=telemetry.get("provider_candidates_received", 0),
         provider_candidates_accepted=telemetry.get("provider_candidates_accepted", 0),
         quality_judge_attempts=telemetry.get("quality_judge_attempts", 0),
