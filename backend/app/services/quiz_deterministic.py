@@ -20,6 +20,7 @@ import re
 from dataclasses import replace
 from typing import Any
 
+from app.services.ai_language import detect_language
 from app.services.quiz_blueprints import QuestionBlueprint
 from app.services.quiz_scoring import content_tokens, normalize_question_text
 from app.services.quiz_understanding import DocumentUnderstanding
@@ -1756,6 +1757,21 @@ def replan_unsafe_mcq_blueprints(
     return replanned
 
 
+def _understanding_language(understanding: DocumentUnderstanding) -> str | None:
+    """Detect the language of the *source evidence* the study map carries.
+
+    The deterministic writer builds its prose around verbatim evidence spans,
+    so what decides whether it can write honestly is the language of that
+    evidence — not the language the caller asked the exam to be in.
+    """
+    parts: list[str] = [understanding.summary]
+    for concept in understanding.concepts[:30]:
+        parts.append(concept.name)
+        for item in concept.evidence[:2]:
+            parts.append(item.text)
+    return detect_language(" ".join(part for part in parts if part))
+
+
 def deterministic_candidates(
     blueprints: list[QuestionBlueprint],
     *,
@@ -1765,15 +1781,23 @@ def deterministic_candidates(
 ) -> list[dict[str, Any]]:
     """Write one candidate per blueprint using only the study map.
 
-    English-only by design: writing natural Arabic prose without a provider
-    would produce awkward questions, so an Arabic quiz reports the unavailable
-    state rather than shipping poor language.
+    The writer produces English prose only: writing natural Arabic prose
+    without a provider would produce awkward questions. What gates it is the
+    language of the *source evidence*, not of the request. An English document
+    can always be written from — its evidence quotes, answers, and options are
+    English regardless of the exam language the caller preferred — so a
+    non-English request on an English source still gets its recovery questions
+    rather than a short quiz. (Production bug: an Arabic-preference profile
+    silently disabled every deterministic recovery layer on English PDFs, so a
+    provider that stalled at 6 of 8 became an unrecoverable 422.) Only when
+    the source itself is not English does the writer decline, and the quiz
+    reports the truthful unavailable state rather than shipping poor language.
 
     ``drop_reasons`` is diagnostics-only instrumentation: when provided, every
     blueprint this writer declines is counted under the reason it declined.
     It never changes which candidates are written.
     """
-    if language != "en":
+    if language != "en" and _understanding_language(understanding) != "en":
         if drop_reasons is not None:
             drop_reasons["deterministic_writer_english_only"] = len(blueprints)
         return []

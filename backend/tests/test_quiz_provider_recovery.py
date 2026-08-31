@@ -208,3 +208,123 @@ def test_exact_counts_when_supported(count: int) -> None:
         **_kwargs(count=count),
     )
     assert len(result.questions) == count
+
+
+# --------------------------------------------------------------------------- #
+# Production regression: exam 075eb4af…, "could only verify 6 of 8".
+#
+# The quiz request carries no explicit language, so the backend resolves it
+# from the user's profile preference (Arabic in production). The deterministic
+# writer used to decline every blueprint whenever the *request* language was
+# not English — even on an English PDF — so the deterministic supplement and
+# every top-up round silently wrote nothing. A provider that stalled at 6
+# distinct surviving questions therefore became an unrecoverable 422, wrongly
+# blamed on the document's 2 image-only pages. The writer now gates on the
+# *source* language, so an English document recovers regardless of the
+# requested exam language, through the identical grounding and quality gates.
+# --------------------------------------------------------------------------- #
+
+
+class StuckWriter:
+    """Provider whose distinct output tops out at ``budget`` candidates.
+
+    Understanding and judging work; the writer returns at most ``budget``
+    distinct candidates in total, and every later call (including the
+    recovery/top-up calls) repeats the same ones — the stuck-provider shape
+    that produced the production shortfall.
+    """
+
+    def __init__(self, budget: int, title: str = "SQL18") -> None:
+        self.budget = budget
+        self.inner = FakeQuizService(title=title)
+        self.sent: list = []
+
+    def complete_structured(self, **kwargs):
+        model = kwargs["response_model"]
+        if model is _RawUnderstanding or model is _RawQualityJudgement:
+            return self.inner.complete_structured(**kwargs)
+        full = self.inner.complete_structured(**kwargs)
+        if len(self.sent) >= self.budget:
+            kept = list(self.sent)
+        else:
+            kept = list(full.value.questions)[: self.budget - len(self.sent)]
+            self.sent.extend(kept)
+        return AIStructuredCompletion(
+            value=_RawQuizPool(questions=kept),
+            provider="gemini",
+            model="gemini-test",
+            fallback_used=False,
+        )
+
+
+def _sql18_source():
+    from app.services.ai_documents import _extract_pdf_uncached, clear_extraction_cache
+
+    clear_extraction_cache()
+    return _extract_pdf_uncached(
+        FIXTURE.read_bytes(),
+        file_id="sql18",
+        title="SQL18",
+        max_characters=100_000,
+        allowed_pages=None,
+    )
+
+
+def test_arabic_request_stuck_provider_recovers_to_eight() -> None:
+    """The exact production condition: 8 requested, provider nets 6, lang=ar."""
+    result = generate_quiz(StuckWriter(6), _sql18_source(), **_kwargs(language="ar"))
+    assert len(result.questions) == 8
+    # The missing questions were filled by the deterministic writer, not by
+    # weakened gates: it actually wrote candidates this time.
+    assert result.telemetry["deterministic_candidates_returned"] >= 1
+    assert (
+        result.telemetry["deterministic_drop_reasons"].get(
+            "deterministic_writer_english_only", 0
+        )
+        == 0
+    )
+    prompts = [q.prompt.strip().casefold() for q in result.questions]
+    assert len(set(prompts)) == 8
+
+
+def test_arabic_request_duplicate_only_topups_recover() -> None:
+    """Provider recovery calls that only repeat themselves must not end the quiz."""
+    service = StuckWriter(4)
+    result = generate_quiz(service, _sql18_source(), **_kwargs(language="ar"))
+    assert len(result.questions) == 8
+
+
+def test_arabic_request_provider_completely_down_uses_deterministic() -> None:
+    result = generate_quiz(FailingWriter(), _sql18_source(), **_kwargs(language="ar"))
+    assert len(result.questions) == 8
+    assert result.provider == "deterministic"
+    assert result.fallback_used is True
+
+
+def test_shortfall_message_names_language_limit_not_image_pages() -> None:
+    """When recovery was language-limited, do not blame the PDF's image pages."""
+    from app.services.quiz_pipeline import _insufficient_material_message
+
+    telemetry = {
+        "image_only_pages": 2,
+        "pages_dropped_in_cleaning": 0,
+        "provider_errors": 0,
+        "deterministic_drop_reasons": {"deterministic_writer_english_only": 18},
+    }
+    message = _insufficient_material_message(8, 6, telemetry)
+    assert "English-language sources" in message
+    assert "images or scans" not in message
+
+
+def test_shortfall_message_still_names_image_pages_when_writer_ran() -> None:
+    """The image-only explanation survives when the writer was not the limiter."""
+    from app.services.quiz_pipeline import _insufficient_material_message
+
+    telemetry = {
+        "image_only_pages": 2,
+        "pages_dropped_in_cleaning": 0,
+        "provider_errors": 0,
+        "deterministic_drop_reasons": {},
+    }
+    message = _insufficient_material_message(8, 6, telemetry)
+    assert "images or scans" in message
