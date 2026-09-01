@@ -540,7 +540,7 @@ def test_fill_blank_questions_carry_a_real_blank() -> None:
         result = build(load_pdf(name), count=8)
         for question in result.questions:
             if question.type == "fill-blank":
-                assert is_valid_fill_blank(question.prompt)
+                assert is_valid_fill_blank(question.prompt, question.correct_answer)
 
 
 # --------------------------------------------------------------------------- #

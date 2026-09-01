@@ -59,7 +59,7 @@ from app.services.quiz_deterministic import (
     SUPPORTED_SKILLS as DETERMINISTIC_SKILLS,
     deterministic_candidates,
     replan_unsafe_mcq_blueprints,
-    target_writable_types,
+    writer_type_veto,
     writable_question_types,
 )
 from app.services.quiz_grounding import (
@@ -1620,6 +1620,10 @@ def _top_up_candidates(
         # actually makes the round return *new* material.
         wanted = max(count, len(missing_concepts) + 4)
         round_writable_types = writable_question_types(question_types, understanding)
+        # Same writer-backed veto as the deterministic supplement: a top-up
+        # round must not spend its bounded budget re-attempting slots the
+        # writer cannot construct.
+        writer_veto = writer_type_veto(understanding)
         planned = build_question_blueprints(
             targets,
             count=wanted,
@@ -1629,7 +1633,7 @@ def _top_up_candidates(
             # instead of re-planning the identical slots we already have.
             seed=seed + 7919 * (round_index + 1),
             allowed_skills=DETERMINISTIC_SKILLS,
-            type_filter=target_writable_types,
+            type_filter=writer_veto,
             # Never re-plan an objective the pool already holds. Without this
             # the top-up spent every round rewriting questions it already had,
             # all of which were then dropped as duplicates -- so the quiz
@@ -1656,7 +1660,7 @@ def _top_up_candidates(
                 targets,
                 question_types=round_writable_types,
                 allowed_skills=DETERMINISTIC_SKILLS,
-                type_filter=target_writable_types,
+                type_filter=writer_veto,
                 skip_reasons=funnel["plans_skipped_reason"],
                 excluded_objectives=excluded,
             )
@@ -2563,15 +2567,17 @@ def generate_quiz(
         ]
         supplement_targets = uncovered_targets or context.knowledge_targets
         writable_types = writable_question_types(question_types, understanding)
-        # Diagnostics-only: account for every supplement target the
-        # deterministic re-planning below cannot use, with a reason, BEFORE
-        # planning runs. Pure recomputation of the planner's own predicates;
-        # it never feeds anything back into planning.
+        # The type veto runs the writer's own constructibility check, so the
+        # planner never commits a slot the writer will drop mid-run (the
+        # reported production shortfall: 14 attempts, 8 dropped, 6 of 8
+        # returned). Diagnostics-only accounting below recomputes the same
+        # predicate so every skipped target carries a reason.
+        writer_veto = writer_type_veto(understanding)
         writable_targets = _account_plan_skips(
             supplement_targets,
             question_types=writable_types,
             allowed_skills=DETERMINISTIC_SKILLS,
-            type_filter=target_writable_types,
+            type_filter=writer_veto,
             skip_reasons=funnel["plans_skipped_reason"],
         )
         funnel["plans_skipped"] += len(supplement_targets) - writable_targets
@@ -2585,7 +2591,7 @@ def generate_quiz(
             allowed_skills=DETERMINISTIC_SKILLS,
             # Let the writer veto types it cannot deliver for a given target,
             # so no planned slot is silently lost.
-            type_filter=target_writable_types,
+            type_filter=writer_veto,
         )
         for blueprint in deterministic_blueprints:
             blueprint_by_id.setdefault(blueprint.id, blueprint)

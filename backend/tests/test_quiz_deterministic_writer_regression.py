@@ -19,7 +19,12 @@ from app.services.quiz_deterministic import (
     deterministic_candidates,
     replan_unsafe_mcq_blueprints,
 )
-from app.services.quiz_pipeline import _RawQuizPool, build_quiz_context, generate_quiz
+from app.services.quiz_pipeline import (
+    QuizMaterialError,
+    _RawQuizPool,
+    build_quiz_context,
+    generate_quiz,
+)
 from app.services.quiz_understanding import DocumentUnderstanding, deterministic_understanding
 
 import app.api.ai as ai_api
@@ -454,3 +459,203 @@ def test_sql18_shaped_fixture_provider_failures_reaches_8_over_http() -> None:
     assert diagnostics["grounding_rejected"] == 0
     assert diagnostics["provider_calls"]["understanding_failed"] == 1
     assert diagnostics["provider_calls"]["writer_failed"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Production incident 075eb4af…: deterministic fallback returned 6 of 8.
+#
+# The provider failed completely (provider_errors=2, zero candidates) and the
+# deterministic writer planned 8 slots for this document but could not fill 2
+# of them: the misconception true/false for each "X is responsible for Y"
+# concept framed a base statement that was verbatim-equal to its evidence, and
+# `_true_statement` refused it — so the plan carried two slots the writer had
+# to drop, no fresh objective remained for the top-up, and the 8-question
+# request came back as a truthful-but-wrong 422 (6 available).
+#
+# Before the fix this exact document returned HTTP 422 with available=6:
+#   attempted=10, returned=6, dropped=4 (all false_statement_not_constructible)
+#   plans_created=8, plans_skipped=20 (unsupported_skill:application=6,
+#   duplicate_objective=14), provider_errors=2 — the production funnel shape.
+# After the fix the same document returns 8/8 with dropped=0.
+# --------------------------------------------------------------------------- #
+RECOVERY_FIXTURE = (
+    "The query optimizer is responsible for choosing the cheapest execution plan.\n"
+    "The buffer pool is responsible for caching frequently accessed pages."
+)
+
+
+def test_provider_down_deterministic_recovers_to_full_quiz() -> None:
+    """The production-shaped document now yields 8/8 with zero writer drops."""
+    result = generate_quiz(
+        NoProvider(),
+        source_from_text(RECOVERY_FIXTURE, title="SQL18 recovery fixture"),
+        count=8,
+        question_types=list(ALL_TYPES),
+        difficulty="medium",
+        kind="exam",
+        language="en",
+        seed=1,
+        previous_questions=[],
+        system_prompt="Use only the supplied source.",
+    )
+
+    assert len(result.questions) == 8
+    # The two misconception true/false questions are now written (2 true-false
+    # in the final set); before the fix they were the false_statement drops.
+    assert [q.type for q in result.questions].count("true-false") == 2
+
+    telemetry = result.telemetry
+    assert telemetry["deterministic_candidates_dropped"] == 0
+    assert telemetry["deterministic_candidates_attempted"] == (
+        telemetry["deterministic_candidates_returned"]
+        + telemetry["deterministic_candidates_dropped"]
+    )
+    assert telemetry["deterministic_candidates_returned"] >= 8
+    assert telemetry["deterministic_drop_reasons"] == {}
+    assert telemetry["provider_errors"] == 2
+
+
+def test_sql18_shape_provider_down_deterministic_uses_every_plan() -> None:
+    """The 32-page SQL18-shaped fixture keeps 8/8 and wastes no planned slot."""
+    result = generate_quiz(
+        NoProvider(),
+        _sql18_source(),
+        count=8,
+        question_types=list(ALL_TYPES),
+        difficulty="medium",
+        kind="exam",
+        language="en",
+        seed=1,
+        previous_questions=[],
+        system_prompt="Use only the supplied source.",
+    )
+
+    assert len(result.questions) == 8
+    telemetry = result.telemetry
+    # Before the fix this fixture attempted 15 blueprints and dropped 4
+    # (false_statement_not_constructible). The writer-backed veto plans only
+    # constructible slots, so every attempt now returns a candidate.
+    assert telemetry["deterministic_candidates_dropped"] == 0
+    assert telemetry["deterministic_candidates_attempted"] == (
+        telemetry["deterministic_candidates_returned"]
+        + telemetry["deterministic_candidates_dropped"]
+    )
+    assert telemetry["deterministic_candidates_returned"] >= 8
+    assert telemetry["plans_created"] == 16
+
+
+def test_misconception_swaps_verbatim_frame_into_a_different_false_claim() -> None:
+    """The recovery is a swap, never a reprinted-true statement.
+
+    ``_true_statement`` still refuses the verbatim base for a *true* question
+    (the answer would be read off the evidence); only the misconception
+    writer may request it, because it immediately replaces the concept with a
+    different taught concept, producing a genuinely different, false claim
+    that still passes the meaningful-true/false gate downstream.
+    """
+    from app.services.quiz_deterministic import (
+        _blueprint_for_target,
+        _false_statement,
+        _true_statement,
+    )
+
+    understanding = _understanding(RECOVERY_FIXTURE)
+    from app.services.quiz_knowledge_targets import build_knowledge_targets
+
+    targets = build_knowledge_targets(understanding)
+    misconception = next(
+        target
+        for target in targets
+        if target.cognitive_skill == "misconception" and target.concept_id == "buffer-pool"
+    )
+    blueprint = _blueprint_for_target(misconception, "true-false")
+
+    # The true path must still refuse a statement that reprints the evidence.
+    assert _true_statement(blueprint) is None
+    assert _true_statement(blueprint, allow_verbatim=True) == (
+        "The buffer pool is responsible for caching frequently accessed pages."
+    )
+
+    statement, basis, decoy = _false_statement(blueprint, understanding)
+    assert statement == (
+        "The query optimizer is responsible for caching frequently accessed pages."
+    )
+    assert basis == "The buffer pool is responsible for caching frequently accessed pages."
+    assert decoy == "query optimizer"
+    assert statement != "The buffer pool is responsible for caching frequently accessed pages."
+
+
+def test_writer_veto_excludes_slots_the_writer_cannot_construct() -> None:
+    """The planner veto removes contentless/2-word-clause targets up front.
+
+    These targets pass the old syntactic veto (so the planner committed slots
+    for them) but fail the writer's own construction rules; the new veto runs
+    the writer's decision procedure, so no planned slot is silently lost and
+    the quiz is exactly as long as the document genuinely supports.
+    """
+    # One solid concept plus one contentless claim ("exists in two forms")
+    # and one two-word purpose clause ("responsible for speed").
+    text = (
+        "The query optimizer is responsible for choosing the cheapest execution plan.\n"
+        "The database index exists in two forms.\n"
+        "The lock manager is responsible for speed."
+    )
+    source = source_from_text(text, title="mixed support")
+    try:
+        result = generate_quiz(
+            NoProvider(),
+            source,
+            count=8,
+            question_types=list(ALL_TYPES),
+            difficulty="medium",
+            kind="exam",
+            language="en",
+            seed=1,
+            previous_questions=[],
+            system_prompt="Use only the supplied source.",
+        )
+        telemetry = result.telemetry
+    except QuizMaterialError as exc:
+        telemetry = exc.telemetry
+        assert exc.available < 8  # the document genuinely supports fewer
+
+    # Every planned slot produced a candidate: the unconstructible targets
+    # were vetoed at planning time instead of being dropped mid-run.
+    assert telemetry["deterministic_candidates_dropped"] == 0
+    assert telemetry["deterministic_candidates_attempted"] == (
+        telemetry["deterministic_candidates_returned"]
+        + telemetry["deterministic_candidates_dropped"]
+    )
+    # The veto is observable in the plan accounting: the contentless and
+    # two-word-clause targets are excluded as unconstructible.
+    assert (
+        telemetry["plans_skipped_reason"].get("all_types_vetoed_by_writer", 0) >= 1
+    )
+
+
+def test_genuinely_thin_document_still_422s_after_recovery() -> None:
+    """A document that truly supports fewer than 8 questions still fails honestly."""
+    thin = (
+        "A primary key uniquely identifies each row in a table.\n"
+        "A foreign key references the primary key of another table.\n"
+        "Normalization organizes columns to reduce duplicate data."
+    )
+    source = source_from_text(thin, title="Thin")
+    try:
+        generate_quiz(
+            NoProvider(),
+            source,
+            count=8,
+            question_types=list(ALL_TYPES),
+            difficulty="medium",
+            kind="exam",
+            language="en",
+            seed=1,
+            previous_questions=[],
+            system_prompt="Use only the supplied source.",
+        )
+        raise AssertionError("expected a QuizMaterialError for a 3-sentence document")
+    except QuizMaterialError as exc:
+        assert exc.available < 8
+        assert exc.available >= 1
+        assert exc.telemetry["deterministic_candidates_dropped"] == 0
