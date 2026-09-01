@@ -89,6 +89,44 @@ def _failure_from(name: str, exc: Exception) -> ProviderFailure:
     )
 
 
+def redacted_failures(exc: BaseException) -> list[dict[str, Any]]:
+    """Serialize an AI-service failure into safe, diagnostics-only records.
+
+    Each record carries the provider name, the sanitized error category, the
+    HTTP status (when one was returned), the configured model name, and the
+    provider's own short error code. It never contains credentials, prompts,
+    request bodies, or response content.
+
+    When the exception does not carry per-provider ``failures`` (e.g. a
+    content-blocked error that is re-raised directly), a single record with
+    the exception class name as the category is returned instead, so every
+    swallowed failure is still attributable.
+    """
+    failures = getattr(exc, "failures", None)
+    if failures:
+        return [
+            {
+                "provider": failure.provider or "",
+                "category": failure.category,
+                "status_code": failure.status_code,
+                "model": failure.model or "",
+                "detail": failure.detail or "",
+                "retry_after": failure.retry_after,
+            }
+            for failure in failures
+        ]
+    return [
+        {
+            "provider": "",
+            "category": type(exc).__name__,
+            "status_code": None,
+            "model": "",
+            "detail": "",
+            "retry_after": None,
+        }
+    ]
+
+
 class AIServiceError(RuntimeError):
     pass
 

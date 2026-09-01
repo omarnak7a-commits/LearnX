@@ -203,6 +203,10 @@ class AIQuizDiagnostics(BaseModel):
     accepted: int
     rejected: int
     provider_errors: int = 0
+    #: Redacted per-provider failure records (provider, category, HTTP status,
+    #: model name, provider error code). Diagnostics only -- never credentials,
+    #: prompts, request bodies, or response content.
+    provider_failures: list[dict[str, Any]] = Field(default_factory=list)
     rejections: dict[str, int] = Field(default_factory=dict)
     #: Concepts the provider actually proposed, before verification. When this
     #: is high and ``concepts`` is low, the shortfall is ours, not the PDF's.
