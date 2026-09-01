@@ -1,2 +1,14 @@
+# This is a single-package repository (no sub-workspaces).
+# The explicit `packages` entry is required because Vercel runs pnpm 9.x
+# (selected from the lockfile version + project creation date), and pnpm 9
+# rejects a pnpm-workspace.yaml that has no `packages` field
+# ("ERROR: packages field missing or empty"). pnpm 11 tolerates omitting it,
+# so this keeps both the local toolchain (pnpm 11 via packageManager) and
+# the Vercel build (pnpm 9.x) working.
+packages:
+  - '.'
+
+# pnpm 11 build-script approval (pnpm 10: `onlyBuiltDependencies`).
+# esbuild's postinstall is required for the Vite production build.
 allowBuilds:
   esbuild: true
