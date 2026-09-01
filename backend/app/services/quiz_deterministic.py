@@ -767,13 +767,24 @@ def _is_unassertable(clause: str) -> bool:
     return False
 
 
-def _true_statement(blueprint: QuestionBlueprint) -> str | None:
+def _true_statement(
+    blueprint: QuestionBlueprint,
+    *,
+    allow_verbatim: bool = False,
+) -> str | None:
     """A true statement asserting the *relation* the document states.
 
     Deliberately not a truncated copy of the source sentence: shortening a
     definition and asking "true or false?" tests nothing but reading. A
     relational assertion instead requires the learner to know that this
     concept really does have this purpose/effect/mechanism.
+
+    ``allow_verbatim`` is for the misconception writer only. A statement that
+    is verbatim-equal to its evidence is refused for a *true* question, where
+    the answer could then be read off the evidence. The misconception writer
+    immediately swaps a different taught concept into that same frame, which
+    turns the verbatim base into a genuinely different, false claim, so the
+    swap path is allowed to request the verbatim base.
     """
     if not blueprint.facet_kind or not blueprint.answer_clause:
         return None
@@ -817,7 +828,13 @@ def _true_statement(blueprint: QuestionBlueprint) -> str | None:
     )
     statement = statement[0].upper() + statement[1:]
     if normalize_question_text(statement) == normalize_question_text(blueprint.evidence):
-        return None
+        # A statement that merely reprints the evidence teaches nothing as a
+        # *true* question: the answer is read off the source. But the
+        # misconception writer swaps a different concept into the frame,
+        # producing a different, false claim from the same evidence — so the
+        # swap path may request the verbatim base (allow_verbatim=True).
+        if not allow_verbatim:
+            return None
     return statement.rstrip(".") + "."
 
 
@@ -864,7 +881,7 @@ def _false_statement(
     Returns ``(statement, basis_evidence, decoy_name)``. The decoy is returned
     so the explanation can name who the claim was wrongly credited to.
     """
-    base = _true_statement(blueprint)
+    base = _true_statement(blueprint, allow_verbatim=True)
     if not base:
         return None
     concept = understanding.concept(blueprint.concept_id)
@@ -1691,6 +1708,130 @@ def writable_question_types(
     return allowed
 
 
+def _blueprint_for_target(target: Any, question_type: str) -> QuestionBlueprint:
+    """The blueprint the planner would build for ``target`` at ``question_type``.
+
+    Accepts both a knowledge target (the planner's unit of work) and an
+    already-built blueprint (the re-planning path), so the writer's
+    constructibility check below uses exactly the shape the writer will be
+    handed.
+    """
+    if isinstance(target, QuestionBlueprint):
+        if target.question_type == question_type:
+            return target
+        return replace(target, question_type=question_type)
+    return QuestionBlueprint(
+        id=f"veto-{target.target_id or 'target'}",
+        concept_id=target.concept_id,
+        concept=target.concept_name,
+        knowledge_target_id=target.target_id,
+        knowledge_target=target.statement,
+        knowledge_type=target.knowledge_type,
+        cognitive_skill=target.cognitive_skill,
+        question_type=question_type,
+        difficulty=getattr(target, "difficulty", "medium"),
+        importance=target.importance,
+        evidence=target.evidence,
+        pages=target.pages,
+        topic=getattr(target, "topic", ""),
+        supporting_ids=getattr(target, "supporting_ids", ()),
+        facet_kind=getattr(target, "facet_kind", ""),
+        answer_clause=getattr(target, "answer_clause", ""),
+        importance_reason=getattr(target, "importance_reason", ""),
+    )
+
+
+def writer_writable_types(
+    target: Any,
+    allowed_types: list[str],
+    *,
+    understanding: DocumentUnderstanding,
+) -> list[str]:
+    """Which of ``allowed_types`` the deterministic writer can *actually* build.
+
+    ``target_writable_types`` is the cheap syntactic veto the planner used
+    before.  It can still approve a slot whose evidence resists the writer's
+    construction rules -- a contentless claim, a facet clause too short to
+    frame, a misconception whose base statement collides with its evidence --
+    and the writer then drops that slot mid-run.  The drop is harmless while
+    the pool has slack, but fatal on a thin document: the dropped objective is
+    already excluded from later planning, so the quiz comes back short even
+    though other grounded targets were never planned (the reported production
+    shortfall: 14 attempts, 8 dropped, 6 of 8 returned).
+
+    This veto runs the writer's own decision procedure for every candidate
+    type, so the planner only commits slots the writer will actually produce.
+    It changes nothing about what the writer writes and it relaxes no gate:
+    every approved blueprint still passes the identical grounding, quality
+    and validation checks downstream.
+
+    Multiple-choice is handled differently from the other types: an MCQ whose
+    distractors do not exist is *not* a lost slot, because
+    :func:`replan_unsafe_mcq_blueprints` converts it to a safe selected type
+    (short-answer first) before the writer runs.  Vetoing the MCQ here would
+    make the planner fall back to fill-blank for recognition targets, which
+    then collides with the factual-recall fill-blank for the same concept in
+    the near-duplicate gate and quietly halves what a thin document can
+    deliver.  So an MCQ that passes the syntactic veto stays in the options --
+    but only while the target can actually deliver some type: a target whose
+    every other type is unconstructible AND whose MCQ also fails the writer is
+    removed entirely, so planning never commits a slot nothing can fill.
+    """
+    syntactic = target_writable_types(target, list(allowed_types))
+    if not syntactic:
+        return []
+    pool = _claim_pool(understanding)
+    constructible: list[str] = []
+    mcq_approved = False
+    for question_type in syntactic:
+        if question_type == "mcq":
+            # The re-planner owns the too-few-distractors decision; an MCQ
+            # that reaches the writer is either written or safely re-planned.
+            mcq_approved = True
+            constructible.append(question_type)
+            continue
+        blueprint = _blueprint_for_target(target, question_type)
+        if _candidate_for(
+            blueprint, understanding=understanding, pool=pool
+        ) is not None:
+            constructible.append(question_type)
+    if mcq_approved and len(constructible) == 1:
+        # The MCQ is the only approved type; it must actually be writable or
+        # the whole target is unconstructible and should not be planned at
+        # all (this is the production waste: a slot nobody can fill).
+        mcq_blueprint = _blueprint_for_target(target, "mcq")
+        if _candidate_for(mcq_blueprint, understanding=understanding, pool=pool) is None:
+            return []
+    return constructible
+
+
+def writer_type_veto(understanding: DocumentUnderstanding):
+    """A planner ``type_filter`` backed by :func:`writer_writable_types`.
+
+    The planner re-evaluates candidate targets many times per pass, so the
+    constructibility result is memoised per (target, types) for the lifetime
+    of one planning operation.  The understanding is fixed for a quiz run, so
+    a memo keyed on target identity is stable.
+    """
+
+    memo: dict[tuple[str, tuple[str, ...]], list[str]] = {}
+
+    def veto(target: Any, allowed_types: list[str]) -> list[str]:
+        identity = (
+            getattr(target, "target_id", None)
+            or getattr(target, "id", None)
+            or repr(target)
+        )
+        key = (identity, tuple(allowed_types))
+        if key not in memo:
+            memo[key] = writer_writable_types(
+                target, list(allowed_types), understanding=understanding
+            )
+        return list(memo[key])
+
+    return veto
+
+
 def replan_unsafe_mcq_blueprints(
     blueprints: list[QuestionBlueprint],
     *,
@@ -1740,14 +1881,9 @@ def replan_unsafe_mcq_blueprints(
                 id=f"{blueprint.id}-{question_type}",
                 question_type=question_type,
             )
-            if question_type not in target_writable_types(replacement, [question_type]):
-                continue
-            if _candidate_for(
-                replacement,
-                understanding=understanding,
-                pool=pool,
-                reason_sink=[],
-            ) is not None:
+            if question_type in writer_writable_types(
+                replacement, [question_type], understanding=understanding
+            ):
                 replanned.append(replacement)
                 break
         else:
