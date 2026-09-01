@@ -38,7 +38,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import get_settings
 from app.schemas.ai import AIQuizQuestion
 from app.services.ai_documents import AIDocumentSource
-from app.services.ai_service import AIServiceError, AIUnavailableError
+from app.services.ai_service import (
+    AIServiceError,
+    AIUnavailableError,
+    redacted_failures,
+)
 from app.services.quiz_blueprints import (
     QuestionBlueprint,
     blueprint_block,
@@ -105,6 +109,20 @@ from app.services.quiz_understanding import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _record_provider_failures(trace: dict[str, Any] | None, exc: BaseException) -> None:
+    """Append sanitized per-provider failure records to ``trace``.
+
+    Diagnostics-only instrumentation: provider name, error category, HTTP
+    status, model name and the provider's own short error code. Never
+    credentials, prompts, request bodies, or response content.
+    """
+    if trace is None:
+        return
+    trace.setdefault("provider_failures", [])
+    trace["provider_failures"].extend(redacted_failures(exc))
+
 
 _DEFAULT_THRESHOLD = 0.68
 _MIN_GROUNDING = 0.72
@@ -444,9 +462,10 @@ def build_document_understanding(
             temperature=0.1,
             max_tokens=7000,
         )
-    except AIServiceError:
+    except AIServiceError as exc:
         if trace is not None:
             trace["understanding_failed"] = 1
+            _record_provider_failures(trace, exc)
         return deterministic_understanding(context.units, title=source.title), None
 
     if trace is not None:
@@ -1873,6 +1892,9 @@ def _quiz_telemetry(
         ),
         "relaxed_gates": list(relaxed_gates),
         "provider_errors": provider_errors,
+        # Redacted per-provider failure records from both provider stages
+        # (understanding and writer). Diagnostics only; never credentials.
+        "provider_failures": list((provider_trace or {}).get("provider_failures") or []),
         "rejections_by_stage": dict(
             Counter(note.stage for note in real_rejections)
         ),
@@ -2334,11 +2356,12 @@ def generate_quiz(
             )
             if not raw_candidates:
                 provider_trace["writer_empty"] = provider_trace.get("writer_empty", 0) + 1
-        except AIServiceError:
+        except AIServiceError as exc:
             raw_candidates = []
             provider_available = False
             provider_errors += 1
             provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
+            _record_provider_failures(provider_trace, exc)
             funnel["candidate_generation_errors"] += 1
             funnel["candidate_generation_empty"] += 1
             break
@@ -2497,10 +2520,11 @@ def generate_quiz(
                 )
                 raw_candidates = list(completion.value.questions)
                 provider_trace["writer_ok"] = provider_trace.get("writer_ok", 0) + 1
-            except AIServiceError:
+            except AIServiceError as exc:
                 provider_available = False
                 provider_errors += 1
                 provider_trace["writer_failed"] = provider_trace.get("writer_failed", 0) + 1
+                _record_provider_failures(provider_trace, exc)
                 funnel["candidate_generation_errors"] += 1
                 provider_recovery_rounds.append(
                     {

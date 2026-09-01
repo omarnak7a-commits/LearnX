@@ -341,6 +341,7 @@ def _diagnostics_from_telemetry(
         accepted=accepted,
         rejected=telemetry.get("questions_rejected", 0),
         provider_errors=telemetry.get("provider_errors", 0),
+        provider_failures=list(telemetry.get("provider_failures") or []),
         rejections={key: value for key, value in rejections.items() if value},
         page_quality=list(telemetry.get("page_quality") or []),
         concepts_proposed_by_provider=telemetry.get(

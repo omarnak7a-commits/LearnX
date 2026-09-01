@@ -146,6 +146,17 @@ export interface AIQuizDiagnostics {
   ambiguity_rejected?: number
   provider_model_used?: string
   provider_fallback_used?: boolean
+  /** Redacted per-provider failure records: provider, category, HTTP status,
+   *  model name, and the provider's own error code. Never credentials,
+   *  prompts, request bodies, or response content. */
+  provider_failures?: Array<{
+    provider?: string
+    category?: string
+    status_code?: number | null
+    model?: string
+    detail?: string
+    retry_after?: number | null
+  }>
 }
 
 export interface AIQuizResponse extends AIProviderMetadata {
