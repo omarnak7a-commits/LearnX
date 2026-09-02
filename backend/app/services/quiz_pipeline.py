@@ -194,10 +194,19 @@ _TRUE_WORDS = {"true", "t", "yes", "correct", "right", "صح", "صحيح", "نع
 #: are unreadable as "the answer" even though every token is grounded.
 _CODE_FRAGMENT_ANSWER = re.compile(r"^\s*[><;()\[\]=*/+\-]|;\s")
 
+#: An answer that opens by borrowing its subject from the surrounding
+#: sentence ("another: whenever two rows agree …") is an anaphor fragment —
+#: unreadable as a standalone "correct answer" even though grounded.
+_ANAPHOR_LED_ANSWER = re.compile(
+    r"^\s*(?:another|others|one\s+another|each\s+other)\b", re.IGNORECASE
+)
+
 
 def _is_code_fragment_answer(answer: str) -> bool:
     """True when a non-TF answer is raw code or two fused statements."""
-    return bool(_CODE_FRAGMENT_ANSWER.search(answer))
+    return bool(
+        _CODE_FRAGMENT_ANSWER.search(answer) or _ANAPHOR_LED_ANSWER.match(answer)
+    )
 _FALSE_WORDS = {"false", "f", "no", "incorrect", "wrong", "خطا", "خطأ", "لا"}
 _GENERIC_BLANK_ANSWERS = {
     "thing",

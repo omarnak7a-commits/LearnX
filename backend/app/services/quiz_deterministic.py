@@ -463,6 +463,21 @@ def _claim_pool(understanding: DocumentUnderstanding) -> list[tuple[str, str, st
     return pool
 
 
+#: Operator/paren-led or statement-fusing text is slide code, and a clause
+#: opening with an anaphor borrows its subject from elsewhere. Mirrors the
+#: pipeline's non-TF answer gate (quiz_pipeline._is_code_fragment_answer);
+#: duplicated here because quiz_pipeline imports this module.
+_UNREADABLE_PROSE = re.compile(
+    r"^\s*[><;()\[\]=*/+\-]|;\s|^\s*(?:another|others|one\s+another|each\s+other)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_unreadable_prose(text: str) -> bool:
+    """True when a claim is raw code or an anaphor fragment."""
+    return bool(_UNREADABLE_PROSE.search(text))
+
+
 def _distractors(
     blueprint: QuestionBlueprint,
     correct: str,
@@ -492,6 +507,12 @@ def _distractors(
     seen = {correct_key}
     kept_tokens: list[set[str]] = [content_tokens(correct)]
     for _, claim in candidates:
+        # A distractor must be readable prose on its own. Fragments that
+        # borrow a subject ("another: whenever two rows agree …") or raw
+        # slide code ("> (SELECT …) emp)…") are rejected on grammar rather
+        # than on knowledge, so they teach nothing as wrong answers.
+        if _is_unreadable_prose(claim):
+            continue
         trimmed = _shorten(claim, max(6, min(_MAX_CLAIM_WORDS, correct_length + 5)))
         key = normalize_question_text(trimmed)
         if not key or key in seen or len(trimmed.split()) < _MIN_CLAIM_WORDS:
@@ -541,6 +562,38 @@ def _effect_clause(evidence: str) -> str:
     # the smooth ER lacks ribosomes" states one thing about this concept and
     # another about a different one. Carrying the second half into the answer
     # makes the answer partly about something the question never asked.
+    contrast = _CONTRAST_TAIL.search(tail)
+    if contrast:
+        head = tail[: contrast.start()].strip(" ,;:.-—")
+        if head:
+            tail = head
+    if len(tail.split()) < _MIN_CLAIM_WORDS:
+        return tail if tail else ""
+    return _shorten(tail)
+
+
+#: Markers that introduce the *cause* half of a causal statement: what makes
+#: the concept happen or hold, not what it does.
+_CAUSE_SPLIT = re.compile(
+    r"\b(?:due\s+to|because\s+of|caused\s+by|is\s+caused\s+by|results\s+from|"
+    r"arises?\s+from|arises?\s+when|occurs?\s+when|happens?\s+when|"
+    r"owing\s+to|as\s+a\s+result\s+of)\b",
+    re.IGNORECASE,
+)
+
+
+def _cause_clause(evidence: str) -> str:
+    """The cause half of a causal statement, if the source states one.
+
+    A cause question ("What causes X?") must be answered by what the document
+    says makes X happen. Consequence clauses ("X removes partial
+    dependencies") describe what X *does* — answering a cause stem with one
+    silently swaps the direction of the relation.
+    """
+    match = _CAUSE_SPLIT.search(evidence)
+    if not match:
+        return ""
+    tail = evidence[match.end() :].strip(" ,;:.-—")
     contrast = _CONTRAST_TAIL.search(tail)
     if contrast:
         head = tail[: contrast.start()].strip(" ,;:.-—")
@@ -787,6 +840,21 @@ def _is_unassertable(clause: str) -> bool:
     # how …") or as a bare true/false claim.
     if re.match(r"^\s*(?:how|what|why|when|where|which|who|whether)\b", clause, re.IGNORECASE):
         return True
+    # An anaphor-led clause ("another: whenever two rows agree …") borrows its
+    # subject from the surrounding sentence. After an assertion frame it
+    # reads as a fragment ("X results in another: …"), and as a bare claim it
+    # is unverifiable without that antecedent.
+    if re.match(
+        r"^\s*(?:another|others|one\s+another|each\s+other|it|its|they|them|"
+        r"their|this|that|these|those)\b",
+        clause,
+        re.IGNORECASE,
+    ):
+        return True
+    # A colon inside the clause is an elaboration marker, not spoken prose:
+    # "results in another: whenever …" is two text fragments in a trench coat.
+    if ": " in clause:
+        return True
     # A determiner-led fragment with no verb ("each process a fixed time
     # slice") is the object half of a predicate whose verb was cut away.
     if re.match(r"^\s*(?:each|every|all|both|some|any)\s+", clause, re.IGNORECASE):
@@ -900,6 +968,12 @@ def _opens_with_bare_verb(clause: str) -> bool:
     )
 
 
+#: Trailing consequences and asides inside a statement. A swapped-subject
+#: false claim must stay one tight assertion, so the misconception writer
+#: cuts at these before framing.
+_DISCOURSE_TAIL = re.compile(r",\s+(?:so|because|which|while|and)\s+|;\s+")
+
+
 def _false_statement(
     blueprint: QuestionBlueprint, understanding: DocumentUnderstanding
 ) -> tuple[str, str, str] | None:
@@ -911,6 +985,15 @@ def _false_statement(
     base = _true_statement(blueprint, allow_verbatim=True)
     if not base:
         return None
+    # A false claim must be ONE tight misattribution. A trailing consequence
+    # ("The buffer manager works by means of a predicate, so only the rows
+    # that satisfy the condition are returned to the user.") drags the decoy
+    # frame's causal chain along with the swapped subject: the sentence reads
+    # broken rather than merely false, and the student rejects it on grammar.
+    # Keep the core claim; the basis evidence stays intact for the gate.
+    trimmed = _DISCOURSE_TAIL.split(base, maxsplit=1)[0].strip()
+    if len(content_tokens(trimmed)) >= 4 and trimmed != base:
+        base = trimmed.rstrip(" ,;:.") + "."
     concept = understanding.concept(blueprint.concept_id)
     if concept is None:
         return None
@@ -1203,7 +1286,7 @@ def _fill_blank(blueprint: QuestionBlueprint) -> tuple[str, str] | None:
 #: may assume biology or any other field.
 _FACET_STEMS_AGENT: dict[str, str] = {
     "purpose": "Why {is_are} {concept} important?",
-    "cause": "What causes {concept} to form or act?",
+    "cause": "What causes {concept}?",
     "effect": "What is the primary result or effect of {concept}?",
     "mechanism": "How does {concept} function?",
     "category": "Into which categories does {concept} divide?",
@@ -1675,25 +1758,34 @@ def _candidate_for(
         # A reasoning question is answered by the relation the document
         # states, not by the concept's definition. The facet already isolated
         # that clause during understanding.
-        answer = (
-            _shorten(blueprint.answer_clause)
-            or (
-                _shorten(_effect_clause(blueprint.evidence))
-                if blueprint.facet_kind in {"effect", "cause", "purpose"}
-                else ""
+        answer = _shorten(blueprint.answer_clause)
+        if not answer and blueprint.facet_kind in {"effect", "purpose"}:
+            answer = _shorten(_effect_clause(blueprint.evidence))
+        elif not answer and blueprint.facet_kind == "cause":
+            # Direction matters: "What causes X?" must be answered by the
+            # cause the document states, never by what X *does* (a consequence
+            # clause answers an effect stem, not this one). Without a stated
+            # cause there is no honest question, so decline.
+            answer = _cause_clause(blueprint.evidence)
+            if not answer:
+                if reason_sink is not None:
+                    reason_sink.append("cause_effect_clause_unavailable")
+                return None
+        if not answer:
+            answer = (
+                _shorten(blueprint.answer_clause, _MAX_STATEMENT_WORDS)
+                # Last resort: the whole predicate the evidence states. Long,
+                # but true and complete — preferable to omitting a central
+                # concept. This restores the yield the fallback-recovery
+                # design relies on for thin slide decks: a facet clause too
+                # short to stand alone ("leads to lock contention") still has
+                # the source's own claim behind it. The pipeline's stem/answer
+                # alignment gate (_answer_is_supported) still rejects any
+                # claim that does not answer the facet's question, so a
+                # definition-shaped answer under an effect stem is refused
+                # exactly as before.
+                or _claim(blueprint.evidence, blueprint.concept, max_words=_MAX_STATEMENT_WORDS)
             )
-            or _shorten(blueprint.answer_clause, _MAX_STATEMENT_WORDS)
-            # Last resort: the whole predicate the evidence states. Long, but
-            # true and complete — preferable to omitting a central concept.
-            # This restores the yield the fallback-recovery design relies on
-            # for thin slide decks: a facet clause too short to stand alone
-            # ("leads to lock contention") still has the source's own claim
-            # behind it. The pipeline's stem/answer alignment gate
-            # (_answer_is_supported) still rejects any claim that does not
-            # answer the facet's question, so a definition-shaped answer under
-            # an effect stem is refused exactly as before.
-            or _claim(blueprint.evidence, blueprint.concept, max_words=_MAX_STATEMENT_WORDS)
-        )
         if not answer:
             if reason_sink is not None:
                 reason_sink.append("facet_answer_unavailable")

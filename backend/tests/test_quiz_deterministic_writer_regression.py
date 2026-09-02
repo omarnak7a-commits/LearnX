@@ -18,6 +18,7 @@ from app.services.ai_documents import clear_extraction_cache, source_from_text, 
 from app.services.ai_service import AIServiceError, AIStructuredCompletion
 from app.services.quiz_blueprints import QuestionBlueprint
 from app.services.quiz_deterministic import (
+    _distractors,
     deterministic_candidates,
     replan_unsafe_mcq_blueprints,
 )
@@ -848,3 +849,233 @@ def test_mcq_answer_that_is_raw_slide_code_is_rejected() -> None:
     )
     assert record is None, "a code-fragment answer must not ship"
     assert any("code fragment" in reason for reason in reasons), reasons
+
+
+def test_cause_question_without_a_stated_cause_is_declined() -> None:
+    """A cause stem ("What causes X?") answered by what X *does* swaps the
+    direction of the relation ("What causes Second normal form to form or
+    act?" -> "removes partial dependencies…"). Without a stated cause in the
+    evidence, the writer must decline instead of answering with an action.
+    """
+    understanding = _understanding(
+        "Second normal form removes partial dependencies.\n"
+        "Third normal form removes transitive dependencies."
+    )
+    blueprint = _blueprint(
+        concept_id="secondnf",
+        concept="Second normal form",
+        evidence=(
+            "Second normal form removes partial dependencies: every non-key "
+            "attribute depends on the whole composite key, not on part of it."
+        ),
+        question_type="short-answer",
+        skill="cause_effect",
+        facet_kind="cause",
+        answer_clause="",
+    )
+
+    drop_reasons: dict[str, int] = {}
+    written = deterministic_candidates(
+        [blueprint], language="en", understanding=understanding, drop_reasons=drop_reasons
+    )
+
+    assert written == [], "a cause question without a stated cause must not ship"
+    assert drop_reasons.get("cause_effect_clause_unavailable") == 1, drop_reasons
+
+
+def test_cause_question_is_answered_by_the_stated_cause() -> None:
+    """With an empty facet clause, a cause question is answered from the
+    evidence's own cause marker ("due to …"), never from a consequence
+    clause, and the stem is the plain generic form.
+    """
+    understanding = _understanding(
+        "The page cache stalls due to a full buffer pool.\n"
+        "The query planner picks a scan when no index is usable."
+    )
+    blueprint = _blueprint(
+        concept_id="pagecache",
+        concept="page cache",
+        evidence="The page cache stalls due to a full buffer pool.",
+        question_type="short-answer",
+        skill="cause_effect",
+        facet_kind="cause",
+        answer_clause="",
+    )
+
+    written = deterministic_candidates([blueprint], language="en", understanding=understanding)
+
+    assert len(written) == 1
+    assert written[0]["prompt"] == "What causes the page cache?"
+    assert "full buffer pool" in written[0]["correct_answer"]
+    assert "stalls" not in written[0]["correct_answer"]
+
+
+def test_true_false_declines_anaphor_led_and_colon_elaborated_clauses() -> None:
+    """"another: whenever two rows agree on X they must agree on Y" borrows
+    its subject from the surrounding sentence and carries an elaboration
+    colon. Framed ("X results in another: …") it is a fragment; bare, it is
+    unverifiable. The writer must decline rather than ship either form.
+    """
+    understanding = _understanding(
+        "A functional dependency means one attribute determines another.\n"
+        "A candidate key is a minimal set of attributes that uniquely identifies a row."
+    )
+    evidence = (
+        "A functional dependency X -> Y means one attribute determines "
+        "another: whenever two rows agree on X they must agree on Y."
+    )
+    blueprint = _blueprint(
+        concept_id="fd",
+        concept="Functional dependency",
+        evidence=evidence,
+        question_type="true-false",
+        skill="cause_effect",
+        facet_kind="effect",
+        answer_clause="another: whenever two rows agree on X they must agree on Y",
+    )
+
+    written = deterministic_candidates([blueprint], language="en", understanding=understanding)
+
+    assert not any(
+        candidate.get("type") == "true-false" and "results in another" in candidate["prompt"]
+        for candidate in written
+    ), "the anaphor-led clause must never reach an assertion frame"
+    for candidate in written:
+        assert ": " not in candidate["prompt"].split("?")[0] or candidate.get("type") != "true-false"
+
+
+def test_misconception_statement_is_one_tight_claim() -> None:
+    """A swapped-subject false statement must not carry the base frame's
+    trailing consequence ("…, so only the rows that satisfy the condition are
+    returned to the user."): the compound sentence reads broken instead of
+    merely false. The core misattribution is kept; the basis evidence is
+    untouched.
+    """
+    understanding = _understanding(
+        "The WHERE clause filters rows by a predicate, so only the rows that "
+        "satisfy the condition are returned to the user.\n"
+        "The buffer manager is responsible for caching frequently accessed "
+        "pages in memory."
+    )
+    blueprint = _blueprint(
+        concept_id="whereclause",
+        concept="WHERE clause",
+        evidence=(
+            "The WHERE clause filters rows by a predicate, so only the rows "
+            "that satisfy the condition are returned to the user."
+        ),
+        question_type="true-false",
+        skill="misconception",
+        facet_kind="mechanism",
+        answer_clause=(
+            "a predicate, so only the rows that satisfy the condition are "
+            "returned to the user"
+        ),
+    )
+
+    drop_reasons: dict[str, int] = {}
+    written = deterministic_candidates(
+        [blueprint], language="en", understanding=understanding, drop_reasons=drop_reasons
+    )
+
+    # The core-claim-only statement ("The buffer manager works by means of a
+    # predicate.") no longer carries enough of the evidence's own wording to
+    # clear the false-statement grounding floor, so the writer declines the
+    # misconception entirely instead of shipping the compound broken sentence.
+    # Either way, the trailing-consequence swap must never reach a quiz.
+    for candidate in written:
+        assert ", so " not in candidate["prompt"], candidate["prompt"]
+        assert "so only the rows" not in candidate["prompt"], candidate["prompt"]
+    assert drop_reasons.get("false_statement_not_constructible", 0) >= 1 or written == []
+
+
+def test_mcq_answer_starting_with_an_anaphor_is_rejected() -> None:
+    """"another: whenever …" as a correct answer borrows its subject from the
+    surrounding sentence; standalone it is an unreadable fragment. The
+    candidate gate must decline it like any other non-prose answer.
+    """
+    evidence = (
+        "A functional dependency X -> Y means one attribute determines "
+        "another: whenever two rows agree on X they must agree on Y."
+    )
+    text = "A functional dependency means one attribute determines another.\n" + evidence
+    understanding = _understanding(text)
+    source = source_from_text(text, title="Doc")
+    context = build_quiz_context(source)
+    blueprint = _blueprint(
+        concept_id="fd",
+        concept="Functional dependency",
+        evidence=evidence,
+        question_type="mcq",
+        skill="cause_effect",
+        facet_kind="effect",
+        answer_clause="another: whenever two rows agree on X they must agree on Y",
+    )
+    raw = _RawCandidate(
+        blueprint_id=blueprint.id,
+        type="mcq",
+        prompt="What is the primary result or effect of Functional dependency?",
+        options=[
+            "another: whenever two rows agree on X they must agree on Y",
+            "a minimal set of attributes that uniquely identifies a row",
+            "a predicate that filters rows before grouping",
+            "a named query stored in the schema",
+        ],
+        correct_answer="another: whenever two rows agree on X they must agree on Y",
+        explanation=evidence,
+        source_pages=[1],
+        source_quote=evidence,
+        distractor_rationales=[
+            "describes a candidate key, not this concept",
+            "describes a filter clause, not this concept",
+            "describes a view, not this concept",
+        ],
+    )
+    reasons: list[str] = []
+    record = normalize_blueprinted_candidate(
+        raw,
+        index=0,
+        blueprints={blueprint.id: blueprint},
+        page_count=1,
+        included_pages={1},
+        page_text=context.page_text,
+        vocab=context.vocab,
+        reasons=reasons,
+    )
+    assert record is None, "an anaphor-led answer must not ship"
+    assert any("code fragment" in reason for reason in reasons), reasons
+
+
+def test_mcq_distractors_exclude_unreadable_pool_claims() -> None:
+    """Pool clauses that borrow a subject ("another: whenever …") or carry
+    raw slide code must not become distractors: an option that is wrong on
+    grammar rather than on knowledge teaches nothing.
+    """
+    understanding = _understanding(
+        "A functional dependency means one attribute determines another.\n"
+        "An index is a data structure that speeds up lookups.\n"
+        "A view is a named query stored in the schema.\n"
+        "A trigger executes automatically in response to a table event."
+    )
+    blueprint = _blueprint(
+        concept_id="index",
+        concept="index",
+        evidence="An index is a data structure that speeds up lookups.",
+        question_type="mcq",
+        skill="understanding",
+    )
+    pool = [
+        ("fd", "definition", "another: whenever two rows agree on X they must agree on Y"),
+        ("view", "definition", "a named query stored in the schema"),
+        ("trigger", "definition", "executes automatically in response to a table event"),
+        ("tx", "definition", "a unit of work executed atomically"),
+    ]
+
+    chosen = _distractors(blueprint, "a data structure that speeds up lookups", pool)
+
+    assert len(chosen) == 3, chosen
+    options = " ".join(chosen)
+    assert "another:" not in options
+    assert ";" not in options
+    # The readable pool claims are used instead.
+    assert "a named query stored in the schema" in options

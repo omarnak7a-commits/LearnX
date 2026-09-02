@@ -53,7 +53,6 @@ from app.services.quiz_pipeline import (
     build_document_understanding,
     build_quiz_context,
     generate_quiz,
-    QuestionProvenance,
     RejectionNote,
 )
 from app.services.quiz_quality_judge import _RawQualityJudgement
