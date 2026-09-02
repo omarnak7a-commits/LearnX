@@ -186,6 +186,18 @@ _TYPE_ALIASES = {
     "short answer": "short-answer",
 }
 _TRUE_WORDS = {"true", "t", "yes", "correct", "right", "صح", "صحيح", "نعم"}
+
+
+#: A non-TF correct answer must be prose. Slide code read out of a syntax
+#: block arrives as an operator- or paren-led fragment ("> (SELECT AVG(sal)
+#: FROM emp)"), and two extracted bullets can arrive fused across "; " -- both
+#: are unreadable as "the answer" even though every token is grounded.
+_CODE_FRAGMENT_ANSWER = re.compile(r"^\s*[><;()\[\]=*/+\-]|;\s")
+
+
+def _is_code_fragment_answer(answer: str) -> bool:
+    """True when a non-TF answer is raw code or two fused statements."""
+    return bool(_CODE_FRAGMENT_ANSWER.search(answer))
 _FALSE_WORDS = {"false", "f", "no", "incorrect", "wrong", "خطا", "خطأ", "لا"}
 _GENERIC_BLANK_ANSWERS = {
     "thing",
@@ -1060,6 +1072,18 @@ def normalize_blueprinted_candidate(
         return None
     if not _answer_is_supported(question, blueprint, document_vocab=vocab):
         _note(reasons, "correct answer is not supported by the evidence")
+        return None
+    if question.type != "true-false" and _is_code_fragment_answer(
+        question.correct_answer
+    ):
+        # A correct answer that opens with a bare SQL operator/paren or fuses
+        # two statements across "; " is slide code read as prose. It is
+        # technically grounded, but no learner can parse it as "the answer",
+        # so it must not ship.
+        _note(
+            reasons,
+            "correct answer is a raw code fragment or fuses multiple statements",
+        )
         return None
     if not _matches_cognitive_shape(question, blueprint):
         _note(

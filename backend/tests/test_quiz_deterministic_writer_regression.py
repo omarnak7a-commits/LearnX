@@ -23,9 +23,11 @@ from app.services.quiz_deterministic import (
 )
 from app.services.quiz_pipeline import (
     QuizMaterialError,
+    _RawCandidate,
     _RawQuizPool,
     build_quiz_context,
     generate_quiz,
+    normalize_blueprinted_candidate,
 )
 from app.services.quiz_understanding import DocumentUnderstanding, deterministic_understanding
 
@@ -780,3 +782,69 @@ def test_true_statement_never_grafts_concept_onto_noun_phrase_clause() -> None:
         ), f"concept grafted onto a noun-phrase clause: {prompt!r}"
         assert "is caused by changes in the table data" in prompt, prompt
         assert candidate["correct_answer"] == "True"
+
+
+def test_mcq_answer_that_is_raw_slide_code_is_rejected() -> None:
+    """An answer led by a SQL operator or fusing two facts across "; " is
+    slide code read as prose: grounded token-for-token, but unparseable as
+    "the answer". The candidate must be declined so the pool refills.
+    """
+    evidence = (
+        "WHERE sal > (SELECT AVG(sal) FROM emp); A correlated subquery "
+        "references the outer query, so it runs once for every row the outer "
+        "query returns."
+    )
+    text = (
+        "A correlated subquery references the outer query.\n"
+        "An index is a data structure that speeds up lookups.\n"
+        + evidence
+    )
+    understanding = _understanding(text)
+    source = source_from_text(text, title="Doc")
+    context = build_quiz_context(source)
+    blueprint = _blueprint(
+        concept_id="where_sal",
+        concept="WHERE sal",
+        evidence=evidence,
+        question_type="mcq",
+        skill="process_order",
+        facet_kind="mechanism",
+        answer_clause="SELECT AVG(sal) FROM emp)",
+    )
+    fused_answer = (
+        "> (SELECT AVG(sal) FROM emp); A correlated subquery references the "
+        "outer query, so it runs once for every row the outer query returns"
+    )
+    raw = _RawCandidate(
+        blueprint_id=blueprint.id,
+        type="mcq",
+        prompt="How does WHERE sal function?",
+        options=[
+            fused_answer,
+            "a data structure that speeds up lookups",
+            "a predicate that filters rows before grouping",
+            "a named query stored in the schema",
+        ],
+        correct_answer=fused_answer,
+        explanation=evidence,
+        source_pages=[1],
+        source_quote=evidence,
+        distractor_rationales=[
+            "describes an index, not this concept",
+            "describes a filter clause, not this concept",
+            "describes a view, not this concept",
+        ],
+    )
+    reasons: list[str] = []
+    record = normalize_blueprinted_candidate(
+        raw,
+        index=0,
+        blueprints={blueprint.id: blueprint},
+        page_count=1,
+        included_pages={1},
+        page_text=context.page_text,
+        vocab=context.vocab,
+        reasons=reasons,
+    )
+    assert record is None, "a code-fragment answer must not ship"
+    assert any("code fragment" in reason for reason in reasons), reasons
