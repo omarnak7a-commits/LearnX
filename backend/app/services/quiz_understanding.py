@@ -99,7 +99,7 @@ TEACHABLE_TYPES: frozenset[str] = frozenset(
 #: Calibrated so that a well-explained definition/process/comparison clears it
 #: on its own merits, while an isolated fact or example never can — even in a
 #: one-page document where every other signal is necessarily zero.
-IMPORTANCE_FLOOR = 0.60
+IMPORTANCE_FLOOR = 0.58
 
 #: Below this many question-worthy concepts, a document is too small for
 #: "developed vs merely defined" to be a real distinction: the handful of terms
@@ -229,6 +229,7 @@ class ConceptNode:
         signals = self.signals
         return bool(
             self.facets
+            or signals.get("explanatory_depth", 0.0) >= 0.65
             or signals.get("centrality", 0.0) >= 0.30
             or signals.get("teaching_emphasis", 0.0) >= 0.25
             or signals.get("prerequisite_role", 0.0) > 0.0
@@ -435,6 +436,7 @@ class _RawUnderstanding(BaseModel):
 _DEFINITION_MARKERS = re.compile(
     r"\b(is|are)\s+defined\s+as\b|\brefers?\s+to\b|\bis\s+known\s+as\b|\bis\s+called\b|"
     r"\bmeans\s+that\b|\bis\s+the\s+(?:study|process|term|name)\b|\bcan\s+be\s+defined\b|"
+    r"\b(?:uniquely\s+identifies|identifies\s+uniquely)\b|"
     r"يعرف|تعرف|يقصد ب|هو عباره عن|هي عباره عن",
     re.IGNORECASE,
 )
@@ -447,7 +449,7 @@ _PROCESS_MARKERS = re.compile(
 )
 _CAUSE_MARKERS = re.compile(
     r"\b(because|therefore|thus|hence|causes?|caused by|leads? to|results? in|due to|"
-    r"depends? on|so that|consequently|if\b.{0,60}\bthen|increases?|decreases?|affects?|"
+    r"depends? on|so that|consequently|occurs?\s+when|arises?\s+when|happens?\s+when|if\b.{0,60}\bthen|increases?|decreases?|affects?|"
     r"enables?|prevents?|allows?)\b|يسبب|يودي الي|بسبب|نتيجه|لذلك|يعتمد علي|يمنع|يسمح",
     re.IGNORECASE,
 )
@@ -800,6 +802,13 @@ _FACET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "purpose",
+        re.compile(
+            r"\b(?:prevents?|preventing|avoids?|avoiding)\s+(?P<clause>[^.;]{8,140})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         # "exists if and only if …", "applies when …" state the governing condition.
         "condition",
         re.compile(
@@ -811,8 +820,8 @@ _FACET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "effect",
         re.compile(
-            r"\b(?:leads?\s+to|results?\s+in|can\s+lead\s+to|causes?|produces?|generates?|"
-            r"ensuring|ensures?|allows?|enables?|prevents?)\s+(?P<clause>[^.;]{8,140})",
+            r"\b(?:leads?\s+to|results?\s+in|can\s+lead\s+to|causes?|produces?|generates?|yields?|"
+            r"ensuring|ensures?|allows?|enables?)\s+(?P<clause>[^.;]{8,140})",
             re.IGNORECASE,
         ),
     ),
@@ -982,7 +991,7 @@ _ORDINAL_CONCEPT_HEADS = re.compile(
 
 #: SQL query statement detection so code examples are not mistaken for concept names.
 _SQL_QUERY_RE = re.compile(
-    r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|WITH)\b.*(?:FROM|INTO|TABLE|SET|WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|;)",
+    r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|WITH|SET|COMMIT|ROLLBACK|SAVEPOINT|MERGE|TRUNCATE|EXEC|EXECUTE|DECLARE|BEGIN|LOCK|UNLOCK)\b.*(?:FROM|INTO|TABLE|SET|WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|=|;|\bTO\b|\bON\b)",
     re.IGNORECASE,
 )
 
@@ -2415,8 +2424,22 @@ _NON_CONCEPT_WORDS = frozenset(
     student students exam tip tips chapter section page approach approaches idea ideas
     note notes topic topics misconception misconceptions mastery overview aspect aspects
     detail details item items feature features step steps new old common simple
-    important key main basic general""".split()
+    important key main basic general user users person people someone anyone everyone
+    developer developers programmer programmers operator operators admin administrator
+    administrators author authors reader readers learner learners client clients""".split()
 )
+
+_BARE_SQL_COMMANDS = frozenset({
+    "set", "select", "insert", "update", "delete", "commit", "rollback",
+    "savepoint", "grant", "revoke", "where", "from", "into", "values",
+    "having", "truncate", "merge", "exec", "execute", "declare"
+})
+_GENERIC_ACTORS = frozenset({
+    "user", "users", "people", "person", "someone", "anyone", "everyone",
+    "developer", "developers", "programmer", "programmers", "operator", "operators",
+    "admin", "administrator", "administrators", "author", "authors", "reader", "readers",
+    "learner", "learners", "client", "clients", "oracle", "microsoft", "mysql", "postgres", "postgresql"
+})
 
 # Meta-labels about the *teaching* rather than the subject. "A key theorem
 # states ..." introduces a theorem; the label itself teaches nothing.
@@ -2467,7 +2490,9 @@ _BARE_CONTAINER_NOUNS = frozenset(
     element component factor value number result output input step stage phase
     part piece portion aspect property attribute characteristic
     problem issue case situation approach way idea point detail note
-    advantage disadvantage benefit drawback limitation feature purpose role""".split()
+    advantage disadvantage benefit drawback limitation feature purpose role
+    user users client clients operator operators developer developers author authors
+    reader readers people person""".split()
 )
 
 
@@ -2511,6 +2536,8 @@ def _acceptable_term(term: str) -> bool:
         "public key", "private key", "session key"
     }:
         return True
+    if cleaned.lower() in _BARE_SQL_COMMANDS or cleaned.lower() in _GENERIC_ACTORS:
+        return False
     tokens = content_tokens(cleaned)
     if not tokens or tokens <= _NON_CONCEPT_WORDS:
         return False

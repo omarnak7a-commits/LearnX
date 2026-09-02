@@ -90,6 +90,7 @@ from app.services.quiz_scoring import (
     distractor_quality_score,
     exact_duplicate_key,
     is_repeat_of_history,
+    is_semantic_duplicate,
     is_trivial_question,
     normalize_question_text,
     randomize_answer_positions,
@@ -789,6 +790,16 @@ def _answer_is_supported(
     # it) the document's own vocabulary. That is still a closed world -- an
     # outside fact such as a wavelength in nanometres has no source anywhere in
     # the text and is still refused.
+    # Guard against semantic mismatch between stem and answer
+    prompt_norm = normalize_question_text(question.prompt)
+    answer_norm = normalize_question_text(question.correct_answer)
+    if re.search(r"\b(?:produce|result\s+of|effect\s+of)\b", prompt_norm, re.IGNORECASE):
+        if re.match(r"^(?:uses?\b|is\s+defined\s+as|is\s+a\b|occurs?\s+when)", answer_norm, re.IGNORECASE):
+            return False
+    if re.search(r"\b(?:best\s+describes?|correctly\s+defines?)\b", prompt_norm, re.IGNORECASE):
+        if re.match(r"^(?:can|may|could)\s+also\b", answer_norm, re.IGNORECASE):
+            return False
+
     supported_tokens = set(evidence_tokens)
     supported_tokens |= content_tokens(blueprint.concept)
     supported_tokens |= content_tokens(blueprint.knowledge_target)
@@ -857,7 +868,7 @@ def _meaningful_true_false(raw: _RawCandidate, question: AIQuizQuestion, bluepri
         allowance = max(2, len(swapped))
     unsupported = prompt_tokens - evidence_tokens
     overlap = len(prompt_tokens & evidence_tokens) / max(1, len(prompt_tokens))
-    if overlap < (0.45 if correct == "false" else 0.65) or len(unsupported) > allowance:
+    if overlap < (0.35 if correct == "false" else 0.65) or len(unsupported) > allowance:
         return False
     if correct == "false":
         basis = raw.false_statement_basis.strip()
@@ -1136,6 +1147,8 @@ def _records_are_duplicates(left: CandidateRecord, right: CandidateRecord) -> bo
         return True
     if exact_duplicate_key(left.question.prompt) == exact_duplicate_key(right.question.prompt):
         return True
+    if is_semantic_duplicate(left.question.prompt, right.question.prompt, 0.75):
+        return True
     # The same concept tested by the same cognitive skill is the same target,
     # however differently it is worded.
     if (
@@ -1170,6 +1183,11 @@ def _dedupe_scored(candidates: list[ScoredCandidate]) -> list[ScoredCandidate]:
         if any(
             exact_duplicate_key(existing.question.prompt)
             == exact_duplicate_key(candidate.question.prompt)
+            for existing in kept
+        ):
+            continue
+        if any(
+            is_semantic_duplicate(existing.question.prompt, candidate.question.prompt, 0.75)
             for existing in kept
         ):
             continue
@@ -2100,6 +2118,8 @@ def validate_final_quiz(
     allowed_types = {_TYPE_ALIASES.get(t.strip().lower(), t.strip().lower()) for t in requested_types}
     valid: list[AIQuizQuestion] = []
     notes: list[RejectionNote] = []
+    seen_prompts: list[str] = []
+    seen_answers: set[str] = set()
 
     def reject(question: AIQuizQuestion, reason: str) -> None:
         record = provenance_by_id.get(question.id)
@@ -2172,6 +2192,18 @@ def validate_final_quiz(
         ):
             reject(question, "fill-blank prompt has no usable blank")
             continue
+        # Check for duplicate prompt
+        if any(is_semantic_duplicate(question.prompt, seen_p, 0.75) for seen_p in seen_prompts):
+            reject(question, "duplicate or near-duplicate question prompt in final quiz")
+            continue
+        # Check for duplicate correct answer in non-true-false questions
+        norm_ans = normalize_question_text(answer)
+        if question.type != "true-false" and norm_ans and len(norm_ans.split()) >= 3:
+            if norm_ans in seen_answers:
+                reject(question, "duplicate correct answer in final quiz")
+                continue
+            seen_answers.add(norm_ans)
+        seen_prompts.append(question.prompt)
         valid.append(question)
 
     return valid, notes

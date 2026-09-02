@@ -400,10 +400,16 @@ _CONTENTLESS_PREDICATE = re.compile(
     re.IGNORECASE,
 )
 
+_MODAL_FRAGMENT = re.compile(
+    r"^(?:can|may|could)\s+also\b",
+    re.IGNORECASE,
+)
+
 
 def _is_contentless_claim(text: str) -> bool:
     """True when the predicate promises detail instead of stating it."""
-    return bool(_CONTENTLESS_PREDICATE.match(text.strip(" ,;:.-—")))
+    cleaned = text.strip(" ,;:.-—")
+    return bool(_CONTENTLESS_PREDICATE.match(cleaned) or _MODAL_FRAGMENT.match(cleaned))
 
 
 def _is_sole_opportunity(
@@ -1073,7 +1079,7 @@ def _fill_blank(blueprint: QuestionBlueprint) -> tuple[str, str] | None:
 _FACET_STEMS_AGENT: dict[str, str] = {
     "purpose": "Why {is_are} {concept} important?",
     "cause": "What causes {concept} to form or act?",
-    "effect": "What does {concept} produce?",
+    "effect": "What is the primary result or effect of {concept}?",
     "mechanism": "How does {concept} function?",
     "category": "Into which categories does {concept} divide?",
     "condition": "What does {concept} depend on?",
@@ -1544,16 +1550,14 @@ def _candidate_for(
         # A reasoning question is answered by the relation the document
         # states, not by the concept's definition. The facet already isolated
         # that clause during understanding.
-        # Same reasoning as the true/false path: prefer a concise answer, but
-        # accept the full claim rather than drop an important concept when no
-        # shorter form can be stated without changing its meaning.
         answer = (
             _shorten(blueprint.answer_clause)
-            or _shorten(_effect_clause(blueprint.evidence))
+            or (
+                _shorten(_effect_clause(blueprint.evidence))
+                if blueprint.facet_kind in {"effect", "cause", "purpose"}
+                else ""
+            )
             or _shorten(blueprint.answer_clause, _MAX_STATEMENT_WORDS)
-            # Last resort: the whole predicate the evidence states. Long, but
-            # true and complete — preferable to omitting a central concept.
-            or _claim(blueprint.evidence, blueprint.concept, max_words=_MAX_STATEMENT_WORDS)
         )
         if not answer:
             if reason_sink is not None:
@@ -1786,9 +1790,13 @@ def writer_writable_types(
     for question_type in syntactic:
         if question_type == "mcq":
             # The re-planner owns the too-few-distractors decision; an MCQ
-            # that reaches the writer is either written or safely re-planned.
-            mcq_approved = True
-            constructible.append(question_type)
+            # that reaches the writer is either written or safely re-planned to short-answer.
+            # If neither MCQ nor short-answer is constructible, it cannot be written.
+            mcq_bp = _blueprint_for_target(target, "mcq")
+            sa_bp = _blueprint_for_target(target, "short-answer")
+            if _candidate_for(mcq_bp, understanding=understanding, pool=pool) is not None or _candidate_for(sa_bp, understanding=understanding, pool=pool) is not None:
+                mcq_approved = True
+                constructible.append(question_type)
             continue
         blueprint = _blueprint_for_target(target, question_type)
         if _candidate_for(

@@ -427,7 +427,8 @@ def distractor_quality_score(question: AIQuizQuestion, vocab: set[str]) -> float
     option_lengths = [max(1, len(content_token_list(value))) for value in question.options]
     shortest, longest = min(option_lengths), max(option_lengths)
     shape = 1.0 if longest <= max(5, shortest * 4) else 0.55
-    correct_numeric = bool(re.search(r"\d|[=+*/^]", correct))
+    correct_tokens = content_token_list(correct)
+    correct_numeric = len(correct_tokens) <= 5 and bool(re.search(r"\d|[=+*/^]", correct))
     if correct_numeric:
         numeric_count = sum(bool(re.search(r"\d|[=+*/^]", value)) for value in question.options)
         if numeric_count < 3:
@@ -753,6 +754,7 @@ def select_diverse(
     seen_concept_targets: set[tuple[str, str]] = set()
     seen_pairs: set[tuple[str, ...]] = set()
     seen_claims: set[frozenset[str]] = set()
+    seen_prompts: list[str] = []
     # One draw fixes this quiz's variation; per-candidate jitter is then derived
     # from it, so the result never depends on evaluation order.
     seed_token = rng.getrandbits(32)
@@ -778,6 +780,11 @@ def select_diverse(
             if candidate.objective_key and candidate.objective_key in seen_objectives:
                 continue
             if all(concept_target) and concept_target in seen_concept_targets:
+                continue
+            if any(
+                is_semantic_duplicate(candidate.question.prompt, p, 0.75)
+                for p in seen_prompts
+            ):
                 continue
             # A comparison is symmetric: asking it from each side is one
             # knowledge target wearing two prompts.
@@ -883,6 +890,7 @@ def select_diverse(
         chosen_claim = _claim_signature(chosen)
         if chosen_claim:
             seen_claims.add(chosen_claim)
+        seen_prompts.append(chosen.question.prompt)
         concept_key = chosen.concept.casefold()
         concept_counts[concept_key] = concept_counts.get(concept_key, 0) + 1
         if chosen.category:
