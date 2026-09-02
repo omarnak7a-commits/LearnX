@@ -1558,6 +1558,16 @@ def _candidate_for(
                 else ""
             )
             or _shorten(blueprint.answer_clause, _MAX_STATEMENT_WORDS)
+            # Last resort: the whole predicate the evidence states. Long, but
+            # true and complete — preferable to omitting a central concept.
+            # This restores the yield the fallback-recovery design relies on
+            # for thin slide decks: a facet clause too short to stand alone
+            # ("leads to lock contention") still has the source's own claim
+            # behind it. The pipeline's stem/answer alignment gate
+            # (_answer_is_supported) still rejects any claim that does not
+            # answer the facet's question, so a definition-shaped answer under
+            # an effect stem is refused exactly as before.
+            or _claim(blueprint.evidence, blueprint.concept, max_words=_MAX_STATEMENT_WORDS)
         )
         if not answer:
             if reason_sink is not None:

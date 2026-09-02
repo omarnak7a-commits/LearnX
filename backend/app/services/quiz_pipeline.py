@@ -1558,6 +1558,157 @@ def _insufficient_material_message(
     )
 
 
+def _preflight_and_refill_pool(
+    scored: list[ScoredCandidate],
+    scores: dict[str, float],
+    *,
+    context: QuizContext,
+    source: AIDocumentSource,
+    understanding: DocumentUnderstanding,
+    blueprint_by_id: dict[str, QuestionBlueprint],
+    count: int,
+    question_types: list[str],
+    difficulty: str,
+    language: str,
+    seed: int,
+    previous_questions: list[str],
+    quality_threshold: float,
+    rejections: list[RejectionNote],
+    provider_trace: dict[str, Any] | None = None,
+    funnel: dict[str, Any] | None = None,
+    candidates_by_type: Counter | None = None,
+) -> list[ScoredCandidate]:
+    """Apply the final-quiz gates to the pool, refilling any shortfall.
+
+    See :func:`_preflight_pool`. When the preflight leaves fewer survivors
+    than the quiz needs, one bounded top-up plans *new* objectives -- never
+    the ones whose candidates were already rejected -- and the additions go
+    through the same preflight before selection.
+    """
+    scored, preflight_killed = _preflight_pool(
+        scored,
+        context=context,
+        source=source,
+        understanding=understanding,
+        blueprint_by_id=blueprint_by_id,
+        requested_types=question_types,
+        rejections=rejections,
+        funnel=funnel,
+    )
+    if len(scored) >= count:
+        return scored
+    refilled, _ = _top_up_candidates(
+        scored,
+        scores,
+        context=context,
+        source=source,
+        understanding=understanding,
+        blueprint_by_id=blueprint_by_id,
+        count=count,
+        question_types=question_types,
+        difficulty=difficulty,
+        language=language,
+        seed=seed,
+        previous_questions=previous_questions,
+        quality_threshold=quality_threshold,
+        rejections=rejections,
+        provider_trace=provider_trace,
+        funnel=funnel,
+        candidates_by_type=candidates_by_type,
+        # Objectives whose candidates the preflight rejected produced the
+        # same question once already; re-planning them reproduces the
+        # rejection instead of new material.
+        exclude_objectives=preflight_killed,
+    )
+    refilled = _dedupe_scored(refilled)
+    scored, _ = _preflight_pool(
+        refilled,
+        context=context,
+        source=source,
+        understanding=understanding,
+        blueprint_by_id=blueprint_by_id,
+        requested_types=question_types,
+        rejections=rejections,
+        funnel=funnel,
+    )
+    return scored
+
+
+def _preflight_pool(
+    scored: list[ScoredCandidate],
+    *,
+    context: QuizContext,
+    source: AIDocumentSource,
+    understanding: DocumentUnderstanding,
+    blueprint_by_id: dict[str, QuestionBlueprint],
+    requested_types: list[str],
+    rejections: list[RejectionNote] | None = None,
+    funnel: dict[str, Any] | None = None,
+) -> tuple[list[ScoredCandidate], set[str]]:
+    """Run the final-quiz gates over the whole candidate pool BEFORE selection.
+
+    ``validate_final_quiz`` audits the assembled quiz after selection, which
+    is the one stage of the pipeline with no replacement path: a question it
+    rejects simply shrinks the quiz. On a thin slide deck whose concepts share
+    evidence sentences, several candidates can carry the *same* correct answer
+    (the same facet clause read off the same page under two concept names);
+    selection's relaxed claim gate can then ship both, and the post-selection
+    audit kills the second -- permanently. That is the reported production
+    shape: a healthy 8-slot selection reduced to a fraction of itself with no
+    way to refill.
+
+    Running the identical gates over the pool first means every kill happens
+    while the pipeline can still plan and write a replacement. Nothing is
+    weakened: the same ``validate_final_quiz`` decisions are applied, earlier,
+    to more candidates, and the post-selection audit still runs unchanged as
+    the final gate. Selection still only sees candidates that can ship.
+
+    Returns the surviving candidates (in score order) and the objective keys
+    of everything the preflight killed, so a refill round can exclude them.
+    """
+    if not scored:
+        return [], set()
+    provenance: dict[str, QuestionProvenance] = {}
+    for candidate in scored:
+        blueprint = blueprint_by_id.get(candidate.blueprint_id)
+        provenance[candidate.question.id] = QuestionProvenance(
+            question_id=candidate.question.id,
+            concept_id=blueprint.concept_id if blueprint else "",
+            concept=blueprint.concept if blueprint else candidate.concept,
+            knowledge_target_id=blueprint.knowledge_target_id if blueprint else "",
+            knowledge_target=(
+                blueprint.knowledge_target if blueprint else candidate.knowledge_target
+            ),
+            cognitive_skill=blueprint.cognitive_skill if blueprint else candidate.skill,
+            knowledge_type=blueprint.knowledge_type if blueprint else "",
+            source_pages=tuple(candidate.question.source_pages),
+            quality_score=candidate.score,
+            blueprint_id=candidate.blueprint_id,
+        )
+    ordered = sorted(scored, key=lambda candidate: candidate.score, reverse=True)
+    valid, notes = validate_final_quiz(
+        [candidate.question for candidate in ordered],
+        context=context,
+        source=source,
+        understanding=understanding,
+        provenance_by_id=provenance,
+        requested_types=requested_types,
+    )
+    kept_ids = {question.id for question in valid}
+    survivors = [candidate for candidate in ordered if candidate.question.id in kept_ids]
+    killed = [candidate for candidate in ordered if candidate.question.id not in kept_ids]
+    killed_objectives = {
+        candidate.objective_key for candidate in killed if candidate.objective_key
+    }
+    if rejections is not None:
+        rejections.extend(notes)
+    if funnel is not None and killed:
+        funnel["pool_preflight_rejected"] = (
+            funnel.get("pool_preflight_rejected", 0) + len(killed)
+        )
+    return survivors, killed_objectives
+
+
 def _top_up_candidates(
     scored: list[ScoredCandidate],
     scores: dict[str, float],
@@ -1577,6 +1728,7 @@ def _top_up_candidates(
     provider_trace: dict[str, Any] | None = None,
     funnel: dict[str, Any] | None = None,
     candidates_by_type: Counter | None = None,
+    exclude_objectives: set[str] | None = None,
 ) -> tuple[list[ScoredCandidate], dict[str, float]]:
     """Plan and write additional questions until the pool can fill the quiz.
 
@@ -1590,6 +1742,10 @@ def _top_up_candidates(
 
     ``funnel`` / ``candidates_by_type`` are diagnostics-only counters threaded
     in by the caller; when omitted (unit tests) behaviour is identical.
+    ``exclude_objectives`` seeds the attempted-objective set with objectives a
+    previous stage already tried and lost (e.g. pool-preflight rejections), so
+    the bounded rounds are spent on new material instead of reproducing the
+    same rejection.
     """
     topup_rounds: list[dict[str, Any]] = []
 
@@ -1601,7 +1757,7 @@ def _top_up_candidates(
     }
     # Objectives already written and rejected. Re-planning one produces the
     # same question and the same rejection, wasting a bounded retry round.
-    attempted_objectives: set[str] = set()
+    attempted_objectives: set[str] = set(exclude_objectives or ())
     for round_index in range(_MAX_TOPUP_ROUNDS):
         covered = {
             blueprint_by_id[candidate.blueprint_id].concept_id
@@ -1888,6 +2044,7 @@ def _quiz_telemetry(
         "deterministic_targets_writable": (funnel or {}).get(
             "deterministic_targets_writable", 0
         ),
+        "pool_preflight_rejected": (funnel or {}).get("pool_preflight_rejected", 0),
         "candidate_generation_errors": (funnel or {}).get(
             "candidate_generation_errors", 0
         ),
@@ -2248,6 +2405,24 @@ def _scope_note(
     )
 
 
+def _new_funnel(context_blueprints: int) -> dict[str, Any]:
+    """Fresh diagnostics funnel; see the Stage 3 comment in generate_quiz."""
+    return {
+        "plans_created": context_blueprints,
+        "plans_attempted": 0,
+        "plans_skipped": 0,
+        "plans_skipped_reason": {},
+        "provider_candidates_returned": 0,
+        "provider_candidates_dropped": 0,
+        "deterministic_candidates_attempted": 0,
+        "deterministic_candidates_returned": 0,
+        "deterministic_candidates_dropped": 0,
+        "deterministic_drop_reasons": {},
+        "candidate_generation_errors": 0,
+        "candidate_generation_empty": 0,
+    }
+
+
 def generate_quiz(
     service: Any,
     source: AIDocumentSource,
@@ -2322,20 +2497,7 @@ def generate_quiz(
     # Funnel instrumentation (diagnostics-only): every counter below observes
     # a stage without influencing it, so a short quiz can be explained by
     # telemetry instead of guessed at. See _quiz_telemetry for emission.
-    funnel: dict[str, Any] = {
-        "plans_created": len(context.blueprints),
-        "plans_attempted": 0,
-        "plans_skipped": 0,
-        "plans_skipped_reason": {},
-        "provider_candidates_returned": 0,
-        "provider_candidates_dropped": 0,
-        "deterministic_candidates_attempted": 0,
-        "deterministic_candidates_returned": 0,
-        "deterministic_candidates_dropped": 0,
-        "deterministic_drop_reasons": {},
-        "candidate_generation_errors": 0,
-        "candidate_generation_empty": 0,
-    }
+    funnel: dict[str, Any] = _new_funnel(len(context.blueprints))
     candidates_by_type: Counter = Counter()
     funnel.setdefault("provider_generation_calls", 0)
     funnel.setdefault("provider_topup_calls", 0)
@@ -2749,6 +2911,36 @@ def generate_quiz(
         funnel=funnel,
         candidates_by_type=candidates_by_type,
     )
+
+    # --- Stage 4.5: pool preflight ------------------------------------------ #
+    # The final-quiz gates run over the whole pool while replacement is still
+    # possible. A candidate the post-selection audit would reject -- a shared
+    # correct answer read off the same evidence sentence under two concept
+    # names, most commonly -- is dropped here, and the slot is refilled from
+    # knowledge targets the quiz has not used, through the identical
+    # grounding/validation path. Nothing is weakened: the audit below still
+    # runs unchanged as the last gate; it simply no longer has to watch a quiz
+    # shrink with no way back.
+    scored = _preflight_and_refill_pool(
+        scored,
+        scores,
+        context=context,
+        source=source,
+        understanding=understanding,
+        blueprint_by_id=blueprint_by_id,
+        count=count,
+        question_types=question_types,
+        difficulty=difficulty,
+        language=language,
+        seed=seed,
+        previous_questions=previous_questions,
+        quality_threshold=quality_threshold,
+        rejections=rejections,
+        provider_trace=provider_trace,
+        funnel=funnel,
+        candidates_by_type=candidates_by_type,
+    )
+
 
     rng = random.Random(seed)
     outcome = select_quiz_questions(scored, count, rng=rng)
