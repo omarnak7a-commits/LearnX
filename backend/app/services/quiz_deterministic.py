@@ -710,11 +710,26 @@ def _is_bare_predicate(clause: str) -> bool:
     first = tokens[0].lower().strip(",")
     if first in _PLURAL_NOUN_STARTS:
         return False
+    # "changes in the table data" heads with a noun followed by a preposition:
+    # a noun phrase, not a subjectless predicate. Grafting a concept onto it
+    # ("The trigger changes in the table data") silently swaps the stated
+    # relation and can key a claim the document never makes as True. A real
+    # verb-led predicate takes its object directly ("opposes relative motion").
+    if len(tokens) > 1 and tokens[1].lower().strip(",") in _NOUN_HEAD_PREPOSITIONS:
+        return False
     # "ribosomes decode the sequence" opens with a plural *subject* followed by
     # its verb, so it is a full clause, not a subjectless predicate.
     if len(tokens) > 1 and _FINITE_VERB.fullmatch(tokens[1].lower().strip(",")):
         return False
     return True
+
+
+#: A preposition in second position marks the head as a noun ("changes in",
+#: "updates of"), not an inflected verb taking its object.
+_NOUN_HEAD_PREPOSITIONS = frozenset(
+    """in on of by for with from during between into onto about around after
+    before under over across against without within""".split()
+)
 
 
 #: Plural nouns common at the head of a noun-phrase clause; these look like
@@ -765,6 +780,12 @@ def _is_unassertable(clause: str) -> bool:
     clauses simply do not become true/false questions.
     """
     if _TRAILING_ASIDE.search(clause) or _DANGLING_CONNECTIVE.search(clause):
+        return True
+    # An embedded interrogative ("how concurrent transactions see each
+    # other") is an object clause: it needs a transitive frame ("determines
+    # how …") and reads as a fragment after an assertion frame ("X results in
+    # how …") or as a bare true/false claim.
+    if re.match(r"^\s*(?:how|what|why|when|where|which|who|whether)\b", clause, re.IGNORECASE):
         return True
     # A determiner-led fragment with no verb ("each process a fixed time
     # slice") is the object half of a predicate whose verb was cut away.
@@ -1020,10 +1041,84 @@ def _blankable_terms(clause: str, concept: str) -> list[str]:
             continue
         if len(content_tokens(term)) < 1:
             continue
+        words = term.split()
+        if len(words) > 1 and words[1].lower() in _TERM_BREAK_WORDS:
+            # "UNIQUE No two rows…" is two bullets fused by extraction, not a
+            # term; a real technical term does not continue into a function
+            # word.
+            continue
         if len(re.compile(rf"\b{re.escape(term)}\b").findall(clause)) != 1:
             continue
         usable.append(term)
     return usable
+
+
+#: Function words that begin a *new* bullet or clause, never continue a
+#: technical term. "UNIQUE No two rows…" is two slide bullets joined by text
+#: extraction; a real term does not continue into "No", "Each", "The", …
+_TERM_BREAK_WORDS = frozenset(
+    """no not each every all any some both a an the its their his her this
+    these those it when if while as by or and but after before""".split()
+)
+
+
+#: A finite verb or modal, for telling two joined clauses from one clause with
+#: an embedded capitalised term ("references the PRIMARY KEY of another table
+#: and enforces …" stays one clause; each side alone carries the verb). The
+#: list is deliberately explicit — a suffix catchall ("operations") would read
+#: nouns as verbs and cut real clauses. Missing a rare verb only skips a cut;
+#: a wrong cut truncates a true statement.
+_STATEMENT_VERB = re.compile(
+    r"\b(?:is|are|was|were|be|been|being|has|have|had|does|do|did|can|could|"
+    r"may|might|must|shall|should|will|would|determines|determine[d]?|"
+    r"provides|provide[d]?|requires|require[d]?|contains|contain[ed]?|"
+    r"identifies|identified|ensures|ensured|prevents|prevent[ed]?|allows|"
+    r"allow[ed]?|supports|support[ed]?|stores|stored|returns|returned|"
+    r"defines|defined|describes|described|means|refers|referred|acts|acted|"
+    r"works|worked|uses|used|needs|needed|gives|gave|keeps|kept|holds|held|"
+    r"makes|made|known|applies|applied|enforces|enforced|guarantees|"
+    r"guaranteed|controls|controlled|reads|read|writes|wrote|commits|"
+    r"committed|rolls|rolled|blocks|blocked|waits|waited|locks|locked|"
+    r"scans|scanned|joins|joined|filters|filtered|sorts|sorted|groups|"
+    r"grouped|orders|ordered|limits|limited|caches|cached|manages|managed|"
+    r"allocates|allocated|recovers|recovered|executes|executed|runs|ran|"
+    r"performs|performed|creates|created|deletes|deleted|inserts|inserted|"
+    r"updates|updated|selects|selected|violates|violated|preserves|"
+    r"preserved|protects|protected|tracks|tracked|records|recorded)\b",
+    re.IGNORECASE,
+)
+
+
+def _first_statement(clause: str, concept: str) -> str:
+    """Trim a run-on extraction to its first self-contained statement.
+
+    Slide text frequently arrives as several bullets fused into one
+    punctuation-free line ("NOT NULL A column must always contain a value
+    UNIQUE No two rows may have the same value …"). Blanking a term inside
+    such a line stitches two unrelated rules into one prompt. A capitalised
+    word that cannot continue a sentence is treated as the next bullet when
+    BOTH sides of it carry their own finite verb — the signature of two
+    statements, not of one clause with an embedded term like PRIMARY KEY.
+    """
+    tokens = clause.split()
+    concept_tokens = content_tokens(concept)
+    for index in range(1, len(tokens)):
+        word = tokens[index]
+        if not word[:1].isupper():
+            continue
+        if word.lower() in _TERM_BREAK_WORDS:
+            continue
+        if index + 1 < len(tokens) and tokens[index + 1][:1].isupper() and tokens[index + 1].isupper():
+            # Part of a run of all-caps words (PRIMARY KEY, ACID POLICY):
+            # a technical term, not a bullet boundary.
+            continue
+        if content_tokens(word) & concept_tokens:
+            continue
+        before = " ".join(tokens[:index])
+        after = " ".join(tokens[index:])
+        if _STATEMENT_VERB.search(before) and _STATEMENT_VERB.search(after):
+            return before
+    return clause
 
 
 def _fill_blank(blueprint: QuestionBlueprint) -> tuple[str, str] | None:
@@ -1042,14 +1137,44 @@ def _fill_blank(blueprint: QuestionBlueprint) -> tuple[str, str] | None:
         # A definitional target has no relational clause, because the document
         # explains the concept rather than relating it to something else. That
         # is not a reason to refuse a fill-blank: the evidence sentence is
-        # itself supported text, and blanking a term inside it asks the student
-        # to recall that term. Without this fallback the type was structurally
-        # impossible -- every target whose *skill* permits fill-blank
-        # (factual_recall, understanding) is exactly a target with no facet, so
-        # the two sets never intersected and no PDF ever produced one.
-        clause = re.sub(r"\s+", " ", blueprint.evidence or "").strip()
-        if not clause or len(content_tokens(clause)) < 4:
+        # itself supported text, and blanking a term inside it asks the
+        # student to recall that term. Without this fallback the type was
+        # structurally impossible -- every target whose *skill* permits
+        # fill-blank (factual_recall, understanding) is exactly a target with
+        # no facet, so the two sets never intersected and no PDF ever
+        # produced one.
+        evidence = re.sub(r"\s+", " ", blueprint.evidence or "").strip()
+        if not evidence or len(content_tokens(evidence)) < 4:
             return None
+        # Evidence for a definitional target is often a paragraph holding
+        # several sentences. Blanking a term in a multi-sentence run stitches
+        # unrelated statements into one prompt ("... contain a value _____ no
+        # two rows ..."), and the "answer" can even span a sentence boundary,
+        # so the statement is built from a single sentence of that evidence.
+        for sentence in re.split(r"(?<=[.!?])\s+", evidence):
+            sentence = _first_statement(
+                re.sub(r"\s+", " ", sentence).strip().rstrip(".").strip(),
+                blueprint.concept,
+            )
+            if len(content_tokens(sentence)) < 4:
+                continue
+            for term in _blankable_terms(sentence, blueprint.concept):
+                pattern = re.compile(rf"\b{re.escape(term)}\b")
+                prompt_clause = pattern.sub("_____", sentence, count=1)
+                concept = _display(blueprint.concept, blueprint.evidence)
+                prompt = f"Complete this statement about {concept}: {prompt_clause}."
+                if len(re.findall(r"_{3,}", prompt)) != 1:
+                    continue
+                if len(content_tokens(prompt)) < 4:
+                    continue
+                # First evidence sentence that yields a blank wins: the prompt
+                # stays one statement, in the document's own order.
+                return prompt, term
+        return None
+
+    # A relational clause extracted from slide bullets can equally arrive as
+    # two fused statements; blank inside the first one only.
+    clause = _first_statement(clause, blueprint.concept)
 
     # Prefer a multi-word technical term, else a distinctive single word.
     for term in _blankable_terms(clause, blueprint.concept):

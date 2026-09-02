@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -659,3 +661,122 @@ def test_genuinely_thin_document_still_422s_after_recovery() -> None:
         assert exc.available < 8
         assert exc.available >= 1
         assert exc.telemetry["deterministic_candidates_dropped"] == 0
+
+
+def test_fill_blank_is_built_from_one_bullet_not_fused_fragments() -> None:
+    """A punctless bullet run must not become a two-rule fill-blank prompt.
+
+    Slide text extraction fuses consecutive bullets into one line ("NOT NULL
+    A column must always contain a value UNIQUE No two rows may have …").
+    Blanking inside such a line previously produced a prompt that stitched two
+    unrelated constraints together and an "answer" ("UNIQUE No") spanning a
+    bullet boundary. The writer must blank inside the first self-contained
+    statement only.
+    """
+    understanding = _understanding(
+        "Integrity rules keep the stored data correct.\n"
+        "Indexes speed up reads by keeping a sorted copy of the column values."
+    )
+    blueprint = _blueprint(
+        concept_id="notnull",
+        concept="NOT NULL",
+        evidence=(
+            "NOT NULL A column must always contain a value UNIQUE No two rows "
+            "may have the same value in a column"
+        ),
+        question_type="fill-blank",
+        skill="factual_recall",
+    )
+
+    written = deterministic_candidates([blueprint], language="en", understanding=understanding)
+
+    assert len(written) == 1, "a blankable first bullet should still produce a fill-blank"
+    prompt = written[0]["prompt"]
+    answer = written[0]["correct_answer"]
+    assert prompt.count("_____") == 1
+    # The second fused bullet must be gone from both the prompt and the answer.
+    assert "UNIQUE" not in prompt
+    assert "No two rows" not in prompt
+    assert "UNIQUE" not in answer
+    words = answer.split()
+    if len(words) > 1:
+        assert words[1].lower() not in {
+            "no", "not", "each", "every", "all", "any", "some", "both", "a",
+            "an", "the", "its", "their", "this", "these", "those", "it",
+            "when", "if", "while", "as", "by", "or", "and", "but", "after",
+            "before",
+        }, f"answer still spans a bullet boundary: {answer!r}"
+    # The kept statement is the document's own first bullet, verbatim.
+    assert prompt.startswith("Complete this statement about NOT NULL:")
+    assert prompt.endswith("must always contain a value.")
+
+
+def test_true_false_never_asserts_an_interrogative_clause() -> None:
+    """An object wh-clause ("how concurrent transactions see each other")
+    cannot follow an assertion frame: "X results in how …" is a fragment, and
+    asserting it as a true/false claim tests nothing. The writer must decline
+    the statement instead of shipping the broken sentence.
+    """
+    understanding = _understanding(
+        "Isolation determines how concurrent transactions see each other.\n"
+        "Durability keeps committed changes even after a failure."
+    )
+    blueprint = _blueprint(
+        concept_id="isolation",
+        concept="Isolation",
+        evidence="Isolation determines how concurrent transactions see each other.",
+        question_type="true-false",
+        skill="cause_effect",
+        facet_kind="effect",
+        answer_clause="how concurrent transactions see each other",
+    )
+
+    written = deterministic_candidates([blueprint], language="en", understanding=understanding)
+
+    broken = re.compile(
+        r"\b(?:results in|is responsible for|is caused by|works by means of|"
+        r"depends on|divides into)\s+(?:how|what|why|whether|when|where|which)\b",
+        re.IGNORECASE,
+    )
+    for candidate in written:
+        assert not broken.search(candidate["prompt"]), (
+            f"assertion frame swallowed an interrogative clause: "
+            f"{candidate['prompt']!r}"
+        )
+    assert not any(
+        "results in how" in candidate["prompt"] for candidate in written
+    )
+
+
+def test_true_statement_never_grafts_concept_onto_noun_phrase_clause() -> None:
+    """A noun-phrase clause ("changes in the table data") is not a subjectless
+    predicate. Framing it as one ("The trigger changes in the table data")
+    invents a claim the document never states and keys it True. The cause
+    facet's own frame ("is caused by …") must carry the relation instead.
+    """
+    understanding = _understanding(
+        "A trigger runs due to changes in the table data.\n"
+        "A stored procedure is program logic stored in the database."
+    )
+    blueprint = _blueprint(
+        concept_id="trigger",
+        concept="Trigger",
+        evidence="A trigger runs due to changes in the table data.",
+        question_type="true-false",
+        skill="cause_effect",
+        facet_kind="cause",
+        answer_clause="changes in the table data",
+    )
+
+    written = deterministic_candidates([blueprint], language="en", understanding=understanding)
+
+    assert written, "a cause facet with a stated clause should write a true/false"
+    for candidate in written:
+        prompt = candidate["prompt"]
+        # The bare-predicate graft would read as a plausible sentence while
+        # asserting something the source never says.
+        assert not re.match(
+            r"^(?:The |A )?Trigger (?:changes|runs due)\b", prompt
+        ), f"concept grafted onto a noun-phrase clause: {prompt!r}"
+        assert "is caused by changes in the table data" in prompt, prompt
+        assert candidate["correct_answer"] == "True"
