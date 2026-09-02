@@ -589,11 +589,12 @@ def derive_targets_for_concept(
             pages=pages,
         )
 
-    # 3. Recall only where the term appears verbatim in its own evidence, so a
-    #    blank can be formed around a real technical term.
-    if concept.knowledge_type in {"definition", "principle"} and normalize_question_text(
-        concept.name
-    ) in normalize_question_text(concept.primary_evidence):
+    # 3. Factual recall of key terminology.
+    if (
+        concept.knowledge_type in {"definition", "principle"}
+        and normalize_question_text(concept.name)
+        in normalize_question_text(concept.primary_evidence)
+    ):
         picked = _pick_evidence(concept, None)
         if picked is not None:
             evidence, pages = picked
